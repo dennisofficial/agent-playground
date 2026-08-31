@@ -1,6 +1,8 @@
 import {
+  attributedStop,
   EAgentStatus,
   type AssistantPart,
+  type EKilledBy,
   type EventDraft,
   type RosteredAgent,
   type ThreadId,
@@ -14,6 +16,7 @@ export type ChildState = {
   agentType: string
   intent: string
   status: EAgentStatus
+  killedBy: EKilledBy | undefined
   turns: number
   toolCalls: number
   lastTool: string | undefined
@@ -41,6 +44,7 @@ export function recoveredChild({
     agentType: agent.agentType,
     intent: agent.intent,
     status: agent.status,
+    killedBy: agent.killedBy,
     turns: agent.turns,
     toolCalls: agent.toolCalls,
     lastTool: undefined,
@@ -59,6 +63,7 @@ export function snapshotOf(child: ChildState): AgentSnapshot {
     agentType: child.agentType,
     intent: child.intent,
     status: child.status,
+    killedBy: attributedStop({ status: child.status, killedBy: child.killedBy }),
     turns: child.turns,
     toolCalls: child.toolCalls,
     lastTool: child.lastTool,
@@ -74,6 +79,7 @@ export function agentEndedDraft(child: ChildState): EventDraft {
     agentType: child.agentType,
     intent: child.intent,
     status: child.status,
+    killedBy: attributedStop({ status: child.status, killedBy: child.killedBy }),
     prose: child.lastText,
     turns: child.turns,
     toolCalls: child.toolCalls,

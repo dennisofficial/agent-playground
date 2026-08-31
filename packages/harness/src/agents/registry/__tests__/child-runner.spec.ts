@@ -95,6 +95,7 @@ async function spawn(args: {
         },
         tools,
         hooks: new HookChain({}),
+        drainNotices: async () => [],
         assemblyFor: ({ agentType }) =>
           defaultPipeline({
             prompt: () => subAgentPrompt({ prompts, agentType, provider: harness.model.identity }),

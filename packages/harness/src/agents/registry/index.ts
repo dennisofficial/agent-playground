@@ -9,4 +9,4 @@ export {
   type ChildRunnerRequest,
   type ChildRunnerSource,
 } from './child-runner'
-export type { AgentSnapshot } from './snapshot'
+export type { AgentSnapshot, RecoveredAgents, UnloggedChild } from './snapshot'

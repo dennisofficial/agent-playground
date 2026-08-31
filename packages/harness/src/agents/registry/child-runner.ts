@@ -1,9 +1,10 @@
-import type {
-  AssemblyPipeline,
-  EventDraft,
-  EventLogPort,
-  ModelPort,
-  ThreadId,
+import {
+  EMessageOrigin,
+  type AssemblyPipeline,
+  type EventDraft,
+  type EventLogPort,
+  type ModelPort,
+  type ThreadId,
 } from '@dltech/atlas-core'
 
 import type { HookChain } from '../../hooks/registry'
@@ -14,10 +15,11 @@ import { filteredToolRegistry, type ToolRegistry } from '../../tools/registry'
 import { AGENT_TOOL_NAMES, toolRegistryFor, type AgentType } from '../types'
 
 export type ChildRunnerDeps = {
-  turn: TurnDeps
+  turn: Omit<TurnDeps, 'drainPending'>
   tools: ToolRegistry
   hooks: HookChain
   assemblyFor: (args: { agentType: AgentType }) => AssemblyPipeline
+  drainNotices: (args: { threadId: ThreadId }) => Promise<readonly EventDraft[]>
   modelFor?: ((args: { agentType: AgentType }) => ModelPort) | undefined
 }
 
@@ -71,6 +73,9 @@ export function childRunnerSource({ deps }: { deps: ChildRunnerDepsSource }): Ch
   }
 }
 
+export const steerDrafts = (texts: readonly string[]): readonly EventDraft[] =>
+  texts.map((text) => ({ type: 'user-said', text, via: EMessageOrigin.ParentAgent }))
+
 export function buildChildRunner({
   deps,
   agentType,
@@ -88,9 +93,6 @@ export function buildChildRunner({
     tools: registry.declarations(),
     dispatch: new HookedToolDispatcher({ registry, hooks: deps.hooks }),
     assembly: deps.assemblyFor({ agentType }),
-    drainPending: async (args) => [
-      ...steering().map((text): EventDraft => ({ type: 'user-said', text })),
-      ...((await turn.drainPending?.(args)) ?? []),
-    ],
+    drainPending: async (args) => [...steerDrafts(steering()), ...(await deps.drainNotices(args))],
   })
 }

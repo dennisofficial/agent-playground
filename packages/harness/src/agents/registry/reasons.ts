@@ -9,7 +9,7 @@ export const EMPTY_BRIEF = 'a sub-agent reads nothing but its brief, so it canno
 export const statusOf = (outcome: TurnOutcome): EAgentStatus => {
   if (outcome.status === ETurnStatus.Failed) return EAgentStatus.Failed
   if (outcome.status === ETurnStatus.Interrupted) return EAgentStatus.Stopped
-  if (outcome.status === ETurnStatus.Paused) return EAgentStatus.Stopped
+  if (outcome.status === ETurnStatus.Paused) return EAgentStatus.Blocked
   return EAgentStatus.Finished
 }
 

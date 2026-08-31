@@ -9,10 +9,14 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
+import { buildHarness, type AtlasHarness } from '../../../loop/build-harness'
+import { createTempDatabase } from '../../../loop/__tests__/temp-database'
 import { ETurnStatus, type TurnOutcome } from '../../../loop/turn-outcome'
 import type { TurnRunner } from '../../../loop/turn-runner.port'
+import { scriptedModel } from '../../../model/testing/scripted-model'
 import type { AgentType } from '../../types'
 import type { ChildRunnerRequest, ChildRunnerSource } from '../child-runner'
+import { AgentSupervisor } from '../supervisor'
 
 export const agentTypeNamed = (args: Partial<AgentType> & { name: string }): AgentType => ({
   whenToUse: `use ${args.name}`,
@@ -26,6 +30,7 @@ export type StartedRun = {
   threadId: ThreadId
   signal: AbortSignal
   settle: (outcome: TurnOutcome) => void
+  fail: (cause: unknown) => void
   observe: (drafts: readonly EventDraft[]) => void
 }
 
@@ -40,12 +45,13 @@ export function fakeRunners(): FakeRunners {
   const resumed: ThreadId[] = []
 
   const hold = (request: ChildRunnerRequest, signal: AbortSignal): Promise<TurnOutcome> =>
-    new Promise<TurnOutcome>((resolve) => {
+    new Promise<TurnOutcome>((resolve, reject) => {
       started.push({
         request,
         threadId: request.threadId,
         signal,
         settle: resolve,
+        fail: reject,
         observe: request.observe,
       })
     })
@@ -73,6 +79,13 @@ export const interrupted = (): TurnOutcome => ({
   committed: true,
 })
 
+export const paused = (): TurnOutcome => ({
+  status: ETurnStatus.Paused,
+  runId: toRunId('run_fake'),
+  callId: toCallId('call_fake'),
+  reason: 'awaiting approval',
+})
+
 export const said = (text: string): readonly EventDraft[] => [
   { type: 'assistant-said', parts: [{ type: 'text', text }] },
 ]
@@ -95,4 +108,47 @@ export function fixedModelPort(args: { modelId: string; text: string }): ModelPo
 
 export const nothingRuns: ChildRunnerSource = (): TurnRunner => {
   throw new Error('no child should have been started')
+}
+
+export type OpenedSupervisor = {
+  harness: AtlasHarness
+  runners: FakeRunners
+  supervisor: AgentSupervisor
+  parent: ThreadId
+  close: () => Promise<void>
+}
+
+export async function openSupervisor({
+  agentTypes = [agentTypeNamed({ name: 'explore' }), agentTypeNamed({ name: 'builder' })],
+}: { agentTypes?: readonly AgentType[] } = {}): Promise<OpenedSupervisor> {
+  const temp = createTempDatabase()
+  const harness = await buildHarness({
+    databaseUrl: temp.databaseUrl,
+    model: scriptedModel({ script: [] }),
+  })
+  const runners = fakeRunners()
+
+  return {
+    harness,
+    runners,
+    supervisor: new AgentSupervisor({
+      log: harness.log,
+      threads: harness.threads,
+      ids: harness.ids,
+      clock: harness.clock,
+      agentTypes,
+      runners: runners.source,
+    }),
+    parent: (await harness.threads.create({})).id,
+    close: async () => {
+      await harness.close()
+      temp.discard()
+    },
+  }
+}
+
+export const settled = async (): Promise<void> => {
+  await Promise.resolve()
+  await Promise.resolve()
+  await Promise.resolve()
 }

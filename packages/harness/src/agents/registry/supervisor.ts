@@ -1,8 +1,8 @@
 import {
-  agentRoster,
   EAgentStatus,
+  EKilledBy,
+  EMessageOrigin,
   type ClockPort,
-  type EKilledBy,
   type EventDraft,
   type EventLogPort,
   type IdPort,
@@ -13,10 +13,11 @@ import type { ThreadStorePort } from '../../store'
 import type { ChildRunnerSource } from './child-runner'
 import type { AgentType } from '../types'
 import { ChildSteps } from './child-steps'
-import { isStepping, recoveredChild, snapshotOf, type ChildState } from './child-state'
+import { isStepping, snapshotOf, type ChildState } from './child-state'
 import { AgentNoticeQueue } from './notices'
 import { openChildThread } from './open-child'
 import { AgentRegistryPort, type AgentOutcome } from './port'
+import { ChildRecovery } from './recovery'
 import {
   alreadyStepping,
   EMPTY_BRIEF,
@@ -25,7 +26,7 @@ import {
   unknownAgentType,
 } from './reasons'
 import { AgentRoster } from './roster'
-import type { AgentSnapshot } from './snapshot'
+import type { AgentSnapshot, RecoveredAgents } from './snapshot'
 
 export class AgentSupervisor extends AgentRegistryPort {
   private readonly log: EventLogPort
@@ -36,7 +37,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   private readonly roster = new AgentRoster()
   private readonly notices = new AgentNoticeQueue()
   private readonly steps: ChildSteps
-  private readonly hydrating = new Map<ThreadId, Promise<void>>()
+  private readonly recovery: ChildRecovery
 
   constructor(args: {
     log: EventLogPort
@@ -57,6 +58,13 @@ export class AgentSupervisor extends AgentRegistryPort {
       roster: this.roster,
       notices: this.notices,
       clock: args.clock,
+    })
+    this.recovery = new ChildRecovery({
+      log: args.log,
+      threads: args.threads,
+      ids: args.ids,
+      clock: args.clock,
+      roster: this.roster,
     })
   }
 
@@ -97,6 +105,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       agentType: type.name,
       intent,
       status: EAgentStatus.Running,
+      killedBy: undefined,
       turns: 0,
       toolCalls: 0,
       lastTool: undefined,
@@ -144,7 +153,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     await this.log.append({
       threadId: agentId,
       runId: this.ids.nextRunId(),
-      drafts: [{ type: 'user-said', text }],
+      drafts: [{ type: 'user-said', text, via: EMessageOrigin.ParentAgent }],
     })
     this.steps.take({
       child,
@@ -185,6 +194,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   stop({
     agentId,
     threadId,
+    by,
   }: {
     agentId: ThreadId
     threadId: ThreadId
@@ -194,7 +204,9 @@ export class AgentSupervisor extends AgentRegistryPort {
     if (child === undefined) {
       return { ok: false, reason: unknownAgent({ agentId, known: this.list({ threadId }) }) }
     }
+    if (!isStepping(child)) return { ok: true, snapshot: snapshotOf(child) }
 
+    child.killedBy = by
     child.abort.abort()
     return { ok: true, snapshot: snapshotOf(child) }
   }
@@ -204,22 +216,12 @@ export class AgentSupervisor extends AgentRegistryPort {
     return this.roster.list(threadId)
   }
 
-  /**
-   * A child outlives the process that spawned it, because its thread and its rows do. The parent's
-   * own log is the whole record, so a restart rebuilds the roster from it rather than from a side
-   * table; this is deliberately not done at construction, where a container resolve would block on
-   * the database.
-   */
-  async hydrate({ threadId }: { threadId: ThreadId }): Promise<void> {
-    const started = this.hydrating.get(threadId)
-    if (started !== undefined) return started
+  hydrate({ threadId }: { threadId: ThreadId }): Promise<void> {
+    return this.recovery.hydrate({ threadId })
+  }
 
-    const running = this.recover({ threadId }).catch(() => {
-      this.hydrating.delete(threadId)
-    })
-    this.hydrating.set(threadId, running)
-
-    return running
+  recordLostAgents({ threadId }: { threadId: ThreadId }): Promise<RecoveredAgents> {
+    return this.recovery.recordLost({ threadId })
   }
 
   listEverywhere(): readonly AgentSnapshot[] {
@@ -255,7 +257,10 @@ export class AgentSupervisor extends AgentRegistryPort {
    * where a child went, exactly as it says where a background shell went.
    */
   async closeAll(): Promise<void> {
-    for (const child of this.roster.states()) child.abort.abort()
+    for (const child of this.roster.states()) {
+      if (isStepping(child) && child.killedBy === undefined) child.killedBy = EKilledBy.SessionEnd
+      child.abort.abort()
+    }
     await this.steps.whenSettled()
   }
 
@@ -268,16 +273,6 @@ export class AgentSupervisor extends AgentRegistryPort {
   }): ChildState | undefined {
     const child = this.roster.find(agentId)
     return child === undefined || child.spawnedBy !== threadId ? undefined : child
-  }
-
-  private async recover({ threadId }: { threadId: ThreadId }): Promise<void> {
-    const events = await this.log.readOwn({ threadId })
-    const at = this.clock.now()
-
-    for (const agent of agentRoster({ events, threadId })) {
-      if (this.roster.find(agent.agentId) !== undefined) continue
-      this.roster.add(recoveredChild({ agent, spawnedBy: threadId, at }))
-    }
   }
 
   private typeNamed(name: string): AgentType | undefined {

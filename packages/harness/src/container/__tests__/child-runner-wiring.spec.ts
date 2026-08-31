@@ -72,6 +72,7 @@ function bindChildRunner({ container }: { container: DependencyContainer }): voi
         },
         tools: container.resolve(portToken(ToolRegistry)),
         hooks: container.resolve(HookChainToken),
+        drainNotices: async () => [],
         assemblyFor: ({ agentType }) =>
           defaultPipeline({
             prompt: () =>

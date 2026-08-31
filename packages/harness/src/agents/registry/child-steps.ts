@@ -41,6 +41,7 @@ export class ChildSteps {
   }): void {
     child.abort = new AbortController()
     child.status = EAgentStatus.Running
+    child.killedBy = undefined
     child.endedAt = undefined
     this.roster.changed()
 
@@ -73,7 +74,7 @@ export class ChildSteps {
     try {
       return statusOf(await step({ runner: this.runnerFor({ child, agentType }), signal }))
     } catch {
-      return EAgentStatus.Failed
+      return signal.aborted ? EAgentStatus.Stopped : EAgentStatus.Failed
     }
   }
 
