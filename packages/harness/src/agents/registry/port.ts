@@ -26,6 +26,7 @@ export abstract class AgentRegistryPort {
   abstract pendingNotices(args: { threadId: ThreadId }): readonly AgentSnapshot[]
   abstract threadsAwaitingNotice(): readonly ThreadId[]
   abstract onNotice(listener: () => void): () => void
+  abstract onChange(listener: () => void): () => void
   abstract forgetNotices(args: { threadId: ThreadId }): void
   abstract closeAll(): Promise<void>
 }

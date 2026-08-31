@@ -24,6 +24,7 @@ import { AgentNoticeQueue } from './notices'
 import { openChildThread } from './open-child'
 import { AgentRegistryPort, type AgentOutcome } from './port'
 import { alreadyStepping, EMPTY_BRIEF, statusOf, unknownAgent, unknownAgentType } from './reasons'
+import { AgentRoster } from './roster'
 import type { AgentSnapshot } from './snapshot'
 
 export class AgentSupervisor extends AgentRegistryPort {
@@ -33,7 +34,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   private readonly clock: ClockPort
   private readonly agentTypes: readonly AgentType[]
   private readonly runners: ChildRunnerSource
-  private readonly children = new Map<ThreadId, ChildState>()
+  private readonly roster = new AgentRoster()
   private readonly notices = new AgentNoticeQueue()
   private readonly inFlight = new Set<Promise<void>>()
 
@@ -100,7 +101,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       abort: new AbortController(),
       pending: [],
     }
-    this.children.set(agentId, child)
+    this.roster.add(child)
 
     this.take({
       child,
@@ -178,13 +179,11 @@ export class AgentSupervisor extends AgentRegistryPort {
   }
 
   list({ threadId }: { threadId: ThreadId }): readonly AgentSnapshot[] {
-    return [...this.children.values()]
-      .filter((child) => child.spawnedBy === threadId)
-      .map(snapshotOf)
+    return this.roster.list(threadId)
   }
 
   listEverywhere(): readonly AgentSnapshot[] {
-    return [...this.children.values()].map(snapshotOf)
+    return this.roster.listEverywhere()
   }
 
   drainNotifications({ threadId }: { threadId: ThreadId }): readonly EventDraft[] {
@@ -203,6 +202,10 @@ export class AgentSupervisor extends AgentRegistryPort {
     return this.notices.onNotice(listener)
   }
 
+  onChange(listener: () => void): () => void {
+    return this.roster.onChange(listener)
+  }
+
   forgetNotices({ threadId }: { threadId: ThreadId }): void {
     this.notices.forget({ threadId })
   }
@@ -212,7 +215,7 @@ export class AgentSupervisor extends AgentRegistryPort {
    * where a child went, exactly as it says where a background shell went.
    */
   async closeAll(): Promise<void> {
-    for (const child of this.children.values()) child.abort.abort()
+    for (const child of this.roster.states()) child.abort.abort()
     await Promise.all([...this.inFlight])
   }
 
@@ -223,7 +226,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     agentId: ThreadId
     threadId: ThreadId
   }): ChildState | undefined {
-    const child = this.children.get(agentId)
+    const child = this.roster.find(agentId)
     return child === undefined || child.spawnedBy !== threadId ? undefined : child
   }
 
@@ -237,6 +240,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     child.abort = new AbortController()
     child.status = EAgentStatus.Running
     child.endedAt = undefined
+    this.roster.changed()
 
     const settled = this.stepped({ child, step, signal: child.abort.signal }).then((status) =>
       this.finish({ child, status }),
@@ -265,6 +269,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   private finish({ child, status }: { child: ChildState; status: EAgentStatus }): void {
     child.status = status
     child.endedAt = this.clock.now()
+    this.roster.changed()
 
     this.notices.queue({
       threadId: child.spawnedBy,
@@ -273,11 +278,16 @@ export class AgentSupervisor extends AgentRegistryPort {
     })
   }
 
+  private record({ child, drafts }: { child: ChildState; drafts: readonly EventDraft[] }): void {
+    recordProgress({ child, drafts })
+    this.roster.changed()
+  }
+
   private runnerFor(child: ChildState): TurnRunner {
     return this.runners({
       agentType: child.agentType,
       threadId: child.agentId,
-      observe: (drafts) => recordProgress({ child, drafts }),
+      observe: (drafts) => this.record({ child, drafts }),
       steering: () => child.pending.splice(0),
     })
   }

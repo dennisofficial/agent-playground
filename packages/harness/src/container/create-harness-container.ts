@@ -2,11 +2,17 @@ import {
   AccountStorePort,
   ClockPort,
   CredentialPort,
+  EDefinitionOrigin,
   EventLogPort,
   IdPort,
   ModelPort,
 } from '@dltech/atlas-core'
 
+import { childRunnerSource, type ChildRunnerDepsSource } from '../agents/registry/child-runner'
+import { AgentRegistryPort } from '../agents/registry/port'
+import { AgentSupervisor } from '../agents/registry/supervisor'
+import type { AgentType } from '../agents/types/agent-type'
+import { BUILT_IN_AGENT_TYPES } from '../agents/types/built-ins'
 import { ClaudeCodeSource, claudeCodePayloadStore } from '../credentials/claude-code-source'
 import { fileAccountStore } from '../credentials/account-store'
 import { builtinOauthClients } from '../credentials/oauth'
@@ -20,6 +26,7 @@ import { createRawTape } from '../model/raw-tape'
 import { registerFileState } from '../files'
 import { registerShells } from '../shells/register-shells'
 import { ThreadStorePort, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
+import { AgentRegistrySourceToken, AgentTypesToken } from '../tools/builtin/agent-tokens'
 import { HookedToolDispatcher, ToolDispatcher } from '../tools/dispatch'
 import { registerBuiltinTools } from '../tools/register-tools'
 import { ToolRegistry } from '../tools/registry'
@@ -29,6 +36,7 @@ import {
   instanceCachingFactory,
   portToken,
   type DependencyContainer,
+  type InjectionToken,
 } from './injection'
 import {
   ClaudeCodeSourceToken,
@@ -36,6 +44,43 @@ import {
   KeychainReaderToken,
   LanguageModelToken,
 } from './tokens'
+
+export const ChildRunnerDepsToken: InjectionToken<ChildRunnerDepsSource> =
+  Symbol('atlas.ChildRunnerDeps')
+
+const embeddedAgentTypes = (): readonly AgentType[] =>
+  BUILT_IN_AGENT_TYPES.map((agentType) => ({ ...agentType, origin: EDefinitionOrigin.BuiltIn }))
+
+function registerAgents({ container }: { container: DependencyContainer }): void {
+  let live: AgentRegistryPort | undefined
+
+  container.register(AgentTypesToken, { useValue: embeddedAgentTypes() })
+
+  container.register(portToken(AgentRegistryPort), {
+    useFactory: instanceCachingFactory((resolver) => {
+      live = new AgentSupervisor({
+        log: resolver.resolve(portToken(EventLogPort)),
+        threads: resolver.resolve(portToken(ThreadStorePort)),
+        ids: resolver.resolve(portToken(IdPort)),
+        clock: resolver.resolve(portToken(ClockPort)),
+        agentTypes: resolver.resolve(AgentTypesToken),
+        runners: childRunnerSource({ deps: () => resolver.resolve(ChildRunnerDepsToken)() }),
+      })
+      return live
+    }),
+  })
+
+  container.register(AgentRegistrySourceToken, {
+    useValue: () => container.resolve(portToken(AgentRegistryPort)),
+  })
+
+  registerDisposable({
+    container,
+    close: async () => {
+      await live?.closeAll()
+    },
+  })
+}
 
 export function createHarnessContainer(): DependencyContainer {
   const harness = createIsolatedContainer()
@@ -83,6 +128,7 @@ export function createHarnessContainer(): DependencyContainer {
 
   registerFileState({ container: harness })
   registerShells({ container: harness })
+  registerAgents({ container: harness })
   registerBuiltinTools({ container: harness })
   registerBuiltinHooks({ container: harness })
 
