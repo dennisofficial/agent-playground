@@ -19,7 +19,7 @@ import { scriptedModel, type ScriptedStep } from '../../../model/testing/scripte
 import { AtlasIdentityFragment } from '../../../prompt/fragments/identity'
 import { InMemoryPromptRegistry } from '../../../prompt/registry'
 import { InMemoryToolRegistry } from '../../../tools/registry'
-import { toolRegistryFor, type AgentType } from '../../types'
+import { AGENT_TOOL_NAMES, toolRegistryFor, type AgentType } from '../../types'
 import { childRunnerSource } from '../child-runner'
 import { subAgentPrompt } from '../child-prompt'
 import { AgentSupervisor } from '../supervisor'
@@ -188,6 +188,44 @@ describe("a child's tools", () => {
     expect(results[0]?.type === 'tool-result' ? results[0].error?.message : '').toMatch(
       /no tool named "agent_spawn" is registered/,
     )
+    expect(invoked).toEqual([])
+  })
+
+  it("is handed none of the sub-agent tools, which are the parent's instruments", async () => {
+    const spawned = await spawn({
+      script: [{ text: 'nothing to do' }],
+      agentType: agentTypeNamed({ name: 'builder' }),
+      tools: [...AGENT_TOOL_NAMES.map(toolNamed), toolNamed('read')],
+    })
+
+    expect(AGENT_TOOL_NAMES).toEqual([
+      'agent_spawn',
+      'agent_say',
+      'agent_resume',
+      'agent_list',
+      'agent_stop',
+    ])
+    expect(spawned.model.doStreamCalls[0]?.tools?.map((tool) => tool.name)).toEqual(['read'])
+  })
+
+  it('refuses every sub-agent tool by name, not only agent_spawn', async () => {
+    const spawned = await spawn({
+      script: [
+        { calls: AGENT_TOOL_NAMES.map((name) => ({ callId: `call_${name}`, name, input: {} })) },
+        { text: 'I have none of those' },
+      ],
+      agentType: agentTypeNamed({ name: 'builder' }),
+      tools: [...AGENT_TOOL_NAMES.map(toolNamed), toolNamed('read')],
+    })
+
+    const events = await spawned.harness.log.read({ threadId: spawned.agentId })
+    const results = events.filter((event) => event.type === 'tool-result')
+    expect(results).toHaveLength(AGENT_TOOL_NAMES.length)
+    for (const result of results) {
+      expect(result.type === 'tool-result' ? result.error?.message : '').toMatch(
+        /no tool named "agent_\w+" is registered/,
+      )
+    }
     expect(invoked).toEqual([])
   })
 

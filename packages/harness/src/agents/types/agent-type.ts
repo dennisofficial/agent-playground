@@ -7,6 +7,14 @@ import {
 
 export const AGENT_SPAWN_TOOL_NAME = 'agent_spawn'
 
+export const AGENT_TOOL_NAMES: readonly string[] = [
+  AGENT_SPAWN_TOOL_NAME,
+  'agent_say',
+  'agent_resume',
+  'agent_list',
+  'agent_stop',
+]
+
 const ALL_TOOLS = '*'
 const NAME_PATTERN = /^[a-z][a-z0-9-]*$/
 

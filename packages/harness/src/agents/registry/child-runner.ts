@@ -11,7 +11,7 @@ import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
 import type { TurnRunner } from '../../loop/turn-runner.port'
 import { HookedToolDispatcher } from '../../tools/dispatch'
 import { filteredToolRegistry, type ToolRegistry } from '../../tools/registry'
-import { AGENT_SPAWN_TOOL_NAME, toolRegistryFor, type AgentType } from '../types'
+import { AGENT_TOOL_NAMES, toolRegistryFor, type AgentType } from '../types'
 
 export type ChildRunnerDeps = {
   turn: TurnDeps
@@ -28,8 +28,8 @@ export type ChildRunnerDeps = {
  */
 export type ChildRunnerDepsSource = () => ChildRunnerDeps
 
-const withoutSelfSpawn = (registry: ToolRegistry): ToolRegistry =>
-  filteredToolRegistry({ registry, deny: [AGENT_SPAWN_TOOL_NAME] })
+const withoutAgentTools = (registry: ToolRegistry): ToolRegistry =>
+  filteredToolRegistry({ registry, deny: AGENT_TOOL_NAMES })
 
 function observingLog({
   log,
@@ -78,7 +78,7 @@ export function buildChildRunner({
   observe,
   steering,
 }: ChildRunnerRequest & { deps: ChildRunnerDeps }): TurnRunner {
-  const registry = withoutSelfSpawn(toolRegistryFor({ registry: deps.tools, agentType }))
+  const registry = withoutAgentTools(toolRegistryFor({ registry: deps.tools, agentType }))
   const { turn } = deps
 
   return new LoopTurnRunner({

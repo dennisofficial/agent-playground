@@ -1,5 +1,6 @@
 export {
   AGENT_SPAWN_TOOL_NAME,
+  AGENT_TOOL_NAMES,
   AgentTypeSource,
   parseAgentType,
   type AgentType,

@@ -2,16 +2,16 @@ import {
   EAgentStatus,
   type AssistantPart,
   type EventDraft,
+  type RosteredAgent,
   type ThreadId,
 } from '@dltech/atlas-core'
 
-import type { AgentType } from '../types'
 import type { AgentSnapshot } from './snapshot'
 
 export type ChildState = {
   agentId: ThreadId
   spawnedBy: ThreadId
-  agentType: AgentType
+  agentType: string
   intent: string
   status: EAgentStatus
   turns: number
@@ -26,11 +26,37 @@ export type ChildState = {
 
 export const isStepping = (child: ChildState): boolean => child.status === EAgentStatus.Running
 
+export function recoveredChild({
+  agent,
+  spawnedBy,
+  at,
+}: {
+  agent: RosteredAgent
+  spawnedBy: ThreadId
+  at: string
+}): ChildState {
+  return {
+    agentId: agent.agentId,
+    spawnedBy,
+    agentType: agent.agentType,
+    intent: agent.intent,
+    status: agent.status,
+    turns: agent.turns,
+    toolCalls: agent.toolCalls,
+    lastTool: undefined,
+    lastText: agent.prose,
+    startedAt: agent.spawnedAt ?? at,
+    endedAt: agent.endedAt,
+    abort: new AbortController(),
+    pending: [],
+  }
+}
+
 export function snapshotOf(child: ChildState): AgentSnapshot {
   return {
     agentId: child.agentId,
     spawnedBy: child.spawnedBy,
-    agentType: child.agentType.name,
+    agentType: child.agentType,
     intent: child.intent,
     status: child.status,
     turns: child.turns,
@@ -45,7 +71,7 @@ export function agentEndedDraft(child: ChildState): EventDraft {
   return {
     type: 'agent-ended',
     agentId: child.agentId,
-    agentType: child.agentType.name,
+    agentType: child.agentType,
     intent: child.intent,
     status: child.status,
     prose: child.lastText,

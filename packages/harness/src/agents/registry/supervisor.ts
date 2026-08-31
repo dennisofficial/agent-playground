@@ -1,4 +1,5 @@
 import {
+  agentRoster,
   EAgentStatus,
   type ClockPort,
   type EKilledBy,
@@ -8,22 +9,21 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
-import type { TurnOutcome } from '../../loop/turn-outcome'
-import type { TurnRunner } from '../../loop/turn-runner.port'
 import type { ThreadStorePort } from '../../store'
-import type { AgentType } from '../types'
 import type { ChildRunnerSource } from './child-runner'
-import {
-  agentEndedDraft,
-  isStepping,
-  recordProgress,
-  snapshotOf,
-  type ChildState,
-} from './child-state'
+import type { AgentType } from '../types'
+import { ChildSteps } from './child-steps'
+import { isStepping, recoveredChild, snapshotOf, type ChildState } from './child-state'
 import { AgentNoticeQueue } from './notices'
 import { openChildThread } from './open-child'
 import { AgentRegistryPort, type AgentOutcome } from './port'
-import { alreadyStepping, EMPTY_BRIEF, statusOf, unknownAgent, unknownAgentType } from './reasons'
+import {
+  alreadyStepping,
+  EMPTY_BRIEF,
+  retiredAgentType,
+  unknownAgent,
+  unknownAgentType,
+} from './reasons'
 import { AgentRoster } from './roster'
 import type { AgentSnapshot } from './snapshot'
 
@@ -33,10 +33,10 @@ export class AgentSupervisor extends AgentRegistryPort {
   private readonly ids: IdPort
   private readonly clock: ClockPort
   private readonly agentTypes: readonly AgentType[]
-  private readonly runners: ChildRunnerSource
   private readonly roster = new AgentRoster()
   private readonly notices = new AgentNoticeQueue()
-  private readonly inFlight = new Set<Promise<void>>()
+  private readonly steps: ChildSteps
+  private readonly hydrating = new Map<ThreadId, Promise<void>>()
 
   constructor(args: {
     log: EventLogPort
@@ -52,7 +52,12 @@ export class AgentSupervisor extends AgentRegistryPort {
     this.ids = args.ids
     this.clock = args.clock
     this.agentTypes = args.agentTypes
-    this.runners = args.runners
+    this.steps = new ChildSteps({
+      runners: args.runners,
+      roster: this.roster,
+      notices: this.notices,
+      clock: args.clock,
+    })
   }
 
   types(): readonly AgentType[] {
@@ -89,7 +94,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     const child: ChildState = {
       agentId,
       spawnedBy: threadId,
-      agentType: type,
+      agentType: type.name,
       intent,
       status: EAgentStatus.Running,
       turns: 0,
@@ -103,8 +108,9 @@ export class AgentSupervisor extends AgentRegistryPort {
     }
     this.roster.add(child)
 
-    this.take({
+    this.steps.take({
       child,
+      agentType: type,
       step: ({ runner, signal }) => runner.runTurn({ threadId: agentId, signal }),
     })
 
@@ -130,13 +136,19 @@ export class AgentSupervisor extends AgentRegistryPort {
       return { ok: true, snapshot: snapshotOf(child) }
     }
 
+    const agentType = this.typeNamed(child.agentType)
+    if (agentType === undefined) {
+      return { ok: false, reason: retiredAgentType(child.agentType) }
+    }
+
     await this.log.append({
       threadId: agentId,
       runId: this.ids.nextRunId(),
       drafts: [{ type: 'user-said', text }],
     })
-    this.take({
+    this.steps.take({
       child,
+      agentType,
       step: ({ runner, signal }) => runner.runTurn({ threadId: agentId, signal }),
     })
 
@@ -156,7 +168,16 @@ export class AgentSupervisor extends AgentRegistryPort {
     }
     if (isStepping(child)) return { ok: false, reason: alreadyStepping(agentId) }
 
-    this.take({ child, step: ({ runner, signal }) => runner.resume({ threadId: agentId, signal }) })
+    const agentType = this.typeNamed(child.agentType)
+    if (agentType === undefined) {
+      return { ok: false, reason: retiredAgentType(child.agentType) }
+    }
+
+    this.steps.take({
+      child,
+      agentType,
+      step: ({ runner, signal }) => runner.resume({ threadId: agentId, signal }),
+    })
 
     return { ok: true, snapshot: snapshotOf(child) }
   }
@@ -179,7 +200,26 @@ export class AgentSupervisor extends AgentRegistryPort {
   }
 
   list({ threadId }: { threadId: ThreadId }): readonly AgentSnapshot[] {
+    void this.hydrate({ threadId })
     return this.roster.list(threadId)
+  }
+
+  /**
+   * A child outlives the process that spawned it, because its thread and its rows do. The parent's
+   * own log is the whole record, so a restart rebuilds the roster from it rather than from a side
+   * table; this is deliberately not done at construction, where a container resolve would block on
+   * the database.
+   */
+  async hydrate({ threadId }: { threadId: ThreadId }): Promise<void> {
+    const started = this.hydrating.get(threadId)
+    if (started !== undefined) return started
+
+    const running = this.recover({ threadId }).catch(() => {
+      this.hydrating.delete(threadId)
+    })
+    this.hydrating.set(threadId, running)
+
+    return running
   }
 
   listEverywhere(): readonly AgentSnapshot[] {
@@ -216,7 +256,7 @@ export class AgentSupervisor extends AgentRegistryPort {
    */
   async closeAll(): Promise<void> {
     for (const child of this.roster.states()) child.abort.abort()
-    await Promise.all([...this.inFlight])
+    await this.steps.whenSettled()
   }
 
   private childFor({
@@ -230,65 +270,17 @@ export class AgentSupervisor extends AgentRegistryPort {
     return child === undefined || child.spawnedBy !== threadId ? undefined : child
   }
 
-  private take({
-    child,
-    step,
-  }: {
-    child: ChildState
-    step: (args: { runner: TurnRunner; signal: AbortSignal }) => Promise<TurnOutcome>
-  }): void {
-    child.abort = new AbortController()
-    child.status = EAgentStatus.Running
-    child.endedAt = undefined
-    this.roster.changed()
+  private async recover({ threadId }: { threadId: ThreadId }): Promise<void> {
+    const events = await this.log.readOwn({ threadId })
+    const at = this.clock.now()
 
-    const settled = this.stepped({ child, step, signal: child.abort.signal }).then((status) =>
-      this.finish({ child, status }),
-    )
-
-    this.inFlight.add(settled)
-    void settled.finally(() => this.inFlight.delete(settled))
-  }
-
-  private async stepped({
-    child,
-    step,
-    signal,
-  }: {
-    child: ChildState
-    step: (args: { runner: TurnRunner; signal: AbortSignal }) => Promise<TurnOutcome>
-    signal: AbortSignal
-  }): Promise<EAgentStatus> {
-    try {
-      return statusOf(await step({ runner: this.runnerFor(child), signal }))
-    } catch {
-      return EAgentStatus.Failed
+    for (const agent of agentRoster({ events, threadId })) {
+      if (this.roster.find(agent.agentId) !== undefined) continue
+      this.roster.add(recoveredChild({ agent, spawnedBy: threadId, at }))
     }
   }
 
-  private finish({ child, status }: { child: ChildState; status: EAgentStatus }): void {
-    child.status = status
-    child.endedAt = this.clock.now()
-    this.roster.changed()
-
-    this.notices.queue({
-      threadId: child.spawnedBy,
-      snapshot: snapshotOf(child),
-      draft: agentEndedDraft(child),
-    })
-  }
-
-  private record({ child, drafts }: { child: ChildState; drafts: readonly EventDraft[] }): void {
-    recordProgress({ child, drafts })
-    this.roster.changed()
-  }
-
-  private runnerFor(child: ChildState): TurnRunner {
-    return this.runners({
-      agentType: child.agentType,
-      threadId: child.agentId,
-      observe: (drafts) => this.record({ child, drafts }),
-      steering: () => child.pending.splice(0),
-    })
+  private typeNamed(name: string): AgentType | undefined {
+    return this.agentTypes.find((one) => one.name === name)
   }
 }

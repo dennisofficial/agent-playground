@@ -1,4 +1,4 @@
-export { createHarnessContainer } from './create-harness-container'
+export { ChildRunnerDepsToken, createHarnessContainer } from './create-harness-container'
 export {
   createIsolatedContainer,
   inject,

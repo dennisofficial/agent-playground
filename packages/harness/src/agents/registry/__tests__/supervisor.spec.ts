@@ -28,6 +28,23 @@ type Opened = {
   parent: ThreadId
 }
 
+const supervisorOver = (
+  harness: AtlasHarness,
+): { runners: FakeRunners; supervisor: AgentSupervisor } => {
+  const runners = fakeRunners()
+  return {
+    runners,
+    supervisor: new AgentSupervisor({
+      log: harness.log,
+      threads: harness.threads,
+      ids: harness.ids,
+      clock: harness.clock,
+      agentTypes: [EXPLORE, BUILDER],
+      runners: runners.source,
+    }),
+  }
+}
+
 async function open(): Promise<Opened> {
   const temp = createTempDatabase()
   const harness = await buildHarness({
@@ -36,18 +53,9 @@ async function open(): Promise<Opened> {
   })
   opened.push({ harness, temp })
 
-  const runners = fakeRunners()
-  const supervisor = new AgentSupervisor({
-    log: harness.log,
-    threads: harness.threads,
-    ids: harness.ids,
-    clock: harness.clock,
-    agentTypes: [EXPLORE, BUILDER],
-    runners: runners.source,
-  })
   const parent = (await harness.threads.create({})).id
 
-  return { harness, runners, supervisor, parent }
+  return { harness, ...supervisorOver(harness), parent }
 }
 
 const settle = async (): Promise<void> => {
@@ -317,5 +325,133 @@ describe('steering a child', () => {
     expect(opened.runners.started).toHaveLength(2)
     const events = await opened.harness.log.read({ threadId: outcome.snapshot.agentId })
     expect(events.map((event) => event.type)).toEqual(['user-said', 'user-said'])
+  })
+})
+
+describe('surviving the process that spawned them', () => {
+  const relaunched = async (opened: Opened): Promise<Opened> => ({
+    ...opened,
+    ...supervisorOver(opened.harness),
+  })
+
+  it('rebuilds the roster from the parent log alone', async () => {
+    const opened = await open()
+    const outcome = await opened.supervisor.spawn({
+      threadId: opened.parent,
+      agentType: 'explore',
+      brief: 'look around',
+      intent: 'a look around',
+    })
+    if (!outcome.ok) throw new Error(outcome.reason)
+    await settle()
+    opened.runners.started[0]?.observe(said('nothing calls it'))
+    opened.runners.started[0]?.settle(finished())
+    await opened.supervisor.closeAll()
+    const drafts = opened.supervisor.drainNotifications({ threadId: opened.parent })
+    await opened.harness.log.append({
+      threadId: opened.parent,
+      runId: opened.harness.ids.nextRunId(),
+      drafts,
+    })
+
+    const restarted = await relaunched(opened)
+    expect(restarted.supervisor.list({ threadId: opened.parent })).toEqual([])
+
+    await restarted.supervisor.hydrate({ threadId: opened.parent })
+
+    const listed = restarted.supervisor.list({ threadId: opened.parent })
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatchObject({
+      agentId: outcome.snapshot.agentId,
+      agentType: 'explore',
+      intent: 'a look around',
+      status: EAgentStatus.Finished,
+      turns: 1,
+    })
+  })
+
+  it('hydrates on the first read and tells the view it changed', async () => {
+    const opened = await open()
+    await opened.supervisor.spawn({
+      threadId: opened.parent,
+      agentType: 'explore',
+      brief: 'look around',
+      intent: 'a look around',
+    })
+    await settle()
+
+    const restarted = await relaunched(opened)
+    let changed = 0
+    restarted.supervisor.onChange(() => {
+      changed += 1
+    })
+
+    expect(restarted.supervisor.list({ threadId: opened.parent })).toEqual([])
+    await restarted.supervisor.hydrate({ threadId: opened.parent })
+
+    expect(changed).toBe(1)
+    expect(restarted.supervisor.list({ threadId: opened.parent })).toHaveLength(1)
+  })
+
+  it('holds the hydrated listing rather than deriving it per call', async () => {
+    const opened = await open()
+    await opened.supervisor.spawn({
+      threadId: opened.parent,
+      agentType: 'explore',
+      brief: 'look around',
+      intent: 'a look around',
+    })
+    await settle()
+
+    const restarted = await relaunched(opened)
+    await restarted.supervisor.hydrate({ threadId: opened.parent })
+
+    expect(restarted.supervisor.list({ threadId: opened.parent })).toBe(
+      restarted.supervisor.list({ threadId: opened.parent }),
+    )
+  })
+
+  it('reports a child the process died under as stopped, and resumes it', async () => {
+    const opened = await open()
+    await opened.supervisor.spawn({
+      threadId: opened.parent,
+      agentType: 'explore',
+      brief: 'look around',
+      intent: 'a look around',
+    })
+    await settle()
+
+    const restarted = await relaunched(opened)
+    await restarted.supervisor.hydrate({ threadId: opened.parent })
+
+    const [listed] = restarted.supervisor.list({ threadId: opened.parent })
+    expect(listed?.status).toBe(EAgentStatus.Stopped)
+    if (listed === undefined) return
+
+    const resumed = await restarted.supervisor.resume({
+      agentId: listed.agentId,
+      threadId: opened.parent,
+    })
+
+    expect(resumed.ok).toBe(true)
+    expect(restarted.runners.resumed).toEqual([listed.agentId])
+  })
+
+  it('leaves a child that is still stepping in this process alone', async () => {
+    const opened = await open()
+    const outcome = await opened.supervisor.spawn({
+      threadId: opened.parent,
+      agentType: 'explore',
+      brief: 'look around',
+      intent: 'a look around',
+    })
+    if (!outcome.ok) throw new Error(outcome.reason)
+    await settle()
+
+    await opened.supervisor.hydrate({ threadId: opened.parent })
+
+    const listed = opened.supervisor.list({ threadId: opened.parent })
+    expect(listed).toHaveLength(1)
+    expect(listed[0]?.status).toBe(EAgentStatus.Running)
   })
 })

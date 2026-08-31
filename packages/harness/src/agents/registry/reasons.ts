@@ -35,5 +35,8 @@ export function unknownAgent({
   return `you have no sub-agent registered as "${agentId}"; your agents: ${ids}`
 }
 
+export const retiredAgentType = (agentType: string): string =>
+  `agent type "${agentType}" is no longer defined, so this agent cannot take another step`
+
 export const alreadyStepping = (agentId: ThreadId): string =>
   `agent ${agentId} is already taking a step; steer it with a message or stop it first`
