@@ -1,0 +1,63 @@
+packages/harness/src/agents/types/index.ts
+  ai_agent 1-16
+packages/harness/src/agents/types/registry.ts
+  ai_agent 1-22
+packages/harness/src/agents/types/__tests__/agent-type.spec.ts
+  ai_agent 1-111
+packages/harness/src/agents/types/agent-type.ts
+  ai_agent 1-84
+packages/core/src/tools/effect-order.ts
+  ai_agent 1-21
+packages/harness/src/agents/types/__tests__/directory-source.spec.ts
+  ai_agent 1-63
+packages/harness/src/agents/types/embedded-source.ts
+  ai_agent 1-12
+packages/harness/src/skills/registry.ts
+  ai_agent 1,3,10-13
+packages/harness/src/skills/skill.ts
+  ai_agent 1-7,9,14,20,40
+packages/core/src/discovery/origin.ts
+  ai_agent 1-5
+packages/harness/src/tools/registry.ts
+  ai_agent 1-6,45,51,57,60,65-68,70-74,78-82,90
+packages/harness/src/agents/types/built-ins.ts
+  ai_agent 1-80
+packages/core/src/tools/__tests__/effect-order.spec.ts
+  ai_agent 1-53
+packages/harness/src/agents/index.ts
+  ai_agent 1
+packages/core/src/discovery/__tests__/shadowing.spec.ts
+  ai_agent 1-80
+packages/core/src/discovery/shadowing.ts
+  ai_agent 1-29
+packages/harness/src/agents/types/tool-access.ts
+  ai_agent 1-14
+packages/harness/src/agents/types/__tests__/built-ins.spec.ts
+  ai_agent 1-96
+packages/core/src/index.ts
+  s_e54c4d80a3afc5::t_c05642ac87f13e 17-18,73
+packages/harness/src/agents/types/__tests__/registry.spec.ts
+  ai_agent 1-158
+packages/harness/src/index.ts
+  ai_agent 13
+packages/harness/src/agents/types/__tests__/tool-access.spec.ts
+  ai_agent 1-145
+packages/harness/src/agents/types/directory-source.ts
+  ai_agent 1-65
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "213d18a02841375e120462cfa66fa1756dbb68aa",
+  "prompts": {},
+  "sessions": {
+    "s_e54c4d80a3afc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03da6b09-1f31-4a98-8ca8-63ea259cb7ee",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
