@@ -10,6 +10,7 @@ import {
   exchangeFaults,
   outstandingApproval,
   pendingCalls,
+  rowsOwnedBy,
   type Assembled,
   type AssemblyPipeline,
   type ThreadId,
@@ -165,7 +166,9 @@ export class LoopTurnRunner extends TurnRunner {
     const interrupted = async (): Promise<TurnOutcome> => ({
       status: ETurnStatus.Interrupted,
       runId,
-      committed: committedSinceLastMessage(await this.log.read({ threadId })),
+      committed: committedSinceLastMessage(
+        rowsOwnedBy({ events: await this.log.read({ threadId }), threadId }),
+      ),
     })
 
     const opening = (await this.hooks?.beforeTurn({ threadId })) ?? []
@@ -173,13 +176,14 @@ export class LoopTurnRunner extends TurnRunner {
 
     for (;;) {
       const beforeDrain = await this.log.read({ threadId })
+      const ownedBeforeDrain = rowsOwnedBy({ events: beforeDrain, threadId })
 
-      const waiting = outstandingApproval(beforeDrain)
+      const waiting = outstandingApproval(ownedBeforeDrain)
       if (waiting !== undefined) {
         return { status: ETurnStatus.Paused, runId, callId: waiting, reason: 'awaiting approval' }
       }
 
-      const pending = pendingCalls(beforeDrain)[0]
+      const pending = pendingCalls(ownedBeforeDrain)[0]
       if (pending !== undefined) {
         if (this.settlePending === undefined) {
           return { status: ETurnStatus.Paused, runId, callId: pending.callId, reason: `awaiting ${pending.name}` }
@@ -196,12 +200,13 @@ export class LoopTurnRunner extends TurnRunner {
       }
 
       const events = (await this.drainInto({ threadId })) ? await this.log.read({ threadId }) : beforeDrain
+      const owned = rowsOwnedBy({ events, threadId })
 
-      if (!awaitsReply(events) && !messageArrivedSince({ events, seenThrough })) {
+      if (!awaitsReply(owned) && !messageArrivedSince({ events: owned, seenThrough })) {
         return { status: ETurnStatus.Idle, runId }
       }
 
-      seenThrough = events.at(-1)?.seq
+      seenThrough = owned.at(-1)?.seq
 
       const ctx: RuleContext = {
         events,

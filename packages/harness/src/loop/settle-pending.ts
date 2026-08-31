@@ -2,6 +2,7 @@ import {
   isConcurrencySafeCall,
   partitionToolCalls,
   pendingCalls,
+  rowsOwnedBy,
   sessionDirectoryOf,
   type ThreadId,
   type CallId,
@@ -29,7 +30,9 @@ export function createSettlePending(deps: {
 
   return async ({ threadId, signal }) => {
     const events = await deps.log.read({ threadId })
-    const calls = [...pendingCalls(events)].sort((left, right) => left.ordinal - right.ordinal)
+    const calls = [...pendingCalls(rowsOwnedBy({ events, threadId }))].sort(
+      (left, right) => left.ordinal - right.ordinal,
+    )
 
     const runs = partitionToolCalls({ calls, isSafe })
 
