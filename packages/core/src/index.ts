@@ -61,6 +61,7 @@ export * from './workspace/atlas-home'
 
 export * from './agents/start'
 export * from './agents/status'
+export * from './agents/roster'
 export * from './agents/label'
 
 export * from './shells/status'
