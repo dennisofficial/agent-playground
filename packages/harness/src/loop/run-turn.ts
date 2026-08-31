@@ -27,7 +27,7 @@ import {
 
 import type { HookChain } from '../hooks/registry'
 import type { ToolDispatcher } from '../tools/dispatch'
-import { takeModelStepWithRetry, type RetryDeps } from './retrying-step'
+import { takeModelStep } from './model-step'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
 import { appendResumeDrafts } from './resume-turn'
 import { createSettlePending, type SettlePending } from './settle-pending'
@@ -55,7 +55,6 @@ export type TurnDeps = {
   compact?: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   autoCompactAtPercent?: (() => number) | undefined
   projectDirectory?: string | undefined
-  retry?: RetryDeps | undefined
 }
 
 export class LoopTurnRunner extends TurnRunner {
@@ -75,7 +74,6 @@ export class LoopTurnRunner extends TurnRunner {
   private readonly settlePending: SettlePending | undefined
   private readonly compact: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   private readonly autoCompactAtPercent: () => number
-  private readonly retry: RetryDeps | undefined
 
   constructor(deps: TurnDeps) {
     super()
@@ -92,7 +90,6 @@ export class LoopTurnRunner extends TurnRunner {
     this.spend = deps.spend
     this.compact = deps.compact
     this.autoCompactAtPercent = deps.autoCompactAtPercent ?? (() => AUTO_COMPACT_OFF)
-    this.retry = deps.retry
     this.settlePending =
       deps.dispatch === undefined
         ? undefined
@@ -267,13 +264,12 @@ export class LoopTurnRunner extends TurnRunner {
         return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
       }
 
-      const stepped = await takeModelStepWithRetry({
+      const stepped = await takeModelStep({
         model: this.model,
         tools: this.tools,
         onChunk: this.onChunk,
         assembled,
         signal: abortSignal,
-        retry: this.retry,
       })
 
       modelSteps += 1
