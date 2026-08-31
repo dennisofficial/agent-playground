@@ -1,0 +1,48 @@
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_e54c4d80a3afc5::t_4c10dbc5c2e08f 273,308,314-317
+apps/tui/src/composition/compose.ts
+  s_3c5c6e6e101e43::t_83efb85f67ae1e 102
+  s_12fa27c8f7ad2f::t_100e2075e49c13 31
+apps/tui/src/composition/app.tsx
+  s_b8a5959081d51d::t_0d429cb62348b4 230
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "cedd26f0b2b7b6473d3d499f4f1f72f81fda1c7f",
+  "prompts": {},
+  "sessions": {
+    "s_12fa27c8f7ad2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "78c7bd9a-cc30-4ce9-b550-bdab1f372699",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3c5c6e6e101e43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c92d248c-a8ed-4639-b523-aadc7013b3d1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b8a5959081d51d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "907acdcd-d5dc-4ad9-8247-d27981954c95",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_e54c4d80a3afc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03da6b09-1f31-4a98-8ca8-63ea259cb7ee",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
