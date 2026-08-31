@@ -1,6 +1,6 @@
 export const CORE_PACKAGE_NAME = '@dltech/atlas-core'
 
-export * from './json'
+export * from './json/value'
 export * from './provider'
 
 export * from './events/body'

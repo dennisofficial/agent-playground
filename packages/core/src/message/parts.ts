@@ -1,4 +1,4 @@
-import type { JsonValue } from '../json'
+import type { JsonValue } from '../json/value'
 import type { ProviderOptions } from '../provider'
 
 export type TextPart = { type: 'text'; text: string; providerOptions?: ProviderOptions | undefined }

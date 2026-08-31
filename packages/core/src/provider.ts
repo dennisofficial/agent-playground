@@ -1,4 +1,4 @@
-import type { JsonValue } from './json'
+import type { JsonValue } from './json/value'
 
 export type ProviderOptions = Record<string, Record<string, JsonValue>>
 

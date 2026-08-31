@@ -1,4 +1,4 @@
-import type { JsonValue } from '../json'
+import type { JsonValue } from '../json/value'
 import type { SettingValue } from './value'
 
 export type SettingsDocument = {
