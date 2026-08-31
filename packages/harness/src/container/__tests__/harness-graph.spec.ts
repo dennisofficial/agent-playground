@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-import { EventLogPort, toCallId, toRunId, type Chunk } from '@dltech/atlas-core'
+import { EventLogPort, toCallId, toRunId, toThreadId, type Chunk } from '@dltech/atlas-core'
 
 import { ToolDispatcher } from '../../tools/dispatch'
 import { ToolRegistry } from '../../tools/registry'
@@ -34,6 +34,11 @@ describe('the harness container graph', () => {
       .sort()
 
     expect(names).toEqual([
+      'agent_list',
+      'agent_resume',
+      'agent_say',
+      'agent_spawn',
+      'agent_stop',
       'bash',
       'edit',
       'glob',
@@ -78,6 +83,7 @@ describe('the harness container graph', () => {
         name: 'read',
         input: { path: '/etc/hosts' },
         runId: toRunId('run-1'),
+        threadId: toThreadId('thread-1'),
       },
       signal: AbortSignal.timeout(5_000),
       sessionDirectory: SESSION_DIRECTORY,

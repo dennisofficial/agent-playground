@@ -4,7 +4,9 @@ import { join } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 
-import { ToolDefinition, type ToolOutcome } from '@dltech/atlas-core'
+import { ToolDefinition, type ToolOutcome,
+  toThreadId,
+} from '@dltech/atlas-core'
 
 import { createHarnessContainer } from '../../container/create-harness-container'
 import { disposeAll } from '../../container/disposal'
@@ -26,6 +28,11 @@ const BUILTIN_NAMES = [
   'shell_output',
   'shell_kill',
   'task_write',
+  'agent_spawn',
+  'agent_say',
+  'agent_resume',
+  'agent_list',
+  'agent_stop',
 ]
 
 function containerRootedAt(root: string): DependencyContainer {
@@ -46,7 +53,13 @@ const invoke = (
   input: unknown,
   sessionDirectory = tmpdir(),
 ): Promise<ToolOutcome> =>
-  tool.invoke({ input, signal: AbortSignal.timeout(10_000), idempotencyKey: 'key-1', sessionDirectory })
+  tool.invoke({
+    input,
+    signal: AbortSignal.timeout(10_000),
+    idempotencyKey: 'key-1',
+    sessionDirectory,
+    threadId: toThreadId('thread-1'),
+  })
 
 describe('the builtin tools resolved from the container', () => {
   let root: string
@@ -130,7 +143,7 @@ describe('the background shell registry the tools share', () => {
     try {
       const started = await invoke(
         toolNamed({ container, name: 'bash' }),
-        { command: 'sleep 30', runInBackground: true },
+        { command: 'sleep 30', description: 'Idle in the background', runInBackground: true },
         root,
       )
       expect(started.ok).toBe(true)
@@ -156,7 +169,7 @@ describe('the background shell registry the tools share', () => {
     try {
       const started = await invoke(
         toolNamed({ container: containers[0], name: 'bash' }),
-        { command: 'sleep 30', runInBackground: true },
+        { command: 'sleep 30', description: 'Idle in the background', runInBackground: true },
         tmpdir(),
       )
       expect(started.ok).toBe(true)
@@ -181,6 +194,7 @@ describe('the background shell registry the tools share', () => {
     try {
       await invoke(toolNamed({ container, name: 'bash' }), {
         command: `sleep 2; echo alive > ${witness}`,
+        description: 'Leave a witness behind',
         runInBackground: true,
       })
       await Bun.sleep(150)
