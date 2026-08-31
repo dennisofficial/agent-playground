@@ -1,0 +1,40 @@
+packages/harness/prisma/schema.prisma
+  s_e54c4d80a3afc5::t_d2ebe77bb06aa1 17-34,38
+packages/harness/src/store/thread-store.ts
+  s_e54c4d80a3afc5::t_e5f3bc70ac533f 123
+  s_e54c4d80a3afc5::t_a308b6042adec2 107,112
+  s_e54c4d80a3afc5::t_8f797b38a2d9d0 273
+  s_e54c4d80a3afc5::t_390d4cc82a55c6 289-290,294-302
+  s_e54c4d80a3afc5::t_2d0d7fd617ad11 88-90
+  s_e54c4d80a3afc5::t_d3249b891c6968 19-20,28-29,41
+packages/harness/src/store/__tests__/thread-lineage.spec.ts
+  s_e54c4d80a3afc5::t_aa47a67fc6fca5 5,13-22,110,120,131
+  s_e54c4d80a3afc5::t_5debf6cb4e9a9b 57-59
+  s_e54c4d80a3afc5::t_8d701fe6501bc6 1-4,6-12,23-56,60-109,111-119,121-130,132-135
+apps/tui/src/composition/__tests__/fake-backend.ts
+  s_e54c4d80a3afc5::t_d2e5e92c678bff 174,188,190,194,199-209,212,215,223,232,237,239-240,242-243,268,274-275,278,280,284,288-289,294-302
+  s_e54c4d80a3afc5::t_f60633e7bb4adb 12,25-29,53-57,99,108,117,119-123,131
+packages/harness/prisma/migrations/20260830120000_thread_lineage/migration.sql
+  s_e54c4d80a3afc5::t_68558971236aba 1
+  s_e54c4d80a3afc5::t_345f80f8e1cf42 2-28
+apps/tui/src/composition/__tests__/fake-backend.spec.ts
+  s_e54c4d80a3afc5::t_def0eb32c7a7c9 1-120
+packages/harness/src/store/index.ts
+  ai_agent 1-6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0caae0d82a5283d028d745ccce4a5a7e73446cff",
+  "prompts": {},
+  "sessions": {
+    "s_e54c4d80a3afc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03da6b09-1f31-4a98-8ca8-63ea259cb7ee",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
