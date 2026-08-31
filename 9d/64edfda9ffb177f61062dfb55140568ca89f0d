@@ -1,0 +1,200 @@
+packages/harness/src/hooks/__tests__/track-session-directory.spec.ts
+  s_098172864cf888::t_8fb44e74bb8768 34-40
+packages/harness/src/tools/__tests__/dispatch-hooks.spec.ts
+  s_098172864cf888::t_e23e4ab9f6c7fd 8,11,245-317
+packages/harness/src/tools/builtin/__tests__/grep-reveals.spec.ts
+  s_99c19674ed59d0::t_7202f7b290114c 8,23,32,84-87
+  s_99c19674ed59d0::t_8f032b35837abe 1-7,9-22,24-31,33-83,88-89
+packages/core/src/hooks/__tests__/hooks.spec.ts
+  s_098172864cf888::t_0858762ff721eb 14
+packages/core/src/policy/__tests__/before-tool.spec.ts
+  s_098172864cf888::t_a4eed8834b7acf 3
+  s_098172864cf888::t_b181e5fd5e67aa 12
+  s_098172864cf888::t_e1fd5586bfa55c 110
+packages/harness/src/hooks/read-before-write.ts
+  s_99c19674ed59d0::t_f24664c440f111 37-42,69-73,75-76,78,82,86,89,135,139,146-149,153,156-157
+  s_098172864cf888::t_ee12cafb901c14 14
+  s_098172864cf888::t_2ad280ecbd6200 152
+  s_098172864cf888::t_ee9fd57f35b08b 168-172
+  s_098172864cf888::t_6f3a40f1ea98e6 21
+  s_098172864cf888::t_6724aa7447ce9a 128
+  s_8872fb7ebcd73e::t_26e76baccf2178 150
+  s_098172864cf888::t_ad9d97dbdd146f 145
+packages/harness/src/files/register-file-state.ts
+  s_098172864cf888::t_4afe57fd8ac27e 3,9-10
+packages/harness/src/tools/builtin/edit.ts
+  s_098172864cf888::t_9684c5c9faa222 15-17
+  s_37569aa4b69462::t_4b084c8eabf506 149
+  s_ed3588bb0efbeb::t_da1f7c14abc8d5 159
+  s_3d83af59050d52::t_c140241e9c3fd5 164
+  s_098172864cf888::t_dd07bb1a627e80 138-143,145-148,151-158,160-163,165-177
+packages/harness/src/hooks/__tests__/read-before-write.spec.ts
+  s_098172864cf888::t_6e2eca89c4cab0 111-119,121
+  s_99c19674ed59d0::t_f726f5b070900a 145-181,190
+  s_098172864cf888::t_171d7fdb221acc 231
+  s_098172864cf888::t_98d641c93ef002 20
+  s_098172864cf888::t_a664dda1a2f1e9 14-15
+  s_098172864cf888::t_d4210ab8a50c5b 228-230,232,235
+  s_098172864cf888::t_8d657505da8d9f 210
+  s_098172864cf888::t_6199befd4136e1 105-108
+  s_098172864cf888::t_d6d551cf4f510d 365-425
+  s_098172864cf888::t_79daf51d424bd8 60-71,76,83,88-89
+packages/harness/src/files/index.ts
+  s_098172864cf888::t_6318f02ed7ee8b 4-7
+packages/harness/src/files/__tests__/read-state.spec.ts
+  s_098172864cf888::t_c62c695500d6eb 3-4,9-11,13,18-21,23,29,32,35-37,39,41-44,46,55-58,60-65,67-70,72,76-80,82-86,88-90,96,111-114,116-123,125-126
+  s_8872fb7ebcd73e::t_e00985ea6948a3 40
+  s_098172864cf888::t_ed6c44f91af58e 71
+  s_098172864cf888::t_79d040158eb256 22,45,59,81,87,115
+  s_098172864cf888::t_c3a1d37e59dc10 16,38,52-53,66,74-75,94,108,124
+  s_8872fb7ebcd73e::t_d06c83c53a171f 54
+  s_098172864cf888::t_dc380eab96bd44 91
+packages/harness/src/files/__tests__/write-guard.spec.ts
+  s_098172864cf888::t_5b012e713d5a4b 1-156,172-199
+  s_098172864cf888::t_8de35b452c476e 157-171
+packages/harness/src/tools/builtin/grep.ts
+  s_99c19674ed59d0::t_7202f7b290114c 112-113
+  s_99c19674ed59d0::t_dba632a5bbdc8e 10,114-131,139-161,202-205,217,220,272-277
+  s_99c19674ed59d0::t_08781a5842eec6 132-138
+packages/harness/src/hooks/__tests__/record-file-state.spec.ts
+  s_098172864cf888::t_af015e7bed261f 350-376,378-381,383-388,390-400
+  s_098172864cf888::t_aeff76692bb3df 13-14
+  s_098172864cf888::t_4a7f79805cf7f0 120-131,136
+  s_098172864cf888::t_5efdcf5e5567a0 164,170,173
+  s_098172864cf888::t_48dc45e97c741f 186,193,200,211,216,218,222,229,236,246,256,263,277,293-294,300-301,311,322,335,345-347
+  s_098172864cf888::t_12c8dd04f7bc7e 382,389
+  s_99c19674ed59d0::t_339dad0bd574ec 44,92-110,114-118,305-310,312-317,319-321,323-328,330-334,336-344,348,401
+  s_098172864cf888::t_375376b0f48d47 20-21,139-152,242,252,270,318,329,377
+packages/harness/src/hooks/__tests__/file-state-wiring.spec.ts
+  s_098172864cf888::t_272af44de347b4 14
+  s_098172864cf888::t_90a45c834a5889 129-132,138,142-145
+  s_098172864cf888::t_bd632b112157c0 1,13
+  s_098172864cf888::t_dff479039aab5f 20
+  s_098172864cf888::t_e3562c1d88afae 67-75,80,83,88,91,93-96
+  s_098172864cf888::t_b4aeb2abc383fd 104-111,117,121-124
+  s_098172864cf888::t_f96ea9887e5285 253-291
+  s_098172864cf888::t_84b045b72137a0 292-297,299-314
+  s_098172864cf888::t_fd9b486b5c7a4b 148-168
+  s_098172864cf888::t_2e91e0ce42508a 298
+  s_098172864cf888::t_7499a97e886686 24
+  s_e3b55646d2e132::t_b43f0692550fc5 12,22-23,102-103,112-116,119-120,125-128,133-137,139-140,146,169-170,179,182-183,186-200,204,209-226,230,236-250
+packages/harness/src/files/staleness.ts
+  s_098172864cf888::t_f6d4abac66961f 1-21
+packages/harness/src/files/write-guard.ts
+  s_098172864cf888::t_0186698c0dbba0 1-78
+packages/harness/src/hooks/__tests__/resolve-project-paths.spec.ts
+  s_098172864cf888::t_3d2ec00c12b71f 7
+  s_098172864cf888::t_09af54f06acc2e 31
+  s_098172864cf888::t_73f5af3990e905 66
+packages/harness/src/hooks/record-file-state.ts
+  s_098172864cf888::t_f4ad25a27b02ad 18,20
+  s_098172864cf888::t_66373ae0d12957 103-105,112
+  s_098172864cf888::t_992401b036a73f 107
+  s_99c19674ed59d0::t_e2f8a9734f24ab 47-51,58,62,70-74,80,92,94,113-119,128,136-138
+  s_098172864cf888::t_d7f22061314358 75-77,79,84
+  s_098172864cf888::t_431181baf10eb1 132-134
+  s_098172864cf888::t_9958fba98b0ff1 52
+  s_098172864cf888::t_23cc3d4cc6ba48 12
+  s_098172864cf888::t_b90d79997b34fd 63-69,78,81-83,85
+  s_99c19674ed59d0::t_fc4aa8d5919c4b 59-61
+packages/harness/src/tools/builtin/bash.ts
+  s_b36f35545a98fd::t_359afa0c7eee45 13,39,44-47,52,55,57,62-75,77-79,81-87,89,92,97-110,115,127-131,150,152,171-172,184,199,270
+  s_ed3588bb0efbeb::t_064de1fdd9d7e7 111-113,116-117
+  s_ed3588bb0efbeb::t_a1bdbbf756fcb3 114
+packages/harness/src/files/__tests__/path-lock.spec.ts
+  s_098172864cf888::t_289d84d18b62aa 1-102
+packages/harness/src/tools/builtin/write.ts
+  s_098172864cf888::t_f37f2a83b3df6a 15-17
+  s_3d83af59050d52::t_c140241e9c3fd5 63
+  s_098172864cf888::t_ad67fed8f8dd8f 42-52,55-62,64-77
+  s_ed3588bb0efbeb::t_d04f43a9ee8114 54
+packages/harness/src/tools/builtin/read.ts
+  s_ed3588bb0efbeb::t_a167037204247f 118
+packages/core/src/tools/tool.ts
+  s_098172864cf888::t_487afa57f4612d 37-43
+  s_99c19674ed59d0::t_cddce683ee6656 3,49-52,60-61,69,85,95-96,111,118
+packages/harness/src/files/read-state.ts
+  s_098172864cf888::t_394083566ae587 3-4,9,12-13,18,20-23,26-27
+  s_098172864cf888::t_9a815540f21f33 7
+packages/harness/src/files/digest.ts
+  s_098172864cf888::t_df0229c3e107e4 1-7
+packages/harness/src/tools/dispatch.ts
+  s_098172864cf888::t_5d5c3fe552b0dc 81
+packages/harness/src/hooks/__tests__/mirror-plan.spec.ts
+  s_098172864cf888::t_af3bc62bf0fb2b 8
+  s_098172864cf888::t_0e77983c290d91 23
+packages/harness/src/files/path-lock.ts
+  s_098172864cf888::t_196c0a3e71b095 1-31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9d64edfda9ffb177f61062dfb55140568ca89f0d",
+  "prompts": {},
+  "sessions": {
+    "s_098172864cf888": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77c97d66-e7c0-4fef-8998-dfad371bcad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_37569aa4b69462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d09552e0-3201-480f-8869-4be07520639c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3d83af59050d52": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "576fc6c5-ff3a-40f0-b80e-172325e4141c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8872fb7ebcd73e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d05de19b-dc4a-4a3f-bdf0-fb1d5f42189a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_99c19674ed59d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5b260db9-7e12-4bfe-b398-9d01d18d7d0f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b36f35545a98fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50b0cafb-c15e-4934-a0ba-a60db1b4ce83",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_e3b55646d2e132": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0ca48c2-bc99-4feb-9054-c79080772fae",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ed3588bb0efbeb": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1f24252-ac33-4c97-9ba3-ca59d69b0a62",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
