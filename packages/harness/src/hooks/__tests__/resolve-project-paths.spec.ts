@@ -4,6 +4,7 @@ import {
   EBeforeToolDecision,
   EToolEffect,
   toCallId,
+  toThreadId,
   type ToolCall,
 } from '@dltech/atlas-core'
 
@@ -27,6 +28,7 @@ const callReading = (path: string): ToolCall => ({
   name: 'read',
   input: { path },
   effect: EToolEffect.Read,
+  threadId: toThreadId('thread-1'),
 })
 
 const inputOf = async (path: string): Promise<unknown> => {
@@ -61,6 +63,7 @@ describe('resolving a declared path against the project directory', () => {
         name: 'bash',
         input: { command: 'ls' },
         effect: EToolEffect.Destructive,
+        threadId: toThreadId('thread-1'),
       },
     })
 

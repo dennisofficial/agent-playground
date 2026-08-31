@@ -31,7 +31,13 @@ const log = (drafts: readonly EventDraft[]): Event[] =>
     })),
   })
 
-const call: ToolCall = { callId: toCallId('call-1'), name: 'bash', input: {}, effect: EToolEffect.Write }
+const call: ToolCall = {
+  callId: toCallId('call-1'),
+  name: 'bash',
+  input: {},
+  effect: EToolEffect.Write,
+  threadId: toThreadId('thread-fixture'),
+}
 
 const ranBash = (output: unknown): ToolOutcome => ({ ok: true, output, modelText: 'done' })
 

@@ -10,6 +10,7 @@ import {
   SchemaTool,
   idledSeconds,
   waitsBySleeping,
+  type ThreadId,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
@@ -35,49 +36,83 @@ const MAXIMUM_OUTPUT_CHARACTERS = 30_000
 const inputSchema = z.strictObject({
   command: z.string().min(1),
   timeoutMs: z.number().int().positive().optional(),
-  description: z.string().optional(),
+  description: z.string().min(1),
   runInBackground: z.boolean().optional(),
 })
 
 const description = [
-  'Run a command in a fresh bash process, starting in the project directory.',
-  'Stay there: reach elsewhere by writing absolute paths in the command, not by opening it with cd.',
-  'Use cd only when the developer asks you to move.',
-  'A cd does carry to your next call; nothing else does, so a shell variable, function or background job dies with the call that made it.',
+  'Run a command in bash.',
+  'It starts in the directory your last command left, which is the project directory until something moves it, so never open a command with a cd back to where you already are.',
+  'Reach elsewhere by writing absolute paths in the command rather than by cd, and cd only when the developer asks you to move.',
+  'The directory is the only thing that carries: the process is new each call, so a shell variable, function or background job dies with the call that made it.',
   'stdout and stderr come back as one string, all of stdout first and then all of stderr, so the two are not interleaved.',
   'Only the tail is kept once the output grows past its cap.',
   'A non-zero exit is reported rather than raised, with the code named at the end.',
   `Times out after ${DEFAULT_TIMEOUT_MS} ms unless timeoutMs says otherwise, and never later than ${MAXIMUM_TIMEOUT_MS} ms.`,
-  'Pass description to say in a few words what the command is for.',
+  'Every call carries a description: a few imperative words naming the job - Run the core tests, Rebase onto main - which is what the developer reads in place of the command.',
   'A command that only sleeps is refused: idling advances nothing, so back the slow thing and end the turn instead.',
   'Set runInBackground to start a long-running command - a dev server, a watch, a slow test suite - and get a shell id back at once instead of waiting.',
-  'A background shell has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
+  'A background shell starts in that same directory, has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
   'Its ending wakes you wherever you are, however it ends, carrying everything it printed - whether or not a turn is running when it lands.',
+  'Its stdin is closed, so a command that stops to ask something can never be answered and will never end; that too is delivered to you, so a prompt is reported rather than waited out.',
   'So never wait on one: no sleeping, no polling, no idle loop. Move on to other work, or end the turn and be woken.',
   'shell_output reads a shell that will not end on its own, shell_list shows what is running, and shell_kill stops one.',
 ].join(' ')
 
-function mergeStreams(args: { stdout: Tail; stderr: Tail }): Tail {
-  const text = [args.stdout.text, args.stderr.text]
-    .map((stream) => stream.replace(/\n+$/, ''))
-    .filter((stream) => stream.length > 0)
+const HALF_OUTPUT_CHARACTERS = Math.floor(MAXIMUM_OUTPUT_CHARACTERS / 2)
+
+/**
+ * Each stream is budgeted rather than the joined text: keeping the last N characters of stdout
+ * followed by stderr throws stdout away first, so a command loud on both showed only stderr.
+ */
+function budgetsFor(args: { stdout: number; stderr: number }): { stdout: number; stderr: number } {
+  if (args.stdout + args.stderr <= MAXIMUM_OUTPUT_CHARACTERS) return args
+  if (args.stdout <= HALF_OUTPUT_CHARACTERS) {
+    return { stdout: args.stdout, stderr: MAXIMUM_OUTPUT_CHARACTERS - args.stdout }
+  }
+  if (args.stderr <= HALF_OUTPUT_CHARACTERS) {
+    return { stdout: MAXIMUM_OUTPUT_CHARACTERS - args.stderr, stderr: args.stderr }
+  }
+
+  return {
+    stdout: HALF_OUTPUT_CHARACTERS,
+    stderr: MAXIMUM_OUTPUT_CHARACTERS - HALF_OUTPUT_CHARACTERS,
+  }
+}
+
+const withoutTrailingBreaks = (text: string): string => text.replace(/\n+$/, '')
+
+function clampTail(args: { tail: Tail; budget: number }): Tail {
+  const text = withoutTrailingBreaks(args.tail.text)
+  if (text.length <= args.budget) return { ...args.tail, text }
+
+  const kept = text.slice(-args.budget)
+  return {
+    text: kept,
+    droppedLines: args.tail.droppedLines + countLineBreaks(text.slice(0, text.length - kept.length)),
+    truncated: true,
+  }
+}
+
+function mergeStreams(args: { stdout: Tail; stderr: Tail }): { text: string; truncated: boolean } {
+  const budgets = budgetsFor({
+    stdout: withoutTrailingBreaks(args.stdout.text).length,
+    stderr: withoutTrailingBreaks(args.stderr.text).length,
+  })
+
+  const streams = [
+    clampTail({ tail: args.stdout, budget: budgets.stdout }),
+    clampTail({ tail: args.stderr, budget: budgets.stderr }),
+  ]
+
+  const text = streams
+    .filter((stream) => stream.text.length > 0)
+    .map(render)
     .join('\n')
     .replace(/^(?:[^\S\n]*\n)+/, '')
     .trimEnd()
 
-  const merged: Tail = {
-    text,
-    droppedLines: args.stdout.droppedLines + args.stderr.droppedLines,
-    truncated: args.stdout.truncated || args.stderr.truncated,
-  }
-  if (text.length <= MAXIMUM_OUTPUT_CHARACTERS) return merged
-
-  const kept = text.slice(-MAXIMUM_OUTPUT_CHARACTERS)
-  return {
-    text: kept,
-    droppedLines: merged.droppedLines + countLineBreaks(text.slice(0, text.length - kept.length)),
-    truncated: true,
-  }
+  return { text, truncated: streams.some((stream) => stream.truncated) }
 }
 
 function renderModelText(args: {
@@ -89,7 +124,11 @@ function renderModelText(args: {
 }): string {
   const sections: string[] = []
   if (args.merged.length > 0) sections.push(args.merged)
-  if (args.timedOut) sections.push(`The command was killed after exceeding its ${args.timeoutMs} ms timeout.`)
+  if (args.timedOut) {
+    sections.push(
+      `The command was killed after exceeding its ${args.timeoutMs} ms timeout. If it needs longer than ${MAXIMUM_TIMEOUT_MS} ms, start it again with runInBackground and its ending will be delivered to you whenever it lands.`,
+    )
+  }
   if (args.exitCode !== 0) sections.push(`Exit code: ${args.exitCode}`)
   if (args.movedTo !== undefined) sections.push(`You are now in ${args.movedTo}, and later commands start there.`)
   if (sections.length === 0) return 'The command completed with no output.'
@@ -108,8 +147,9 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
   }
 
   private startInBackground(args: {
+    threadId: ThreadId
     command: string
-    description?: string | undefined
+    description: string
     cwd: string
   }): ToolOutcome {
     const started = this.shells.start(args)
@@ -128,7 +168,8 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
       },
       modelText: [
         `Started in the background as shell ${shellId}, and it outlives this turn.`,
-        'Its ending will be delivered to you with everything it printed, whether or not a turn is running then.',
+        'Its ending will be delivered to you with everything it printed, whether or not a turn is running then,',
+        'and so will a prompt it stops on, since its stdin is closed and no ending would ever follow.',
         'So do not wait on it: no sleeping, no polling, no idle loop. Take up other work, or end the turn and be woken.',
         `Use shell_output({ shellId: "${shellId}" }) only for a shell that will not end on its own, such as a dev server`,
         `whose startup log you need, and shell_kill({ shellId: "${shellId}" }) to stop it.`,
@@ -140,6 +181,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     input,
     signal,
     sessionDirectory,
+    threadId,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn before the command started' }
 
@@ -154,6 +196,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         }
       }
       return this.startInBackground({
+        threadId,
         command,
         description: input.description,
         cwd: sessionDirectory,
@@ -224,7 +267,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         ...(movedTo === undefined ? {} : { sessionDirectory: movedTo }),
       },
       modelText: renderModelText({
-        merged: render(merged),
+        merged: merged.text,
         exitCode: read.exitCode,
         timedOut,
         timeoutMs: timeout,

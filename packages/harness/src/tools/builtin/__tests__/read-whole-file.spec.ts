@@ -1,3 +1,4 @@
+import { toThreadId } from '@dltech/atlas-core'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +15,11 @@ beforeAll(async () => {
   await writeFile(join(root, 'many.txt'), 'alpha\nbravo\ncharlie\ndelta\n')
   await writeFile(join(root, 'one.txt'), 'solo\n')
   await writeFile(join(root, 'empty.txt'), '')
+  await writeFile(
+    join(root, 'long.txt'),
+    `${Array.from({ length: 2_500 }, (_, i) => `line ${i}`).join('\n')}\n`,
+  )
+  await writeFile(join(root, 'wide.txt'), `${'x'.repeat(5_000)}\nshort\n`)
 })
 
 const tool = new ReadTool()
@@ -24,12 +30,16 @@ const readWith = async (input: { path: string; offset?: number; limit?: number }
     signal: new AbortController().signal,
     idempotencyKey: 'read-1',
     sessionDirectory: SESSION_DIRECTORY,
+    threadId: toThreadId('thread-1'),
   })
 
   if (!outcome.ok) throw new Error(outcome.reason)
 
   const output = outcome.output as { truncated: boolean }
-  return { claimsWhole: tool.revealsWholeFile?.(input) ?? false, truncated: output.truncated }
+  return {
+    claimsWhole: tool.revealsWholeFile?.({ input, output: outcome.output }) ?? false,
+    truncated: output.truncated,
+  }
 }
 
 describe('ReadTool.revealsWholeFile against what the read actually returned', () => {
@@ -68,6 +78,20 @@ describe('ReadTool.revealsWholeFile against what the read actually returned', ()
     expect(await readWith({ path: join(root, 'many.txt'), limit: 1000 })).toEqual({
       claimsWhole: false,
       truncated: false,
+    })
+  })
+
+  it('declines to claim a file the default line limit cut short', async () => {
+    expect(await readWith({ path: join(root, 'long.txt') })).toEqual({
+      claimsWhole: false,
+      truncated: true,
+    })
+  })
+
+  it('declines to claim a file whose lines were clipped', async () => {
+    expect(await readWith({ path: join(root, 'wide.txt') })).toEqual({
+      claimsWhole: false,
+      truncated: true,
     })
   })
 })

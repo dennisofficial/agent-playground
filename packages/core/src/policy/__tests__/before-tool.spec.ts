@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { toCallId } from '../../events/ids'
+import { toCallId, toThreadId } from '../../events/ids'
 import { EToolEffect, type ToolCall } from '../../tools/tool'
 import { EBeforeToolDecision, resolveBeforeTool, type BeforeToolOutcome } from '../before-tool'
 
@@ -9,6 +9,7 @@ const call: ToolCall = {
   name: 'write_file',
   input: { path: 'src/a.ts' },
   effect: EToolEffect.Write,
+  threadId: toThreadId('thread-1'),
 }
 
 describe('resolveBeforeTool', () => {
@@ -106,6 +107,7 @@ describe('resolveBeforeTool when a hook returns a decision without a reason', ()
     name: 'write',
     input: { path: '/tmp/x' },
     effect: EToolEffect.Write,
+    threadId: toThreadId('thread-1'),
   }
 
   const acrossABoundary = (outcome: { decision: EBeforeToolDecision }): BeforeToolOutcome =>

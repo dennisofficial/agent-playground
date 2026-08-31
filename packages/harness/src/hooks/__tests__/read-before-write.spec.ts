@@ -11,10 +11,13 @@ import {
   EPathPresence,
   EToolEffect,
   toCallId,
+  toThreadId,
+  type ThreadId,
   type ToolCall,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
+import { digestOf } from '../../files/digest'
 import { InMemoryFileReadState, type FileView } from '../../files/read-state'
 import { createReadBeforeWriteHook } from '../read-before-write'
 
@@ -54,22 +57,36 @@ const tools: readonly ToolDeclaration[] = [
   undeclaredTool,
 ]
 
-const callTo = ({ name, input }: { name: string; input: unknown }): ToolCall => ({
+const parent = toThreadId('thread-parent')
+const child = toThreadId('thread-child')
+
+const callTo = ({
+  name,
+  input,
+  threadId,
+}: {
+  name: string
+  input: unknown
+  threadId: ThreadId
+}): ToolCall => ({
   callId: toCallId('call-1'),
   name,
   input,
   effect: EToolEffect.Write,
+  threadId,
 })
 
 const decide = ({
   seen,
   name,
   input,
+  threadId = parent,
 }: {
   seen: InMemoryFileReadState
   name: string
   input: unknown
-}) => createReadBeforeWriteHook({ seen, tools }).run({ call: callTo({ name, input }) })
+  threadId?: ThreadId
+}) => createReadBeforeWriteHook({ seen, tools }).run({ call: callTo({ name, input, threadId }) })
 
 const fileHolding = async ({ name, text }: { name: string; text: string }): Promise<string> => {
   const path = join(root, name)
@@ -85,12 +102,23 @@ const viewOnDisk = async ({
   wholeFile: boolean
 }): Promise<FileView> => {
   const stats = await stat(path)
-  return { mtimeMs: stats.mtimeMs, size: stats.size, wholeFile }
+  const digest = await digestOf({ path })
+  if (digest === undefined) throw new Error(`could not digest ${path}`)
+
+  return { mtimeMs: stats.mtimeMs, size: stats.size, wholeFile, digest }
 }
 
-const havingRead = async ({ path, wholeFile }: { path: string; wholeFile: boolean }) => {
+const havingRead = async ({
+  path,
+  wholeFile,
+  threadId = parent,
+}: {
+  path: string
+  wholeFile: boolean
+  threadId?: ThreadId
+}) => {
   const seen = new InMemoryFileReadState()
-  seen.record({ path, view: await viewOnDisk({ path, wholeFile }) })
+  seen.record({ threadId, path, view: await viewOnDisk({ path, wholeFile }) })
   return seen
 }
 
@@ -114,6 +142,43 @@ describe('createReadBeforeWriteHook', () => {
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
   })
 
+  it('tells an amendment it would change part of the file, not rewrite it', async () => {
+    const path = await fileHolding({ name: 'stale-part.ts', text: 'export const a = 1\n' })
+    const seen = await havingRead({ path, wholeFile: false })
+
+    await settle()
+    await writeFile(path, 'export const a = 2\n')
+
+    const reason = denialReasonOf(await decide({ seen, name: 'edit', input: { path } }))
+    expect(reason).toContain(`edit would change part of ${path}`)
+    expect(reason).not.toContain('rewrite')
+    expect(reason).not.toContain('replace all')
+  })
+
+  it('allows an amendment to a file that has never been read, since its old text is the anchor', async () => {
+    const path = await fileHolding({ name: 'unread-edit.ts', text: 'export const a = 1\n' })
+
+    const outcome = await decide({ seen: new InMemoryFileReadState(), name: 'edit', input: { path } })
+
+    expect(outcome).toEqual({ decision: EBeforeToolDecision.Allow, input: { path } })
+  })
+
+  it('still refuses a whole-file overwrite of that same unread file', async () => {
+    const path = await fileHolding({ name: 'unread-edit-then-write.ts', text: 'export const a = 1\n' })
+
+    const outcome = await decide({ seen: new InMemoryFileReadState(), name: 'write', input: { path } })
+
+    expect(denialReasonOf(outcome)).toContain('read it first')
+  })
+
+  it('tells a whole-file write it would replace all of the file', async () => {
+    const path = await fileHolding({ name: 'unread-write.ts', text: 'export const a = 1\n' })
+
+    const outcome = await decide({ seen: new InMemoryFileReadState(), name: 'write', input: { path } })
+
+    expect(denialReasonOf(outcome)).toContain(`write would replace all of ${path}`)
+  })
+
   it('denies a write to an existing file that has never been read', async () => {
     const path = await fileHolding({ name: 'unread.ts', text: 'export const a = 1\n' })
 
@@ -122,6 +187,7 @@ describe('createReadBeforeWriteHook', () => {
     const reason = denialReasonOf(outcome)
     expect(reason).toContain(path)
     expect(reason).toContain('read it first')
+    expect(reason).toContain('lost unseen')
   })
 
   it('allows a write when the whole file was read and nothing has touched it since', async () => {
@@ -141,7 +207,7 @@ describe('createReadBeforeWriteHook', () => {
     await writeFile(path, 'export const a = 2\n')
 
     const current = await stat(path)
-    expect(seen.viewOf(path)?.mtimeMs).not.toBe(current.mtimeMs)
+    expect(seen.viewOf({ threadId: parent, path })?.mtimeMs).not.toBe(current.mtimeMs)
 
     const outcome = await decide({ seen, name: 'write', input: { path } })
 
@@ -159,10 +225,14 @@ describe('createReadBeforeWriteHook', () => {
 
     const current = await stat(path)
     const seen = new InMemoryFileReadState()
-    seen.record({ path, view: { mtimeMs: current.mtimeMs, size: asRead.size, wholeFile: true } })
+    seen.record({
+      threadId: parent,
+      path,
+      view: { mtimeMs: current.mtimeMs, size: asRead.size, wholeFile: true, digest: 'as-read' },
+    })
 
     expect(current.size).not.toBe(asRead.size)
-    expect(seen.viewOf(path)?.mtimeMs).toBe(current.mtimeMs)
+    expect(seen.viewOf({ threadId: parent, path })?.mtimeMs).toBe(current.mtimeMs)
 
     const outcome = await decide({ seen, name: 'write', input: { path } })
 
@@ -290,5 +360,66 @@ describe('createReadBeforeWriteHook', () => {
       decision: EBeforeToolDecision.Allow,
       input,
     })
+  })
+})
+
+describe('createReadBeforeWriteHook across two threads', () => {
+  it('does not let one thread’s read vouch for another thread’s overwrite', async () => {
+    const path = await fileHolding({ name: 'read-by-child.ts', text: 'export const a = 1\n' })
+    const seen = await havingRead({ path, wholeFile: true, threadId: child })
+
+    expect((await decide({ seen, name: 'write', input: { path }, threadId: child })).decision).toBe(
+      EBeforeToolDecision.Allow,
+    )
+
+    const reason = denialReasonOf(
+      await decide({ seen, name: 'write', input: { path }, threadId: parent }),
+    )
+    expect(reason).toContain(path)
+    expect(reason).toContain('read it first')
+  })
+
+  it('does not let one thread’s read make another thread’s stale amendment look fresh', async () => {
+    const path = await fileHolding({ name: 'stale-for-parent.ts', text: 'export const a = 1\n' })
+    const seen = new InMemoryFileReadState()
+    seen.record({ threadId: parent, path, view: await viewOnDisk({ path, wholeFile: true }) })
+
+    await settle()
+    await writeFile(path, 'export const a = 2\n')
+    seen.record({ threadId: child, path, view: await viewOnDisk({ path, wholeFile: true }) })
+
+    expect((await decide({ seen, name: 'edit', input: { path }, threadId: child })).decision).toBe(
+      EBeforeToolDecision.Allow,
+    )
+
+    expect(
+      denialReasonOf(await decide({ seen, name: 'edit', input: { path }, threadId: parent })),
+    ).toContain('read it again')
+  })
+
+  it('refuses the write of a thread whose view another thread’s write left behind', async () => {
+    const path = await fileHolding({ name: 'clobber-race.ts', text: 'export const a = 1\n' })
+    const seen = new InMemoryFileReadState()
+    const asBothSawIt = await viewOnDisk({ path, wholeFile: true })
+    seen.record({ threadId: parent, path, view: asBothSawIt })
+    seen.record({ threadId: child, path, view: asBothSawIt })
+
+    expect((await decide({ seen, name: 'write', input: { path }, threadId: child })).decision).toBe(
+      EBeforeToolDecision.Allow,
+    )
+
+    await settle()
+    await writeFile(path, 'export const a = 2\n')
+    seen.record({ threadId: child, path, view: await viewOnDisk({ path, wholeFile: true }) })
+
+    const reason = denialReasonOf(
+      await decide({ seen, name: 'write', input: { path }, threadId: parent }),
+    )
+    expect(reason).toContain(path)
+    expect(reason).toContain('read it again')
+
+    expect((await decide({ seen, name: 'write', input: { path }, threadId: child })).decision).toBe(
+      EBeforeToolDecision.Allow,
+    )
   })
 })

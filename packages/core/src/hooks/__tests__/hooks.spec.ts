@@ -11,6 +11,7 @@ const call: ToolCall = {
   name: 'write_file',
   input: { path: '/etc/hosts' },
   effect: EToolEffect.Write,
+  threadId: toThreadId('thread-1'),
 }
 
 describe('hook types', () => {

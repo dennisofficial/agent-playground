@@ -1,5 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { stat } from 'node:fs/promises'
 
 import {
   EContentAccess,
@@ -13,7 +12,9 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { injectable } from '../../container/injection'
+import { inject, injectable, portToken } from '../../container/injection'
+import { writeFileAtomically } from '../../files/atomic-write'
+import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
 import { absolutePathSchema } from './file-text'
 
 const inputSchema = z.strictObject({
@@ -38,24 +39,42 @@ export class WriteTool extends SchemaTool<typeof inputSchema> {
     { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Overwrites },
   ]
 
-  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+  constructor(
+    @inject(portToken(FileWriteGuardPort))
+    private readonly guard: FileWriteGuardPort = new SerializedWrites(),
+  ) {
+    super()
+  }
+
+  protected override async run({
+    input,
+    threadId,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { path, content } = input
-    const stats = await stat(path).catch(() => null)
-    if (stats !== null && !stats.isFile()) {
-      return { ok: false, reason: `${path} already exists and is not a regular file.` }
-    }
 
-    await mkdir(dirname(path), { recursive: true })
-    const bytes = await Bun.write(path, content)
-    const created = stats === null
+    const guarded = await this.guard.underLock({
+      threadId,
+      path,
+      write: async (): Promise<ToolOutcome> => {
+        const stats = await stat(path).catch(() => null)
+        if (stats !== null && !stats.isFile()) {
+          return { ok: false, reason: `${path} already exists and is not a regular file.` }
+        }
 
-    return {
-      ok: true,
-      output: { path, created, bytes },
-      modelText: created
-        ? `File created successfully at: ${path}`
-        : `The file ${path} has been updated successfully.`,
-    }
+        const bytes = await writeFileAtomically({ path, content, mode: stats?.mode })
+        const created = stats === null
+
+        return {
+          ok: true,
+          output: { path, created, bytes },
+          modelText: created
+            ? `File created successfully at: ${path}`
+            : `The file ${path} has been updated successfully.`,
+        }
+      },
+    })
+
+    return guarded.ok ? guarded.value : { ok: false, reason: guarded.reason }
   }
 }
 

@@ -7,6 +7,7 @@ import {
   EToolEffect,
   SchemaTool,
   type DeclaredPathField,
+  type RevealedLines,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
@@ -108,6 +109,56 @@ function searcherFor(args: SearchArguments): Searcher {
   return binary === null ? posixGrepSearcher(args) : ripgrepSearcher({ ...args, binary })
 }
 
+export type GrepInput = z.output<typeof inputSchema>
+
+export type GrepOutput = {
+  pattern: string
+  matches: readonly string[]
+  paths: readonly string[]
+  truncated: boolean
+}
+
+const isGrepOutput = (output: unknown): output is GrepOutput =>
+  typeof output === 'object' &&
+  output !== null &&
+  Array.isArray((output as GrepOutput).paths) &&
+  (output as GrepOutput).paths.every((path) => typeof path === 'string')
+
+/**
+ * ripgrep and POSIX grep both print a match as `path:line:text` and a context line as
+ * `path-line-text`, so the colon separates a line the model was shown from one it was not.
+ * The search root anchors the split, since a path may itself contain a colon.
+ */
+function matchedPathIn({
+  line,
+  searchPath,
+}: {
+  line: string
+  searchPath: string
+}): string | undefined {
+  if (!line.startsWith(searchPath)) return undefined
+
+  const separator = line.indexOf(':', searchPath.length)
+  return separator === -1 ? undefined : line.slice(0, separator)
+}
+
+function pathsShownIn({
+  window,
+  searchPath,
+}: {
+  window: readonly string[]
+  searchPath: string
+}): string[] {
+  const shown = new Set<string>()
+
+  for (const line of window) {
+    const path = matchedPathIn({ line, searchPath })
+    if (path !== undefined) shown.add(path)
+  }
+
+  return [...shown]
+}
+
 const clampLine = (line: string): string =>
   line.length <= MAXIMUM_LINE_LENGTH ? line : line.slice(0, MAXIMUM_LINE_LENGTH)
 
@@ -148,6 +199,10 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Read
   override readonly isConcurrencySafe = (): boolean => true
+  override readonly revealsLinesOf = ({
+    output,
+  }: RevealedLines<z.output<typeof inputSchema>>): readonly string[] =>
+    isGrepOutput(output) ? output.paths : []
   readonly inputSchema = inputSchema
   override readonly pathFields: readonly DeclaredPathField[] = [
     { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute, content: EContentAccess.None },
@@ -159,9 +214,10 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     sessionDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = input
+    const searchPath = path ?? sessionDirectory
     const searcher = searcherFor({
       pattern,
-      searchPath: path ?? sessionDirectory,
+      searchPath,
       glob,
       caseInsensitive: caseInsensitive ?? false,
       context,
@@ -213,7 +269,12 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
 
     return {
       ok: true,
-      output: { pattern, matches: window, truncated: from + window.length < lines.length },
+      output: {
+        pattern,
+        matches: window,
+        paths: pathsShownIn({ window, searchPath }),
+        truncated: from + window.length < lines.length,
+      } satisfies GrepOutput,
       modelText: renderModelText({ window, total: lines.length, offset: from, complaint }),
     }
   }

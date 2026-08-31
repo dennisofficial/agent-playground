@@ -1,5 +1,4 @@
-import { mkdir, stat } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { stat } from 'node:fs/promises'
 
 import {
   EContentAccess,
@@ -13,7 +12,9 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { injectable } from '../../container/injection'
+import { inject, injectable, portToken } from '../../container/injection'
+import { writeFileAtomically } from '../../files/atomic-write'
+import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
 import {
   absolutePathSchema,
   detectLineEnding,
@@ -47,6 +48,7 @@ async function createFile(args: {
   path: string
   newString: string
   existing: string | null
+  mode: number | undefined
 }): Promise<ToolOutcome> {
   if (args.newString === '') {
     return {
@@ -60,8 +62,7 @@ async function createFile(args: {
     return { ok: false, reason: 'Cannot create new file - file already exists.' }
   }
 
-  await mkdir(dirname(args.path), { recursive: true })
-  await Bun.write(args.path, args.newString)
+  await writeFileAtomically({ path: args.path, content: args.newString, mode: args.mode })
 
   return {
     ok: true,
@@ -82,6 +83,7 @@ async function replaceInFile(args: {
   oldString: string
   newString: string
   replaceAll: boolean
+  mode: number
 }): Promise<ToolOutcome> {
   const raw = await Bun.file(args.path).text()
   const pattern = lineEndingAgnosticPattern(args.oldString)
@@ -107,7 +109,7 @@ async function replaceInFile(args: {
     return { ok: false, reason: 'oldString and newString are identical; the file would not change.' }
   }
 
-  await Bun.write(args.path, rewritten)
+  await writeFileAtomically({ path: args.path, content: rewritten, mode: args.mode })
 
   return {
     ok: true,
@@ -133,19 +135,46 @@ export class EditTool extends SchemaTool<typeof inputSchema> {
     { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Amends },
   ]
 
-  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+  constructor(
+    @inject(portToken(FileWriteGuardPort))
+    private readonly guard: FileWriteGuardPort = new SerializedWrites(),
+  ) {
+    super()
+  }
+
+  protected override async run({
+    input,
+    threadId,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { path, oldString, newString, replaceAll } = input
-    const stats = await stat(path).catch(() => null)
-    if (stats !== null && !stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
 
-    if (oldString === '') {
-      const existing = stats === null ? null : await Bun.file(path).text()
-      return await createFile({ path, newString, existing })
-    }
+    const guarded = await this.guard.underLock({
+      threadId,
+      path,
+      write: async (): Promise<ToolOutcome> => {
+        const stats = await stat(path).catch(() => null)
+        if (stats !== null && !stats.isFile()) {
+          return { ok: false, reason: `${path} is not a regular file.` }
+        }
 
-    if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
+        if (oldString === '') {
+          const existing = stats === null ? null : await Bun.file(path).text()
+          return await createFile({ path, newString, existing, mode: stats?.mode })
+        }
 
-    return await replaceInFile({ path, oldString, newString, replaceAll: replaceAll ?? false })
+        if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
+
+        return await replaceInFile({
+          path,
+          oldString,
+          newString,
+          replaceAll: replaceAll ?? false,
+          mode: stats.mode,
+        })
+      },
+    })
+
+    return guarded.ok ? guarded.value : { ok: false, reason: guarded.reason }
   }
 }
 

@@ -5,6 +5,7 @@ import {
   hookOutcomeDrafts,
   PLAN_TOOL_NAME,
   toCallId,
+  toThreadId,
   EToolEffect,
   type ToolCall,
   type ToolOutcome,
@@ -19,6 +20,7 @@ const callOf = (args: { name: string; input: unknown }): ToolCall => ({
   name: args.name,
   input: args.input,
   effect: EToolEffect.Read,
+  threadId: toThreadId('thread-1'),
 })
 
 const OK: ToolOutcome = { ok: true, output: {}, modelText: 'ok' }

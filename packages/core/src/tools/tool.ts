@@ -1,6 +1,6 @@
 import { z, type ZodType } from 'zod'
 
-import type { CallId } from '../events/ids'
+import type { CallId, ThreadId } from '../events/ids'
 
 export enum EToolEffect {
   Read = 'read',
@@ -34,11 +34,21 @@ export type DeclaredPathField = {
 
 export const TAKES_NO_PATHS: readonly DeclaredPathField[] = []
 
-export type ToolCall = { callId: CallId; name: string; input: unknown; effect: EToolEffect }
+export type ToolCall = {
+  callId: CallId
+  name: string
+  input: unknown
+  effect: EToolEffect
+  threadId: ThreadId
+}
 
 export type ToolOutcome =
   | { ok: true; output: unknown; modelText: string }
   | { ok: false; reason: string }
+
+export type WholeFileClaim<TInput> = { input: TInput; output: unknown }
+
+export type RevealedLines<TInput> = { input: TInput; output: unknown }
 
 export type ToolDeclaration = {
   name: string
@@ -47,7 +57,8 @@ export type ToolDeclaration = {
   inputSchema: ZodType
   pathFields?: readonly DeclaredPathField[]
   isConcurrencySafe?(input: unknown): boolean
-  revealsWholeFile?(input: unknown): boolean
+  revealsWholeFile?(args: WholeFileClaim<unknown>): boolean
+  revealsLinesOf?(args: RevealedLines<unknown>): readonly string[]
 }
 
 export type ToolInvocation = {
@@ -55,6 +66,7 @@ export type ToolInvocation = {
   signal: AbortSignal
   idempotencyKey: string
   sessionDirectory: string
+  threadId: ThreadId
 }
 
 export type SessionDirectoryMove = { sessionDirectory: string }
@@ -70,6 +82,7 @@ export type ToolRun<TSchema extends ZodType> = {
   signal: AbortSignal
   idempotencyKey: string
   sessionDirectory: string
+  threadId: ThreadId
 }
 
 export abstract class ToolDefinition<TSchema extends ZodType = ZodType> {
@@ -79,7 +92,8 @@ export abstract class ToolDefinition<TSchema extends ZodType = ZodType> {
   abstract readonly inputSchema: TSchema
   readonly pathFields?: readonly DeclaredPathField[]
   isConcurrencySafe?(input: z.output<TSchema>): boolean
-  revealsWholeFile?(input: z.output<TSchema>): boolean
+  revealsWholeFile?(args: WholeFileClaim<z.output<TSchema>>): boolean
+  revealsLinesOf?(args: RevealedLines<z.output<TSchema>>): readonly string[]
 
   abstract invoke(args: ToolInvocation): Promise<ToolOutcome>
 }
@@ -94,12 +108,13 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
     signal,
     idempotencyKey,
     sessionDirectory,
+    threadId,
   }: ToolInvocation): Promise<ToolOutcome> {
     const parsed = this.inputSchema.safeParse(input)
     if (!parsed.success) {
       return { ok: false, reason: `${this.name} was called with invalid input: ${z.prettifyError(parsed.error)}` }
     }
 
-    return await this.run({ input: parsed.data, signal, idempotencyKey, sessionDirectory })
+    return await this.run({ input: parsed.data, signal, idempotencyKey, sessionDirectory, threadId })
   }
 }

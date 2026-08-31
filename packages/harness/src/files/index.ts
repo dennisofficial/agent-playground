@@ -1,3 +1,7 @@
 export * from './read-state'
 export * from './register-file-state'
 export * from './file-browser'
+export * from './digest'
+export * from './path-lock'
+export * from './staleness'
+export * from './write-guard'

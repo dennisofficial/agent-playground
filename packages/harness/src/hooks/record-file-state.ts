@@ -9,12 +9,15 @@ import {
   type AfterTool,
   type DeclaredPathField,
   type HookOrder,
+  type ThreadId,
   type ToolCall,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
 import { inject, injectAll, injectable, portToken } from '../container/injection'
+import { digestOf } from '../files/digest'
 import { FileReadStatePort } from '../files/read-state'
+import { movedSince } from '../files/staleness'
 import { ABSENT, inputFieldOf } from '../tools/declared-paths'
 
 @injectable()
@@ -41,18 +44,54 @@ export class RecordFileStateHook extends AfterToolHook {
     if (declaration === undefined) return {}
 
     for (const declared of declaration.pathFields ?? []) {
-      await this.recordField({ call, declaration, declared })
+      await this.recordField({ call, declaration, declared, output: result.output })
+    }
+
+    for (const path of declaration.revealsLinesOf?.({ input: call.input, output: result.output }) ??
+      []) {
+      await this.recordLinesShown({ threadId: call.threadId, path })
     }
 
     return {}
+  }
+
+  /**
+   * A call that showed some of a file's lines proves only that much was seen, so an earlier
+   * whole-file view survives it only while that view is still the file on disk. Carrying a stale
+   * one forward would license a whole-file overwrite of content nobody has read.
+   */
+  private async recordLinesShown({
+    threadId,
+    path,
+  }: {
+    threadId: ThreadId
+    path: string
+  }): Promise<void> {
+    if (!isAbsolute(path)) return
+
+    const stats = await stat(path).catch(() => null)
+    if (stats === null || !stats.isFile()) return
+
+    const digest = await digestOf({ path })
+    if (digest === undefined) return
+
+    const known = this.seen.viewOf({ threadId, path })
+    const wholeFile = known !== undefined && !(await movedSince({ view: known, stats, path })) && known.wholeFile
+
+    this.seen.record({
+      threadId,
+      path,
+      view: { mtimeMs: stats.mtimeMs, size: stats.size, wholeFile, digest },
+    })
   }
 
   private async recordField(args: {
     call: ToolCall
     declaration: ToolDeclaration
     declared: DeclaredPathField
+    output: unknown
   }): Promise<void> {
-    const { call, declaration, declared } = args
+    const { call, declaration, declared, output } = args
     if (declared.content === EContentAccess.None) return
 
     const value = inputFieldOf({ input: call.input, field: declared.field })
@@ -61,12 +100,23 @@ export class RecordFileStateHook extends AfterToolHook {
     const stats = await stat(value).catch(() => null)
     if (stats === null || !stats.isFile()) return
 
+    const digest = await digestOf({ path: value })
+    if (digest === undefined) return
+
     this.seen.record({
+      threadId: call.threadId,
       path: value,
       view: {
         mtimeMs: stats.mtimeMs,
         size: stats.size,
-        wholeFile: this.breadthOf({ content: declared.content, declaration, call, path: value }),
+        digest,
+        wholeFile: this.breadthOf({
+          content: declared.content,
+          declaration,
+          call,
+          output,
+          path: value,
+        }),
       },
     })
   }
@@ -75,12 +125,17 @@ export class RecordFileStateHook extends AfterToolHook {
     content: EContentAccess
     declaration: ToolDeclaration
     call: ToolCall
+    output: unknown
     path: string
   }): boolean {
     if (args.content === EContentAccess.Overwrites) return true
-    if (args.content === EContentAccess.Amends) return this.seen.viewOf(args.path)?.wholeFile ?? true
+    if (args.content === EContentAccess.Amends) {
+      return this.seen.viewOf({ threadId: args.call.threadId, path: args.path })?.wholeFile ?? true
+    }
 
-    return args.declaration.revealsWholeFile?.(args.call.input) ?? false
+    return (
+      args.declaration.revealsWholeFile?.({ input: args.call.input, output: args.output }) ?? false
+    )
   }
 }
 

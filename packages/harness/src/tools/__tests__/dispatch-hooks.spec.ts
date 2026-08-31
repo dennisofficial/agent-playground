@@ -5,8 +5,10 @@ import {
   EStage,
   EToolEffect,
   toCallId,
+  toThreadId,
   type AfterTool,
   type BeforeTool,
+  type ToolCall,
 } from '@dltech/atlas-core'
 
 import { HookChain, type RegisteredHook } from '../../hooks/registry'
@@ -238,5 +240,80 @@ describe('the after-tool observers', () => {
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-denied'])
     expect(seen).toEqual([])
+  })
+})
+
+describe('the thread a call belongs to', () => {
+  it('reaches the before-tool hooks and survives into the after-tool hooks', async () => {
+    const guarded: ToolCall[] = []
+    const observed: ToolCall[] = []
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([
+        toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) }),
+      ]),
+      hooks: new HookChain({
+        beforeTool: [
+          {
+            name: 'watching',
+            order: { stage: EStage.Guard, nudge: 0 },
+            run: async ({ call }) => {
+              guarded.push(call)
+              return { decision: EBeforeToolDecision.Allow, input: call.input }
+            },
+          },
+        ],
+        afterTool: [
+          {
+            name: 'watching',
+            order: { stage: EStage.Observe, nudge: 0 },
+            run: async ({ call }) => {
+              observed.push(call)
+              return {}
+            },
+          },
+        ],
+      }),
+    })
+
+    await dispatcher.dispatch({
+      call: readCall,
+      signal: new AbortController().signal,
+      sessionDirectory: SESSION_DIRECTORY,
+    })
+
+    expect(guarded.map((call) => call.threadId)).toEqual([readCall.threadId])
+    expect(observed.map((call) => call.threadId)).toEqual([readCall.threadId])
+  })
+
+  it('gives each thread its own call, so one thread never answers for another', async () => {
+    const guarded: ToolCall[] = []
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([
+        toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) }),
+      ]),
+      hooks: new HookChain({
+        beforeTool: [
+          {
+            name: 'watching',
+            order: { stage: EStage.Guard, nudge: 0 },
+            run: async ({ call }) => {
+              guarded.push(call)
+              return { decision: EBeforeToolDecision.Allow, input: call.input }
+            },
+          },
+        ],
+      }),
+    })
+
+    const child = toThreadId('thread-child')
+    for (const threadId of [readCall.threadId, child]) {
+      await dispatcher.dispatch({
+        call: { ...readCall, threadId },
+        signal: new AbortController().signal,
+        sessionDirectory: SESSION_DIRECTORY,
+      })
+    }
+
+    expect(guarded.map((call) => call.threadId)).toEqual([readCall.threadId, child])
   })
 })

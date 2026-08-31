@@ -1,3 +1,4 @@
+import { toThreadId } from '@dltech/atlas-core'
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,6 +26,7 @@ const scan = async (input: unknown) =>
     signal: new AbortController().signal,
     idempotencyKey: 'glob-1',
     sessionDirectory: root,
+    threadId: toThreadId('thread-1'),
   })
 
 describe('GlobTool', () => {

@@ -4,6 +4,7 @@ import {
   EToolEffect,
   toCallId,
   toRunId,
+  toThreadId,
   type ToolDefinition,
   type ToolInvocation,
   type ToolOutcome,
@@ -16,6 +17,7 @@ export const readCall: DispatchableCall = {
   name: 'read',
   input: { path: 'a.ts' },
   runId: toRunId('run-1'),
+  threadId: toThreadId('thread-1'),
 }
 
 export function toolNamed(args: {

@@ -11,12 +11,14 @@ import {
   type BeforeTool,
   type DeclaredPathField,
   type HookOrder,
+  type ThreadId,
   type ToolCall,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
 import { inject, injectAll, injectable, portToken } from '../container/injection'
 import { FileReadStatePort } from '../files/read-state'
+import { movedSince } from '../files/staleness'
 import {
   ABSENT,
   createDeclaredPaths,
@@ -32,11 +34,12 @@ enum EDenial {
   Partial = 'partial',
 }
 
-type Denial =
-  | { kind: EDenial.Unverifiable; path: string; fault: string }
-  | { kind: EDenial.Unread; path: string }
-  | { kind: EDenial.Stale; path: string }
-  | { kind: EDenial.Partial; path: string }
+type Denial = { path: string; content: EContentAccess } & (
+  | { kind: EDenial.Unverifiable; fault: string }
+  | { kind: EDenial.Unread }
+  | { kind: EDenial.Stale }
+  | { kind: EDenial.Partial }
+)
 
 enum EStatus {
   Absent = 'absent',
@@ -63,20 +66,27 @@ async function statusOf(path: string): Promise<FileStatus> {
   }
 }
 
+const attemptOf = ({ call, denial }: { call: ToolCall; denial: Denial }): string =>
+  denial.content === EContentAccess.Overwrites
+    ? `${call.name} would replace all of ${denial.path}`
+    : `${call.name} would change part of ${denial.path}`
+
 function reasonFor({ call, denial }: { call: ToolCall; denial: Denial }): string {
+  const attempt = attemptOf({ call, denial })
+
   if (denial.kind === EDenial.Unverifiable) {
-    return `${call.name} would rewrite ${denial.path}, but its current state could not be checked (${denial.fault}); the write is refused rather than risk overwriting a change nobody has seen`
+    return `${attempt}, but its current state could not be checked (${denial.fault}); the change is refused rather than risk overwriting something nobody has seen`
   }
 
   if (denial.kind === EDenial.Unread) {
-    return `${call.name} would rewrite ${denial.path}, which has not been read; read it first so the write is based on what the file actually contains`
+    return `${attempt}, which has not been read; read it first so nothing it holds is lost unseen`
   }
 
   if (denial.kind === EDenial.Stale) {
-    return `${call.name} would rewrite ${denial.path}, which has changed since it was read, either by the user or by a formatter; read it again before writing to it`
+    return `${attempt}, which has changed since it was read, either by the user or by a formatter; read it again before writing to it`
   }
 
-  return `${call.name} would replace all of ${denial.path}, but only part of it has been read; read the whole file first, or use edit to change the part you have seen`
+  return `${attempt}, but only part of it has been read; read the whole file first, or use edit to change the part you have seen`
 }
 
 const writesContent = (declared: DeclaredPathField): boolean =>
@@ -115,30 +125,36 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
   }
 
   private async fieldDenial(args: {
+    threadId: ThreadId
     input: unknown
     declared: DeclaredPathField
   }): Promise<Denial | undefined> {
     const path = checkablePathOf({ input: args.input, field: args.declared.field })
     if (path === undefined) return undefined
 
+    const content = args.declared.content
     const status = await statusOf(path)
     if (status.kind === EStatus.Absent) return undefined
     if (status.kind === EStatus.Unverifiable) {
-      return { kind: EDenial.Unverifiable, path, fault: status.fault }
+      return { kind: EDenial.Unverifiable, path, content, fault: status.fault }
     }
 
     const stats = status.stats
     if (!stats.isFile()) return undefined
 
-    const view = this.seen.viewOf(path)
-    if (view === undefined) return { kind: EDenial.Unread, path }
-
-    if (view.mtimeMs !== stats.mtimeMs || view.size !== stats.size) {
-      return { kind: EDenial.Stale, path }
+    const view = this.seen.viewOf({ threadId: args.threadId, path })
+    if (view === undefined) {
+      return content === EContentAccess.Overwrites
+        ? { kind: EDenial.Unread, path, content }
+        : undefined
     }
 
-    if (args.declared.content === EContentAccess.Overwrites && !view.wholeFile) {
-      return { kind: EDenial.Partial, path }
+    if (await movedSince({ view, stats, path })) {
+      return { kind: EDenial.Stale, path, content }
+    }
+
+    if (content === EContentAccess.Overwrites && !view.wholeFile) {
+      return { kind: EDenial.Partial, path, content }
     }
 
     return undefined
@@ -149,7 +165,11 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
     if (declaration.kind !== EPathDeclaration.Declared) return undefined
 
     for (const declared of declaration.fields.filter(writesContent)) {
-      const denial = await this.fieldDenial({ input: call.input, declared })
+      const denial = await this.fieldDenial({
+        threadId: call.threadId,
+        input: call.input,
+        declared,
+      })
       if (denial !== undefined) return denial
     }
 

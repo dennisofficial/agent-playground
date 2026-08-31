@@ -1,3 +1,4 @@
+import { toThreadId } from '@dltech/atlas-core'
 import { mkdtemp, readdir, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -15,13 +16,17 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), 'atlas-bash-'))
 })
 
-const invoke = (input: unknown): Promise<ToolOutcome> =>
+const submit = (input: unknown): Promise<ToolOutcome> =>
   new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'bash-1',
     sessionDirectory: root,
+    threadId: toThreadId('thread-1'),
   })
+
+const invoke = (input: Record<string, unknown>): Promise<ToolOutcome> =>
+  submit({ description: 'Exercise the shell', ...input })
 
 const outputOf = (outcome: ToolOutcome): Record<string, unknown> => {
   if (!outcome.ok) throw new Error(`expected a successful outcome, got: ${outcome.reason}`)
@@ -39,6 +44,13 @@ describe('BashTool', () => {
 
     expect(outcome).toMatchObject({ ok: false })
     expect(!outcome.ok && outcome.reason).toContain('bash was called with invalid input')
+  })
+
+  it('refuses a command that arrives without a name', async () => {
+    const outcome = await submit({ command: 'echo unnamed' })
+
+    expect(outcome).toMatchObject({ ok: false })
+    expect(!outcome.ok && outcome.reason).toContain('description')
   })
 
   it('returns what a command printed and the zero it exited with', async () => {
@@ -104,13 +116,37 @@ describe('BashTool', () => {
     expect(String(output.stdout)).not.toContain('line-1-padding-padding')
   })
 
+  it('keeps the tail of both streams when each on its own would fill the cap', async () => {
+    const outcome = await invoke({
+      command: [
+        'for i in $(seq 1 4000); do echo "out-$i-padding-padding"; done',
+        'for i in $(seq 1 4000); do echo "err-$i-padding-padding" >&2; done',
+      ].join('; '),
+    })
+
+    if (!outcome.ok) throw new Error(outcome.reason)
+
+    expect(outcome.modelText).toContain('out-4000-padding-padding')
+    expect(outcome.modelText).toContain('err-4000-padding-padding')
+    expect(outcome.modelText).not.toContain('out-1-padding-padding')
+    expect(outputOf(outcome).truncated).toBe(true)
+  })
+
+  it('says the command may want a background shell when it runs out of time', async () => {
+    const outcome = await invoke({ command: 'sleep 30', timeoutMs: 400 })
+
+    if (!outcome.ok) throw new Error(outcome.reason)
+    expect(outcome.modelText).toContain('runInBackground')
+  }, 15_000)
+
   it('abandons a command, and says who stopped it, once the turn is interrupted', async () => {
     const controller = new AbortController()
     const outcome = new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
-      input: { command: 'sleep 30' },
+      input: { command: 'sleep 30', description: 'Idle for a while' },
       signal: controller.signal,
       idempotencyKey: 'bash-2',
       sessionDirectory: root,
+      threadId: toThreadId('thread-1'),
     })
     setTimeout(() => controller.abort(), 100)
 
@@ -143,10 +179,11 @@ describe('following the session directory', () => {
     const elsewhere = await mkdtemp(join(tmpdir(), 'atlas-elsewhere-'))
 
     const outcome = await new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
-      input: { command: 'pwd' },
+      input: { command: 'pwd', description: 'Print the working directory' },
       signal: new AbortController().signal,
       idempotencyKey: 'bash-elsewhere',
       sessionDirectory: elsewhere,
+      threadId: toThreadId('thread-1'),
     })
 
     expect(await realpath((outputOf(outcome).stdout as string).trim())).toBe(await realpath(elsewhere))

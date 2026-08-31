@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EToolEffect, PLAN_TOOL_NAME } from '@dltech/atlas-core'
+import { EToolEffect, PLAN_TOOL_NAME,
+  toThreadId,
+} from '@dltech/atlas-core'
 
 import { TaskWriteTool } from '../task-write'
 
@@ -12,6 +14,7 @@ const write = async (input: unknown) =>
     signal: new AbortController().signal,
     idempotencyKey: 'plan-1',
     sessionDirectory: SESSION_DIRECTORY,
+    threadId: toThreadId('thread-1'),
   })
 
 describe('TaskWriteTool', () => {

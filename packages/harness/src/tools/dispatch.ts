@@ -10,6 +10,7 @@ import {
   type ConsultedHook,
   type EventDraft,
   type RunId,
+  type ThreadId,
   type ToolCall,
   type ToolDefinition,
   type ToolOutcome,
@@ -20,7 +21,13 @@ import { injectable } from '../container/injection'
 import type { HookChain, RegisteredHook } from '../hooks/registry'
 import type { ToolRegistry } from './registry'
 
-export type DispatchableCall = { callId: CallId; name: string; input: unknown; runId: RunId }
+export type DispatchableCall = {
+  callId: CallId
+  name: string
+  input: unknown
+  runId: RunId
+  threadId: ThreadId
+}
 
 export abstract class ToolDispatcher {
   abstract dispatch(args: {
@@ -71,6 +78,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
       name: call.name,
       input: parsed.data,
       effect: definition.effect,
+      threadId: call.threadId,
     }
 
     const { outcome } = resolveBeforeTool({
@@ -94,6 +102,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
       signal,
       idempotencyKey,
       sessionDirectory,
+      threadId: call.threadId,
     })
 
     return [
@@ -172,6 +181,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     signal: AbortSignal
     idempotencyKey: string
     sessionDirectory: string
+    threadId: ThreadId
   }): Promise<ToolOutcome> {
     try {
       return await args.definition.invoke({
@@ -179,6 +189,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
         signal: args.signal,
         idempotencyKey: args.idempotencyKey,
         sessionDirectory: args.sessionDirectory,
+        threadId: args.threadId,
       })
     } catch (error) {
       return { ok: false, reason: `the ${args.call.name} tool threw: ${messageOf(error)}` }
