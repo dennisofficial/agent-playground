@@ -1,4 +1,4 @@
-import { EDefinitionOrigin, EToolEffect } from '@dltech/atlas-core'
+import { EDefinitionOrigin } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import { AGENT_SPAWN_TOOL_NAME, type AgentType } from '../agent-type'
@@ -14,7 +14,15 @@ const named = async (name: string): Promise<AgentType> => {
   return found
 }
 
-const WRITING_TOOLS = ['write', 'edit']
+const CAPABILITY_CLAIMS = [
+  'read-only',
+  'no shell',
+  'cannot change',
+  'changes nothing',
+  'withheld',
+  'you have no tool',
+  'full tool set',
+]
 
 describe('the built-in agent types', () => {
   it('ships general-purpose, explore, builder and reviewer, all marked built-in', async () => {
@@ -51,31 +59,17 @@ describe('the built-in agent types', () => {
     }
   })
 
-  it('lets general-purpose and builder inherit the whole tool set', async () => {
-    expect((await named('general-purpose')).tools).toBeUndefined()
-    expect((await named('builder')).tools).toBeUndefined()
-  })
-
-  it('caps explore and reviewer at a read effect, so a new tool is withheld by default', async () => {
-    for (const name of ['explore', 'reviewer']) {
-      expect((await named(name)).maxEffect).toBe(EToolEffect.Read)
+  it('narrows no built-in, so every one has the capabilities of the agent that spawned it', async () => {
+    for (const agentType of await load()) {
+      expect(agentType.tools).toBeUndefined()
+      expect(agentType.maxEffect).toBeUndefined()
     }
   })
 
-  it('withholds every writing tool and the shell from explore and reviewer', async () => {
-    for (const name of ['explore', 'reviewer']) {
-      const tools = (await named(name)).tools ?? []
-      expect(tools).toContain('read')
-      expect(tools).toContain('grep')
-      expect(tools).toContain('glob')
-      for (const writing of WRITING_TOOLS) expect(tools).not.toContain(writing)
-      expect(tools).not.toContain('bash')
+  it('denies nothing but the spawn tool', async () => {
+    for (const agentType of await load()) {
+      expect(agentType.disallowedTools).toEqual([AGENT_SPAWN_TOOL_NAME])
     }
-  })
-
-  it('lets general-purpose and builder keep a destructive tool by leaving the ceiling off', async () => {
-    expect((await named('general-purpose')).maxEffect).toBeUndefined()
-    expect((await named('builder')).maxEffect).toBeUndefined()
   })
 
   it('tells every built-in that only its final message reaches the caller', async () => {
@@ -86,11 +80,18 @@ describe('the built-in agent types', () => {
     }
   })
 
-  it('tells the read-only built-ins they have no shell, matching what they are given', async () => {
+  it('claims no capability limit the mechanism does not enforce, in prompt or in whenToUse', async () => {
+    for (const agentType of await load()) {
+      const prose = `${agentType.prompt} ${agentType.whenToUse}`.toLowerCase()
+      for (const claim of CAPABILITY_CLAIMS) expect(prose).not.toContain(claim)
+    }
+  })
+
+  it('tells explore and reviewer to report rather than change, as an instruction not a limit', async () => {
     for (const name of ['explore', 'reviewer']) {
       const agentType = await named(name)
-      expect(agentType.prompt).toContain('You have no shell')
-      expect(agentType.whenToUse).toContain('no shell')
+      expect(agentType.prompt).toContain('Do not use them to change anything')
+      expect(agentType.whenToUse).toContain('briefed to report')
     }
   })
 })

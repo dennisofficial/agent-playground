@@ -5,19 +5,18 @@ import { HookChain } from '../../../hooks/registry'
 import { HookedToolDispatcher, type DispatchableCall } from '../../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../../tools/registry'
 import { toolNamed } from '../../../tools/__tests__/fixtures'
-import type { AgentType } from '../agent-type'
+import { AGENT_SPAWN_TOOL_NAME, type AgentType } from '../agent-type'
 import { EmbeddedAgentTypeSource } from '../embedded-source'
 import { loadAgentTypes } from '../registry'
 import { toolRegistryFor } from '../tool-access'
 
-let ran: string[] = []
-
 const EFFECT_OF: Readonly<Record<string, EToolEffect>> = {
   bash: EToolEffect.Destructive,
-  shell_kill: EToolEffect.Destructive,
   write: EToolEffect.Write,
   edit: EToolEffect.Write,
 }
+
+let ran: string[] = []
 
 const recording = (name: string) =>
   toolNamed({
@@ -34,20 +33,14 @@ const wholeToolset = () =>
     recording('read'),
     recording('grep'),
     recording('glob'),
-    recording('shell_list'),
-    recording('shell_output'),
     recording('write'),
     recording('edit'),
     recording('bash'),
-    recording('agent_spawn'),
+    recording(AGENT_SPAWN_TOOL_NAME),
   ])
 
-const builtIn = async (name: string): Promise<AgentType> => {
-  const loaded = await loadAgentTypes({ sources: [new EmbeddedAgentTypeSource()] })
-  const found = loaded.find((agentType) => agentType.name === name)
-  if (found === undefined) throw new Error(`no built-in agent type named ${name}`)
-  return found
-}
+const builtInTypes = (): Promise<readonly AgentType[]> =>
+  loadAgentTypes({ sources: [new EmbeddedAgentTypeSource()] })
 
 const callOf = (name: string): DispatchableCall => ({
   callId: toCallId('call-1'),
@@ -74,64 +67,65 @@ const dispatchTo = async (args: { agentType: AgentType; name: string }): Promise
   return draft?.type === 'tool-result' ? (draft.error?.message ?? '') : ''
 }
 
-describe('a dispatcher over a reviewer-narrowed registry', () => {
-  it('refuses bash called by name, so read-only is a capability and not a promise', async () => {
-    const message = await dispatchTo({ agentType: await builtIn('reviewer'), name: 'bash' })
+describe('a dispatcher over a registry narrowed for a built-in agent type', () => {
+  it('refuses agent_spawn called by name, so depth caps at one by construction', async () => {
+    for (const agentType of await builtInTypes()) {
+      const message = await dispatchTo({ agentType, name: AGENT_SPAWN_TOOL_NAME })
 
-    expect(ran).toEqual([])
-    expect(message).toContain('bash')
-  })
-
-  it('refuses every writing and destructive tool called by name', async () => {
-    const reviewer = await builtIn('reviewer')
-
-    for (const name of ['write', 'edit', 'bash', 'shell_kill', 'agent_spawn']) {
-      await dispatchTo({ agentType: reviewer, name })
       expect(ran).toEqual([])
+      expect(message).toContain(AGENT_SPAWN_TOOL_NAME)
     }
   })
 
-  it('still runs the reading tools it was given', async () => {
-    await dispatchTo({ agentType: await builtIn('reviewer'), name: 'read' })
+  it('still runs every other tool, because a sub-agent has the capabilities of its parent', async () => {
+    for (const agentType of await builtInTypes()) {
+      for (const name of ['read', 'write', 'bash']) {
+        await dispatchTo({ agentType, name })
+        expect(ran).toEqual([name])
+      }
+    }
+  })
 
-    expect(ran).toEqual(['read'])
+  it('offers every built-in the whole toolset apart from the spawn tool', async () => {
+    for (const agentType of await builtInTypes()) {
+      const narrowed = toolRegistryFor({ registry: wholeToolset(), agentType })
+
+      expect(narrowed.declarations().map((declaration) => declaration.name)).toEqual([
+        'read',
+        'grep',
+        'glob',
+        'write',
+        'edit',
+        'bash',
+      ])
+    }
   })
 })
 
-describe('a registry narrowed for a built-in agent type', () => {
-  it('offers explore only reading tools, and no shell', async () => {
-    const narrowed = toolRegistryFor({
-      registry: wholeToolset(),
-      agentType: await builtIn('explore'),
-    })
-
-    expect(narrowed.declarations().map((declaration) => declaration.name)).toEqual([
-      'read',
-      'grep',
-      'glob',
-      'shell_list',
-      'shell_output',
-    ])
-    expect(narrowed.find('bash')).toBeUndefined()
-  })
-
-  it('offers builder the whole toolset except the spawn tool', async () => {
-    const narrowed = toolRegistryFor({
-      registry: wholeToolset(),
-      agentType: await builtIn('builder'),
-    })
-
-    expect(narrowed.find('bash')).toBeDefined()
-    expect(narrowed.find('write')).toBeDefined()
-    expect(narrowed.find('agent_spawn')).toBeUndefined()
-  })
-
-  it('withholds a destructive tool the agent type explicitly allowed but its ceiling forbids', () => {
+describe('a registry narrowed for a user-authored agent type', () => {
+  it('honours an allow list, and still withholds the spawn tool', async () => {
     const narrowed = toolRegistryFor({
       registry: wholeToolset(),
       agentType: {
-        name: 'sneaky',
-        whenToUse: 'claims to be read-only',
+        name: 'narrow',
+        whenToUse: 'a user-authored type that asks for two tools',
+        prompt: 'p',
+        tools: ['read', 'grep'],
+        disallowedTools: [AGENT_SPAWN_TOOL_NAME],
+        origin: EDefinitionOrigin.User,
+      },
+    })
+
+    expect(narrowed.declarations().map((declaration) => declaration.name)).toEqual(['read', 'grep'])
+    expect(narrowed.find(AGENT_SPAWN_TOOL_NAME)).toBeUndefined()
+  })
+
+  it('withholds a destructive tool its effect ceiling forbids, even when its allow list names it', () => {
+    const narrowed = toolRegistryFor({
+      registry: wholeToolset(),
+      agentType: {
+        name: 'capped',
+        whenToUse: 'a user-authored type that caps itself at reading',
         prompt: 'p',
         tools: ['read', 'bash'],
         maxEffect: EToolEffect.Read,

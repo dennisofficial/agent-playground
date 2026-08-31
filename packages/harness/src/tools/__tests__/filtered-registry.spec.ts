@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { toCallId, toRunId, toThreadId } from '@dltech/atlas-core'
+import { EToolEffect, toCallId, toRunId, toThreadId } from '@dltech/atlas-core'
 
 import { HookChain } from '../../hooks/registry'
 import { HookedToolDispatcher, type DispatchableCall } from '../dispatch'
@@ -66,6 +66,64 @@ describe('a registry narrowed by an allow list', () => {
 
     expect(namesOf(narrowed)).toEqual(['read'])
     expect(narrowed.find('agent_spawn')).toBeUndefined()
+  })
+})
+
+const everyEffect = () =>
+  new InMemoryToolRegistry([
+    toolNamed({ name: 'read', effect: EToolEffect.Read, invoke: succeeds }),
+    toolNamed({ name: 'write', effect: EToolEffect.Write, invoke: succeeds }),
+    toolNamed({ name: 'bash', effect: EToolEffect.Destructive, invoke: succeeds }),
+  ])
+
+describe('a registry narrowed by an effect ceiling', () => {
+  it('passes every tool through when no ceiling is given', () => {
+    const narrowed = filteredToolRegistry({ registry: everyEffect() })
+
+    expect(namesOf(narrowed)).toEqual(['read', 'write', 'bash'])
+  })
+
+  it('holds only reading tools under a read ceiling', () => {
+    const narrowed = filteredToolRegistry({
+      registry: everyEffect(),
+      maxEffect: EToolEffect.Read,
+    })
+
+    expect(namesOf(narrowed)).toEqual(['read'])
+    expect(narrowed.find('write')).toBeUndefined()
+    expect(narrowed.find('bash')).toBeUndefined()
+  })
+
+  it('admits writing but not destruction under a write ceiling', () => {
+    const narrowed = filteredToolRegistry({
+      registry: everyEffect(),
+      maxEffect: EToolEffect.Write,
+    })
+
+    expect(namesOf(narrowed)).toEqual(['read', 'write'])
+    expect(narrowed.find('bash')).toBeUndefined()
+  })
+
+  it('refuses a tool over the ceiling even when the allow list names it', () => {
+    const narrowed = filteredToolRegistry({
+      registry: everyEffect(),
+      allow: ['read', 'bash'],
+      maxEffect: EToolEffect.Read,
+    })
+
+    expect(namesOf(narrowed)).toEqual(['read'])
+    expect(narrowed.find('bash')).toBeUndefined()
+  })
+
+  it('agrees between what it declares and what it resolves under a ceiling', () => {
+    const narrowed = filteredToolRegistry({
+      registry: everyEffect(),
+      maxEffect: EToolEffect.Write,
+    })
+
+    for (const name of ['read', 'write', 'bash']) {
+      expect(narrowed.find(name) !== undefined).toBe(namesOf(narrowed).includes(name))
+    }
   })
 })
 

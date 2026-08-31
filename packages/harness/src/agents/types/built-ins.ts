@@ -1,5 +1,3 @@
-import { EToolEffect } from '@dltech/atlas-core'
-
 import type { AgentType } from './agent-type'
 
 export type BuiltInAgentType = Omit<AgentType, 'origin'>
@@ -14,7 +12,7 @@ No human is watching you and you cannot ask the caller a question mid-task. Wher
 
 You cannot spawn sub-agents of your own.`
 
-const READ_ONLY_CONTRACT = `You are read-only, and not as a matter of discipline: every tool that could change anything has been withheld from you. You can read files, search them and list them. You have no shell, so you cannot run a command, redirect into a file, or reach the repository through git. If a task needs something changed, or needs output only a command could produce, say so in your report and let the caller do it or delegate it elsewhere.`
+const REPORT_ONLY_CONTRACT = `You have the same tools as the agent that spawned you, the ones that write and the ones that run commands included. Do not use them to change anything. Read, search, and run commands that only observe. This task is to report, and an edit you make on the way is an edit the caller did not ask for and cannot see. Where the work needs a change, name the change in your report and leave it to the caller to make or to delegate.`
 
 const GENERAL_PURPOSE_PROMPT = `${SUB_AGENT_CONTRACT}
 
@@ -24,7 +22,7 @@ const EXPLORE_PROMPT = `${SUB_AGENT_CONTRACT}
 
 You are a search specialist. You find where things live and how they hang together; you do not judge them and you do not change them.
 
-${READ_ONLY_CONTRACT}
+${REPORT_ONLY_CONTRACT}
 
 Be fast. Issue several searches and reads in the same turn rather than one at a time, and stop as soon as you can answer. The caller tells you how thorough to be — honour it: a quick lookup should not turn into a survey, and a thorough sweep should cover the naming variants and the neighbouring directories.
 
@@ -42,7 +40,7 @@ const REVIEWER_PROMPT = `${SUB_AGENT_CONTRACT}
 
 You review code you did not write. You report on it; you do not fix it.
 
-${READ_ONLY_CONTRACT}
+${REPORT_ONLY_CONTRACT}
 
 Order findings by severity. Anchor each one to an absolute path and a line, say what is wrong, and say what it would take to be right. Separate a defect from a preference and label which you are reporting. Judge the code against what it is meant to do and against the conventions the repository states, not against the style you would have used.
 
@@ -58,23 +56,19 @@ export const BUILT_IN_AGENT_TYPES: readonly BuiltInAgentType[] = [
   {
     name: 'explore',
     whenToUse:
-      'Fast read-only sub-agent for finding things in the codebase — which file holds a symbol, where a pattern is used, how a subsystem fits together. Say how thorough to be: quick for a targeted lookup, medium for ordinary exploration, very thorough to sweep several locations and naming conventions. It has no shell and cannot change anything.',
+      'Fast search-focused sub-agent for finding things in the codebase — which file holds a symbol, where a pattern is used, how a subsystem fits together. Say how thorough to be: quick for a targeted lookup, medium for ordinary exploration, very thorough to sweep several locations and naming conventions. It is briefed to report what it finds rather than act on it.',
     prompt: EXPLORE_PROMPT,
-    tools: ['read', 'grep', 'glob', 'shell_list', 'shell_output'],
-    maxEffect: EToolEffect.Read,
   },
   {
     name: 'builder',
     whenToUse:
-      'Sub-agent with the full tool set for making a change: implementing a described feature, fixing a bug you have already located, or applying a mechanical edit across files. Give it the whole task including how you want it verified, and give it work that does not overlap the files you are editing yourself.',
+      'Sub-agent for making a change: implementing a described feature, fixing a bug you have already located, or applying a mechanical edit across files. Give it the whole task including how you want it verified, and give it work that does not overlap the files you are editing yourself.',
     prompt: BUILDER_PROMPT,
   },
   {
     name: 'reviewer',
     whenToUse:
-      'Read-only sub-agent that reviews code it did not write, for correctness and for the conventions the repository states. It has no shell, so name the files to review or paste the diff into the brief rather than expecting it to run git. It reports findings and changes nothing.',
+      'Sub-agent that reviews code it did not write, for correctness and for the conventions the repository states. It is briefed to report findings rather than fix them, so give it the scope to review and what to weigh, and delegate the fixes separately.',
     prompt: REVIEWER_PROMPT,
-    tools: ['read', 'grep', 'glob'],
-    maxEffect: EToolEffect.Read,
   },
 ]
