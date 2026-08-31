@@ -1,0 +1,21 @@
+packages/harness/src/store/index.ts
+  ai_agent 1-6
+packages/harness/prisma/schema.prisma
+  ai_agent 17-34,38
+packages/harness/src/store/__tests__/thread-lineage.spec.ts
+  ai_agent 1-135
+packages/harness/prisma/migrations/20260830120000_thread_lineage/migration.sql
+  ai_agent 1-28
+apps/tui/src/composition/__tests__/fake-backend.ts
+  ai_agent 12,25-29,53-57,99,108,117,119-123,131,174,188,190,194,199-209,212,215,223,232,237,239-240,242-243,268,274-275,278,280,284,288-289,294-302
+apps/tui/src/composition/__tests__/fake-backend.spec.ts
+  ai_agent 1-120
+packages/harness/src/store/thread-store.ts
+  ai_agent 19-20,28-29,41,88-90,107,112,123,273,289-290,294-302
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3803c87b3747549e25be09ba86bbd39f3a53517c",
+  "prompts": {}
+}
