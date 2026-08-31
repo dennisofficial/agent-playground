@@ -60,6 +60,7 @@ export type ChildRunnerRequest = {
   agentType: AgentType
   threadId: ThreadId
   observe: (drafts: readonly EventDraft[]) => void
+  observeContext: (args: { tokens: number; window: number }) => void
   steering: () => readonly string[]
 }
 
@@ -81,6 +82,7 @@ export function buildChildRunner({
   agentType,
   threadId,
   observe,
+  observeContext,
   steering,
 }: ChildRunnerRequest & { deps: ChildRunnerDeps }): TurnRunner {
   const registry = withoutAgentTools(toolRegistryFor({ registry: deps.tools, agentType }))
@@ -89,6 +91,7 @@ export function buildChildRunner({
   return new LoopTurnRunner({
     ...turn,
     log: observingLog({ log: turn.log, threadId, observe }),
+    onContext: observeContext,
     model: deps.modelFor === undefined ? turn.model : deps.modelFor({ agentType }),
     tools: registry.declarations(),
     dispatch: new HookedToolDispatcher({ registry, hooks: deps.hooks }),

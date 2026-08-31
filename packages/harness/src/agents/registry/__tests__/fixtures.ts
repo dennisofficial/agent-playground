@@ -32,6 +32,7 @@ export type StartedRun = {
   settle: (outcome: TurnOutcome) => void
   fail: (cause: unknown) => void
   observe: (drafts: readonly EventDraft[]) => void
+  observeContext: (args: { tokens: number; window: number }) => void
 }
 
 export type FakeRunners = {
@@ -53,6 +54,7 @@ export function fakeRunners(): FakeRunners {
         settle: resolve,
         fail: reject,
         observe: request.observe,
+        observeContext: request.observeContext,
       })
     })
 

@@ -4,7 +4,13 @@ import type { TurnOutcome } from '../../loop/turn-outcome'
 import type { TurnRunner } from '../../loop/turn-runner.port'
 import type { AgentType } from '../types'
 import type { ChildRunnerSource } from './child-runner'
-import { agentEndedDraft, recordProgress, snapshotOf, type ChildState } from './child-state'
+import {
+  agentEndedDraft,
+  recordContext,
+  recordProgress,
+  snapshotOf,
+  type ChildState,
+} from './child-state'
 import type { AgentNoticeQueue } from './notices'
 import { statusOf } from './reasons'
 import type { AgentRoster } from './roster'
@@ -95,11 +101,25 @@ export class ChildSteps {
     this.roster.changed()
   }
 
+  private measure({
+    child,
+    tokens,
+    window,
+  }: {
+    child: ChildState
+    tokens: number
+    window: number
+  }): void {
+    recordContext({ child, tokens, window })
+    this.roster.changed()
+  }
+
   private runnerFor({ child, agentType }: { child: ChildState; agentType: AgentType }): TurnRunner {
     return this.runners({
       agentType,
       threadId: child.agentId,
       observe: (drafts) => this.record({ child, drafts }),
+      observeContext: ({ tokens, window }) => this.measure({ child, tokens, window }),
       steering: () => child.pending.splice(0),
     })
   }

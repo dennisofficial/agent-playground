@@ -82,6 +82,7 @@ async function childTurn(args: {
     agentType: agentTypeNamed({ name: 'explore' }),
     threadId,
     observe: () => undefined,
+    observeContext: () => undefined,
     steering: () => steering.splice(0),
     deps: {
       turn: parent,

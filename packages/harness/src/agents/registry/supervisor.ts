@@ -114,6 +114,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       endedAt: undefined,
       abort: new AbortController(),
       pending: [],
+      context: undefined,
     }
     this.roster.add(child)
 

@@ -1,5 +1,10 @@
 import type { EAgentStatus, EKilledBy, ThreadId } from '@dltech/atlas-core'
 
+export type ChildContext = {
+  tokens: number
+  window: number
+}
+
 export type AgentSnapshot = {
   agentId: ThreadId
   spawnedBy: ThreadId
@@ -12,6 +17,7 @@ export type AgentSnapshot = {
   lastTool: string | undefined
   startedAt: string
   endedAt: string | undefined
+  context?: ChildContext | undefined
 }
 
 /**

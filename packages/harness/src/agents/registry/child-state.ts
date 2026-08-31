@@ -8,7 +8,7 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
-import type { AgentSnapshot } from './snapshot'
+import type { AgentSnapshot, ChildContext } from './snapshot'
 
 export type ChildState = {
   agentId: ThreadId
@@ -25,6 +25,7 @@ export type ChildState = {
   endedAt: string | undefined
   abort: AbortController
   pending: string[]
+  context: ChildContext | undefined
 }
 
 export const isStepping = (child: ChildState): boolean => child.status === EAgentStatus.Running
@@ -53,6 +54,7 @@ export function recoveredChild({
     endedAt: agent.endedAt,
     abort: new AbortController(),
     pending: [],
+    context: undefined,
   }
 }
 
@@ -69,6 +71,7 @@ export function snapshotOf(child: ChildState): AgentSnapshot {
     lastTool: child.lastTool,
     startedAt: child.startedAt,
     endedAt: child.endedAt,
+    context: child.context,
   }
 }
 
@@ -92,6 +95,18 @@ const spokenText = (parts: readonly AssistantPart[]): string =>
     .map((part) => part.text)
     .join('\n')
     .trim()
+
+export function recordContext({
+  child,
+  tokens,
+  window,
+}: {
+  child: ChildState
+  tokens: number
+  window: number
+}): void {
+  child.context = { tokens, window }
+}
 
 export function recordProgress({
   child,

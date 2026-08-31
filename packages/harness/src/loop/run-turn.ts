@@ -27,7 +27,7 @@ import {
 
 import type { HookChain } from '../hooks/registry'
 import type { ToolDispatcher } from '../tools/dispatch'
-import { takeModelStep } from './model-step'
+import { takeModelStepWithRetry, type RetryDeps } from './retrying-step'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
 import { appendResumeDrafts } from './resume-turn'
 import { createSettlePending, type SettlePending } from './settle-pending'
@@ -45,13 +45,17 @@ export type TurnDeps = {
   tools?: readonly ToolDeclaration[] | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
+  onContext?: ((args: { tokens: number; window: number }) => void) | undefined
   dispatch?: ToolDispatcher | undefined
   hooks?: HookChain | undefined
-  drainPending?: (() => Promise<readonly EventDraft[]>) | undefined
+  drainPending?:
+    | ((args: { threadId: ThreadId }) => Promise<readonly EventDraft[]>)
+    | undefined
   spend?: TurnLedgerDeps | undefined
   compact?: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   autoCompactAtPercent?: (() => number) | undefined
   projectDirectory?: string | undefined
+  retry?: RetryDeps | undefined
 }
 
 export class LoopTurnRunner extends TurnRunner {
@@ -62,12 +66,16 @@ export class LoopTurnRunner extends TurnRunner {
   private readonly tools: readonly ToolDeclaration[]
   private readonly countTokens: (assembled: Assembled) => number
   private readonly onChunk: ChunkFilter | undefined
+  private readonly onContext: ((args: { tokens: number; window: number }) => void) | undefined
   private readonly hooks: HookChain | undefined
-  private readonly drainPending: (() => Promise<readonly EventDraft[]>) | undefined
+  private readonly drainPending:
+    | ((args: { threadId: ThreadId }) => Promise<readonly EventDraft[]>)
+    | undefined
   private readonly spend: TurnLedgerDeps | undefined
   private readonly settlePending: SettlePending | undefined
   private readonly compact: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   private readonly autoCompactAtPercent: () => number
+  private readonly retry: RetryDeps | undefined
 
   constructor(deps: TurnDeps) {
     super()
@@ -78,11 +86,13 @@ export class LoopTurnRunner extends TurnRunner {
     this.tools = deps.tools ?? []
     this.countTokens = deps.countTokens ?? estimateTokens
     this.onChunk = deps.onChunk
+    this.onContext = deps.onContext
     this.hooks = deps.hooks
     this.drainPending = deps.drainPending
     this.spend = deps.spend
     this.compact = deps.compact
     this.autoCompactAtPercent = deps.autoCompactAtPercent ?? (() => AUTO_COMPACT_OFF)
+    this.retry = deps.retry
     this.settlePending =
       deps.dispatch === undefined
         ? undefined
@@ -138,7 +148,7 @@ export class LoopTurnRunner extends TurnRunner {
   private async drainInto({ threadId }: { threadId: ThreadId }): Promise<boolean> {
     if (this.drainPending === undefined) return false
 
-    const waiting = await this.drainPending()
+    const waiting = await this.drainPending({ threadId })
     if (waiting.length === 0) return false
 
     await this.log.append({ threadId, runId: this.ids.nextRunId(), drafts: waiting })
@@ -228,6 +238,7 @@ export class LoopTurnRunner extends TurnRunner {
 
       const tokens = this.countTokens(assembled)
       const window = modelEntry(this.model.identity.modelId)?.contextWindow ?? 0
+      this.onContext?.({ tokens, window })
 
       if (
         autoCompactBeforeStep({ tokens, window, atPercent: this.autoCompactAtPercent() }) ===
@@ -256,12 +267,13 @@ export class LoopTurnRunner extends TurnRunner {
         return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
       }
 
-      const stepped = await takeModelStep({
+      const stepped = await takeModelStepWithRetry({
         model: this.model,
         tools: this.tools,
         onChunk: this.onChunk,
         assembled,
         signal: abortSignal,
+        retry: this.retry,
       })
 
       modelSteps += 1
