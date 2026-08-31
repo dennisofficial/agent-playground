@@ -32,3 +32,42 @@ export class InMemoryToolRegistry extends ToolRegistry {
     return this.byName.get(name)
   }
 }
+
+class FilteredToolRegistry extends ToolRegistry {
+  private readonly registry: ToolRegistry
+  private readonly allowed: ReadonlySet<string> | undefined
+  private readonly denied: ReadonlySet<string>
+
+  constructor(args: {
+    registry: ToolRegistry
+    allow?: readonly string[] | undefined
+    deny?: readonly string[] | undefined
+  }) {
+    super()
+    this.registry = args.registry
+    this.allowed = args.allow === undefined ? undefined : new Set(args.allow)
+    this.denied = new Set(args.deny ?? [])
+  }
+
+  private permits(name: string): boolean {
+    if (this.denied.has(name)) return false
+    return this.allowed === undefined || this.allowed.has(name)
+  }
+
+  declarations(): readonly ToolDeclaration[] {
+    return this.registry.declarations().filter((declaration) => this.permits(declaration.name))
+  }
+
+  find(name: string): ToolDefinition | undefined {
+    if (!this.permits(name)) return undefined
+    return this.registry.find(name)
+  }
+}
+
+export function filteredToolRegistry(args: {
+  registry: ToolRegistry
+  allow?: readonly string[] | undefined
+  deny?: readonly string[] | undefined
+}): ToolRegistry {
+  return new FilteredToolRegistry(args)
+}
