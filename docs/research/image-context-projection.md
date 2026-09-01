@@ -228,6 +228,10 @@ that has already meant two incompatible things at one vendor.
 | `projection.ts` holds the two-limit search and the tier table; `visualTokens` measures against both | `3e1ed33c` |
 | Retirement fires at twenty image blocks rather than two; `context.imagesKept` removed | `792a07cb` |
 | Paste-time `sips` gone; one delivery plan holding only the ceilings the API enforces | `d9508552` |
+| Breakpoint placement around images pinned by test | `dfb5c043` |
+| Estimator takes its tier from the model; dimensions ride the part instead of being decoded | `f4383f54` |
+| A subagent is handed the pixels, through the steering queue as well as the append | `6b403209` |
+| `read` takes a `region`, cut by a PNG decode rather than a shell-out | `c91b7197` |
 
 A visual-token budget was **considered and dropped**. Once retirement fires only at the twenty-block
 cliff, the budget has nothing left to price: the block count is what the API punishes, and the
@@ -239,15 +243,31 @@ The newest-turn exemption was also dropped, for the same reason: with the limit 
 ten-image message is honoured without needing a special case. It would only matter for a message
 carrying more than twenty images at once, where retiring the oldest is defensible anyway.
 
+### What the measurements came to
+
+- The estimator decoded every image's base64 on every count. Twenty resident images cost **310 ms
+  per `countTokens`**, a call made each model step and again for every compaction preview. Carrying
+  `width`/`height` on the part took it to **0 ms** for the same answer.
+- A pane of `warp-desktop-2.png` (2576×1673) is **1,380 visual tokens against 4,760** for the frame,
+  and arrives at native 1288×836 rather than downscaled to 2380×1546.
+
+### The `sips` crop bug
+
+`sips -c <h> <w> --cropOffset <top> <left>` returns the image **untouched, exit code 0** when
+`top > 0`, `left == 0`, and `top + h` equals the image height exactly. Verified on macOS 15 against
+a four-quadrant test image: `--cropOffset 200 0` on a 400×400 with `-c 200 200` gives back the whole
+400×400, while `199 0`, `201 0`, `200 1` and `200 200` all crop correctly. Asking for one row of
+overhang works around it but shifts the region up a pixel. That is why the crop decodes the PNG
+instead, which also keeps the arithmetic exact and the tests pure.
+
 ## Still open
 
 | # | Change | Rationale |
 | --- | --- | --- |
-| 1 | Build region-crop | The one capability gain on the list, and no surveyed harness has it |
-| 2 | Give subagents pixels | Closes the `load: () => null` gap at `app.tsx:564` |
-| 3 | Derive the tier from the model at the call site | `projection.ts` takes a tier; every caller still lets it default |
-| 4 | Stop `describedSize` decoding base64 each assembly | `SaidImage` already carries `width`/`height` |
-| 5 | Consider the Files API for attachments | Upload once, reference by `file_id`; removes the resend-bytes-per-turn cost that paste-time resize was half-addressing |
+| 1 | Crop a format that is not PNG | Declined by name today; JPEG needs a decoder, and gains less, since a photograph downscales gracefully |
+| 2 | Let the TUI's own display path know the tier | `projection.ts` takes one and the loop passes it; the three display call sites still default |
+| 3 | Consider the Files API for attachments | Upload once, reference by `file_id`; removes the resend-bytes-per-turn cost that paste-time resize was half-addressing |
+| 4 | Verify pi.dev, and Claude Code's retention | Both unverified above rather than guessed |
 
 Not recommended: **model-generated alt text on retirement.** The existing placeholder already carries
 path, media type and dimensions, and the model can re-`read` the file. A real description would need to
