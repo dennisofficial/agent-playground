@@ -1,0 +1,50 @@
+packages/core/src/assembly/rules/images.ts
+  s_b497bbab0c8dc0::t_f4e9c7ac198b56 19-22
+packages/core/src/models/catalog.ts
+  s_b497bbab0c8dc0::t_1984bcf9ead27d 1-2,32
+packages/core/src/assembly/rules/__tests__/messages-from-events-images.spec.ts
+  s_b497bbab0c8dc0::t_51c739e7a48a29 28-44
+apps/tui/src/ui/__tests__/switcher-model.spec.ts
+  s_92ec585740db0a::t_e31bf0b510f78b 3
+packages/core/src/models/__tests__/registry.spec.ts
+  s_b497bbab0c8dc0::t_5da28ec284e5ed 3,5,46-62
+packages/harness/src/loop/run-turn.ts
+  s_b497bbab0c8dc0::t_5db52675380790 9-10,90-92
+apps/tui/src/ui/__tests__/switcher-render.spec.tsx
+  s_92ec585740db0a::t_e31bf0b510f78b 4
+packages/core/src/assembly/rules/messages-from-events.ts
+  s_b497bbab0c8dc0::t_a167669f2fa46e 114-115
+packages/core/src/models/registry.ts
+  s_b497bbab0c8dc0::t_1984bcf9ead27d 1,15,25,35,45,49-56
+packages/core/src/message/parts.ts
+  s_b497bbab0c8dc0::t_a167669f2fa46e 13-14
+packages/harness/src/tools/builtin/read-image.ts
+  s_b497bbab0c8dc0::t_a167669f2fa46e 82-83
+packages/core/src/assembly/tokens.ts
+  s_b497bbab0c8dc0::t_d054a1e4111001 2,22,26,29,31,34,39,41,44-58
+  s_b497bbab0c8dc0::t_f4e9c7ac198b56 1,13-21,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f4383f54fb41201a0cb4e9fa396457bec846cecd",
+  "prompts": {},
+  "sessions": {
+    "s_92ec585740db0a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ab621cec-975e-4cdc-82ec-56f3588a9350",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b497bbab0c8dc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb584ea0-5857-44a0-8fc5-cb2908572f6c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
