@@ -1,0 +1,85 @@
+packages/harness/src/workspace/process-identity.ts
+  s_4d8b66849f671e::t_92ce78ff02763d 35-40
+packages/harness/src/classifier/__tests__/workspace-facts.spec.ts
+  s_8ae1fa940f8094::t_57e8bdd93d3ec0 1-270
+packages/harness/src/hooks/register-hooks.ts
+  s_8ae1fa940f8094::t_d64bd6d0664ae3 1-6,8-10,12,19-22,25,29
+packages/harness/src/classifier/index.ts
+  s_8ae1fa940f8094::t_f5cf93c11e3da8 1-4
+packages/harness/src/hooks/prewarm-facts.ts
+  s_8ae1fa940f8094::t_18d4678fd8956a 1-33
+packages/core/src/policy/classifier/facts.ts
+  s_8ae1fa940f8094::t_15e5c7a2b67e74 1-41
+packages/harness/src/classifier/__tests__/fake-git.ts
+  s_8ae1fa940f8094::t_5465cc1b792f14 1-56
+  s_8ae1fa940f8094::t_24ab116b3b5e91 57-77
+packages/core/src/workspace/worktree-lock.ts
+  s_4d8b66849f671e::t_6a60d6f1043cbd 15
+  s_4d8b66849f671e::t_23a34fc477546f 1-14,16-45
+packages/harness/src/hooks/invalidate-facts.ts
+  s_8ae1fa940f8094::t_a93cb198a4731f 1-30
+packages/harness/src/classifier/facts-cache.ts
+  s_8ae1fa940f8094::t_0208977f7a681e 1-68
+packages/core/src/ports/workspace-facts.port.ts
+  s_8ae1fa940f8094::t_81517e2bc36c78 1,6
+  s_8ae1fa940f8094::t_ccb5f313a881c4 2
+  s_8ae1fa940f8094::t_d94bd44f5165bc 3-5,7-19
+packages/harness/src/classifier/__tests__/facts-cache.spec.ts
+  s_8ae1fa940f8094::t_e7cb3534e08c1d 1-50,52-136
+  s_8ae1fa940f8094::t_27fc395418f026 51
+packages/harness/src/index.ts
+  s_8ae1fa940f8094::t_b42a91cce08fa9 5
+packages/core/src/index.ts
+  s_8ae1fa940f8094::t_c1148c295ec4a6 125
+  s_8ae1fa940f8094::t_33ce2d6ec182ab 106
+  s_4d8b66849f671e::t_74500832c7b5c6 68
+packages/harness/src/classifier/workspace-facts.ts
+  s_8ae1fa940f8094::t_af4c3398919b39 29
+  s_8ae1fa940f8094::t_8cfc776ced4a3e 9,65,249
+  s_8ae1fa940f8094::t_b92ab539704460 62
+  s_8ae1fa940f8094::t_4d5792255bc137 158-159,180-181,184
+  s_8ae1fa940f8094::t_87712ab4c87810 210-216
+  s_8ae1fa940f8094::t_86fae7d351f0f3 1-8,10-28,30-61,63-64,66-157,160-179,182-183,185-209,217-248,250-273
+packages/harness/src/hooks/__tests__/facts-hooks.spec.ts
+  s_8ae1fa940f8094::t_92a3bd1b8d9132 1-98
+packages/harness/src/classifier/git-facts.ts
+  s_8ae1fa940f8094::t_460ea9c0566da6 86
+  s_8ae1fa940f8094::t_9aeb41ffb51745 3-85,87-91
+  s_8ae1fa940f8094::t_ede328e5e457bf 1-2
+packages/harness/src/workspace/run-git.ts
+  s_4c1e6679f80b43::t_9547d505f33dc4 1-29
+packages/harness/src/classifier/occupancy.ts
+  s_8ae1fa940f8094::t_ea508890f8bbd4 1-48
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "80d4366bcafc52b5bd22404cf250ad23441cfb70",
+  "prompts": {},
+  "sessions": {
+    "s_4c1e6679f80b43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97cfd46d-4786-4324-989c-12f1f3de4869",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_4d8b66849f671e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "07f7e1a2-3e37-4453-a07a-4963f9c9ed8b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
