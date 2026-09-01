@@ -98,6 +98,8 @@ export * from './policy/classifier/dimension'
 export * from './policy/classifier/triage'
 export * from './policy/classifier/verdict'
 export * from './policy/classifier/grant'
+export * from './policy/classifier/path-set'
+export * from './policy/classifier/command/read-command'
 
 export * from './hooks/hooks'
 
