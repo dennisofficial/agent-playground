@@ -1,4 +1,4 @@
-import type { ApprovalRequest, EventDraft } from '@dltech/atlas-core'
+import type { EventDraft } from '@dltech/atlas-core'
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useMemo, useState } from 'react'
 
@@ -8,12 +8,13 @@ import {
   moveSelection,
   openApproval,
   resolve,
+  type ApprovalQuestion,
   type ApprovalState,
 } from '../ui/approval-model'
 
 export type ApprovalControl = {
   state: ApprovalState | null
-  handleOpen: (request: ApprovalRequest) => void
+  handleOpen: (question: ApprovalQuestion) => void
   handleDismiss: () => void
   handlePick: (choice: EApprovalChoice) => void
   handleKey: (key: KeyEvent) => void
@@ -25,7 +26,10 @@ export function useApproval(args: {
   const [state, setState] = useState<ApprovalState | null>(null)
   const { onAnswer } = args
 
-  const handleOpen = useCallback((request: ApprovalRequest) => setState(openApproval(request)), [])
+  const handleOpen = useCallback(
+    (question: ApprovalQuestion) => setState(openApproval(question)),
+    [],
+  )
 
   const handlePick = useCallback(
     (choice: EApprovalChoice) => {

@@ -1,4 +1,11 @@
-import { EDecision, toCallId } from '@dltech/atlas-core'
+import {
+  EClassifierMode,
+  EDecision,
+  EJudgment,
+  ERiskDimension,
+  ETriage,
+  toCallId,
+} from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import { IDLE_TURN } from '../../ui/components/transcript'
@@ -194,5 +201,39 @@ describe('withSections', () => {
     })
 
     expect(model.title).toBe('a thread')
+  })
+})
+
+describe('the nudge figure the operator reads before arming it', () => {
+  it('rides on the sidebar beside the outstanding questions', () => {
+    const events = log([
+      { type: 'user-said', text: 'clean up the merged worktrees' },
+      {
+        type: 'classifier-judged',
+        callId: CALL_ONE,
+        mode: EClassifierMode.Shadow,
+        triage: ETriage.Consult,
+        judgment: EJudgment.Check,
+        dimensions: [ERiskDimension.Contention],
+        judgedDimension: ERiskDimension.Contention,
+        signalIds: ['contention:occupied'],
+        details: ['eng-412-sidebar is held by another live session'],
+        reason: 'contention: eng-412-sidebar is held by another live session',
+        consulted: true,
+        wouldAsk: true,
+        fatigued: false,
+        elapsedMs: 610,
+      },
+    ])
+
+    const model = deriveSidebar({ events, turn: IDLE_TURN })
+
+    expect(model.classifier).toEqual({
+      pauses: 1,
+      turns: 1,
+      topDimension: ERiskDimension.Contention,
+      quietedCalls: 0,
+      judgeUnreachable: false,
+    })
   })
 })

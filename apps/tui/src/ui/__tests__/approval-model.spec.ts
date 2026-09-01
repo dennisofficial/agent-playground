@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
 import {
+  EClassifierMode,
   EDecision,
+  EJudgment,
+  ERiskDimension,
+  ETriage,
   stampDrafts,
   toCallId,
   toEventId,
@@ -46,7 +50,13 @@ const asked: EventDraft = { type: 'approval-requested', callId: CALL, reason: RE
 
 describe('the approval drawer', () => {
   it('opens on the question the operator was asked, offering to proceed first', () => {
-    expect(opened).toEqual({ callId: CALL, reason: REASON, selected: 0 })
+    expect(opened).toEqual({
+      callId: CALL,
+      reason: REASON,
+      evidence: [],
+      dimensions: [],
+      selected: 0,
+    })
     expect(selectedOption(opened)?.choice).toBe(EApprovalChoice.Proceed)
   })
 
@@ -92,6 +102,8 @@ describe('finding the question a pause stopped on', () => {
     expect(unansweredApproval({ events: log([asked]), callId: CALL })).toEqual({
       callId: CALL,
       reason: REASON,
+      evidence: [],
+      dimensions: [],
     })
   })
 
@@ -112,5 +124,59 @@ describe('finding the question a pause stopped on', () => {
     ])
 
     expect(unansweredApproval({ events, callId: CALL })?.reason).toBe('and now for a second reason')
+  })
+})
+
+const weighed: EventDraft = {
+  type: 'classifier-judged',
+  callId: CALL,
+  mode: EClassifierMode.Nudge,
+  triage: ETriage.Consult,
+  judgment: EJudgment.Check,
+  dimensions: [ERiskDimension.Contention, ERiskDimension.Irreversibility],
+  judgedDimension: ERiskDimension.Contention,
+  signalIds: ['contention:occupied'],
+  details: [
+    'eng-412-sidebar is held by another live session',
+    'the worktree carries twelve uncommitted changes',
+  ],
+  reason: REASON,
+  consulted: true,
+  wouldAsk: true,
+  fatigued: false,
+  elapsedMs: 610,
+}
+
+describe('the evidence behind a pause', () => {
+  it('carries the surviving probes own words and the dimensions they belong to', () => {
+    const question = unansweredApproval({ events: log([weighed, asked]), callId: CALL })
+
+    expect(question?.evidence).toEqual([
+      'eng-412-sidebar is held by another live session',
+      'the worktree carries twelve uncommitted changes',
+    ])
+    expect(question?.dimensions).toEqual([
+      ERiskDimension.Contention,
+      ERiskDimension.Irreversibility,
+    ])
+  })
+
+  it('opens the drawer on that evidence rather than on the reason alone', () => {
+    const question = unansweredApproval({ events: log([weighed, asked]), callId: CALL })
+    if (question === null) throw new Error('the pause carried no question')
+
+    expect(openApproval(question).evidence).toHaveLength(2)
+    expect(resolve(openApproval(question))).toBe(EApprovalChoice.Proceed)
+  })
+
+  it('ignores a weighing of some other call', () => {
+    const other = { ...weighed, callId: toCallId('call-2') }
+    const question = unansweredApproval({ events: log([other, asked]), callId: CALL })
+
+    expect(question?.evidence).toEqual([])
+  })
+
+  it('still opens on a pause no classifier row explains', () => {
+    expect(unansweredApproval({ events: log([asked]), callId: CALL })?.evidence).toEqual([])
   })
 })

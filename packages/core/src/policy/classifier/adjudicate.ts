@@ -63,12 +63,47 @@ const judgedOf = ({
 }): Verdict | undefined =>
   consultation?.kind === EConsultation.Judged ? consultation.verdict : undefined
 
+function worthAskingUnreached({
+  standing,
+  policy,
+}: {
+  standing: readonly RiskSignal[]
+  policy: ClassifierPolicy
+}): boolean {
+  return standing.some(
+    (signal) =>
+      signal.ungrantable ||
+      reachesSeverity({ severity: signal.severity, floor: policy.askWhenUnreachableAtOrAbove }),
+  )
+}
+
+export function wouldAsk({
+  triage,
+  consultation,
+  policy,
+}: {
+  triage: Triage
+  consultation: Consultation | undefined
+  policy: ClassifierPolicy
+}): boolean {
+  if (policy.mode === EClassifierMode.Off) return false
+  if (triage.triage !== ETriage.Consult) return false
+  if (consultation?.kind === EConsultation.Budgeted) return false
+
+  if (consultation?.kind === EConsultation.Judged) {
+    return consultation.verdict.judgment === EJudgment.Check
+  }
+
+  return worthAskingUnreached({ standing: triage.standing, policy })
+}
+
 function draftFor(args: {
   call: ToolCall
   triage: Triage
   consultation: Consultation | undefined
   policy: ClassifierPolicy
   elapsedMs: number
+  asks: boolean
 }): JudgedDraft {
   const { triage, consultation } = args
   const verdict = judgedOf({ consultation })
@@ -86,24 +121,13 @@ function draftFor(args: {
       ? { judgedDimension: dimensionCitedIn({ reason, standing: triage.standing }) }
       : {}),
     signalIds: triage.standing.map((signal) => signal.id),
+    details: triage.standing.map((signal) => signal.detail),
     reason,
     consulted: verdict !== undefined,
+    wouldAsk: args.asks,
+    fatigued: triage.fatigued,
     elapsedMs: args.elapsedMs,
   }
-}
-
-function worthAskingUnreached({
-  standing,
-  policy,
-}: {
-  standing: readonly RiskSignal[]
-  policy: ClassifierPolicy
-}): boolean {
-  return standing.some(
-    (signal) =>
-      signal.ungrantable ||
-      reachesSeverity({ severity: signal.severity, floor: policy.askWhenUnreachableAtOrAbove }),
-  )
 }
 
 export function adjudicate(args: {
@@ -114,23 +138,13 @@ export function adjudicate(args: {
   elapsedMs: number
 }): BeforeToolOutcome {
   const { call, triage, consultation, policy } = args
-  const draft = draftFor(args)
+  const asks = wouldAsk({ triage, consultation, policy })
+  const draft = draftFor({ ...args, asks })
   const drafts = [draft]
 
-  const allow: BeforeToolOutcome = {
-    decision: EBeforeToolDecision.Allow,
-    input: call.input,
-    drafts,
-  }
-  const ask: BeforeToolOutcome = { decision: EBeforeToolDecision.Ask, reason: draft.reason, drafts }
-
-  if (policy.mode !== EClassifierMode.Nudge) return allow
-  if (triage.triage !== ETriage.Consult) return allow
-  if (consultation?.kind === EConsultation.Budgeted) return allow
-
-  if (consultation?.kind === EConsultation.Judged) {
-    return consultation.verdict.judgment === EJudgment.Check ? ask : allow
+  if (asks && policy.mode === EClassifierMode.Nudge) {
+    return { decision: EBeforeToolDecision.Ask, reason: draft.reason, drafts }
   }
 
-  return worthAskingUnreached({ standing: triage.standing, policy }) ? ask : allow
+  return { decision: EBeforeToolDecision.Allow, input: call.input, drafts }
 }

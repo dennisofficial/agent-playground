@@ -91,3 +91,4 @@ export {
   type SidebarTeammate,
 } from './sidebar-model'
 export { type SidebarCrewFold, type SidebarSubagent } from './subagent-row'
+export { classifierFold, type ClassifierFold } from './classifier-fold'

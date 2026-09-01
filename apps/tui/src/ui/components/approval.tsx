@@ -1,8 +1,10 @@
 import React from 'react'
 
 import {
+  APPROVAL_EVIDENCE_HEADING,
   APPROVAL_HEADING,
   APPROVAL_OPTIONS,
+  APPROVAL_REWIND_NOTE,
   type ApprovalOption,
   type ApprovalState,
   type EApprovalChoice,
@@ -19,6 +21,10 @@ const GUTTER_CELLS = 2
 const GUTTER = ' '.repeat(GUTTER_CELLS)
 
 const REASON_LINES = 4
+
+const EVIDENCE_LINES = 6
+
+const BULLET = '- '
 
 export const APPROVAL_INSET = DRAWER_INSET
 
@@ -58,6 +64,38 @@ function Reason(props: { reason: string; cells: number }): React.ReactNode {
   )
 }
 
+function Evidence(props: { state: ApprovalState; cells: number }): React.ReactNode {
+  const { evidence, dimensions } = props.state
+  if (evidence.length === 0) return null
+
+  const heading =
+    dimensions.length === 0
+      ? APPROVAL_EVIDENCE_HEADING
+      : `${APPROVAL_EVIDENCE_HEADING}: ${dimensions.join(', ')}`
+
+  const bullets = evidence
+    .flatMap((line) =>
+      wrapCells({ text: `${BULLET}${line}`, cells: props.cells - GUTTER_CELLS }).map(
+        (wrapped, index) => (index === 0 ? wrapped : `${' '.repeat(BULLET.length)}${wrapped}`),
+      ),
+    )
+    .slice(0, EVIDENCE_LINES)
+
+  return (
+    <box flexDirection="column" flexShrink={0}>
+      <Gap />
+      <Line spans={[{ text: heading, fg: theme.meta }]} cells={props.cells} />
+      {bullets.map((line, index) => (
+        <Line
+          key={`evidence-${String(index)}`}
+          spans={[{ text: GUTTER }, { text: line, fg: theme.hint }]}
+          cells={props.cells}
+        />
+      ))}
+    </box>
+  )
+}
+
 function optionSpans(args: {
   option: ApprovalOption
   position: number
@@ -91,6 +129,7 @@ export function Approval(props: {
       <Line spans={[{ text: APPROVAL_HEADING, fg: theme.accent }]} cells={cells} />
       <Gap />
       <Reason reason={props.state.reason} cells={cells} />
+      <Evidence state={props.state} cells={cells} />
       <Gap />
       {APPROVAL_OPTIONS.map((option, index) => (
         <Line
@@ -101,6 +140,7 @@ export function Approval(props: {
         />
       ))}
       <Gap />
+      <Line spans={[{ text: APPROVAL_REWIND_NOTE, fg: theme.meta }]} cells={cells} />
       <DrawerHints hints={HINTS} cells={cells} onDismiss={props.onDismiss} />
     </BottomDrawer>
   )

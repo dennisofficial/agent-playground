@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { toCallId } from '@dltech/atlas-core'
+import { ERiskDimension, toCallId } from '@dltech/atlas-core'
 
-import { APPROVAL_HEADING, APPROVAL_OPTIONS, EApprovalChoice } from '../approval-model'
+import {
+  APPROVAL_EVIDENCE_HEADING,
+  APPROVAL_HEADING,
+  APPROVAL_OPTIONS,
+  APPROVAL_REWIND_NOTE,
+  EApprovalChoice,
+} from '../approval-model'
 import { Approval } from '../components/approval'
 import { glyph } from '../theme'
 import { frameOf, mount } from './transcript-fixture'
@@ -14,10 +20,23 @@ const CALL = toCallId('call-1')
 
 const REASON = 'this would remove a worktree another session is standing in'
 
-const drawer = (over: { reason?: string; selected?: number } = {}) => (
+const drawer = (
+  over: {
+    reason?: string
+    selected?: number
+    evidence?: readonly string[]
+    dimensions?: readonly ERiskDimension[]
+  } = {},
+) => (
   <Approval
     width={WIDTH}
-    state={{ callId: CALL, reason: over.reason ?? REASON, selected: over.selected ?? 0 }}
+    state={{
+      callId: CALL,
+      reason: over.reason ?? REASON,
+      evidence: over.evidence ?? [],
+      dimensions: over.dimensions ?? [],
+      selected: over.selected ?? 0,
+    }}
     overlay
     onPick={() => undefined}
     onDismiss={() => undefined}
@@ -89,7 +108,13 @@ describe('the drawer that asks the operator to double-check a call', () => {
       mount(
         <Approval
           width={40}
-          state={{ callId: CALL, reason: REASON, selected: 0 }}
+          state={{
+            callId: CALL,
+            reason: REASON,
+            evidence: ['the sibling worktree carries twelve uncommitted changes'],
+            dimensions: [ERiskDimension.Contention],
+            selected: 0,
+          }}
           overlay
           onPick={() => undefined}
           onDismiss={() => undefined}
@@ -97,5 +122,52 @@ describe('the drawer that asks the operator to double-check a call', () => {
         40,
       ),
     ).resolves.toBeUndefined()
+  })
+
+  it('shows what each surviving probe saw, so the pause explains itself', async () => {
+    const frame = await frameOf(
+      drawer({
+        evidence: [
+          'eng-412-sidebar is held by another live session',
+          'twelve uncommitted changes would go with it',
+        ],
+        dimensions: [ERiskDimension.Contention, ERiskDimension.Irreversibility],
+      }),
+      WIDTH,
+    )
+
+    expect(frame).toContain('eng-412-sidebar is held by another live session')
+    expect(frame).toContain('twelve uncommitted changes would go with it')
+  })
+
+  it('names the dimensions that fired beside the evidence', async () => {
+    const frame = await frameOf(
+      drawer({ evidence: ['a probe said so'], dimensions: [ERiskDimension.Contention] }),
+      WIDTH,
+    )
+
+    expect(rowWith(frame, APPROVAL_EVIDENCE_HEADING)).toContain(ERiskDimension.Contention)
+  })
+
+  it('keeps the evidence block out of the way when no probe wrote a line', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    expect(frame).not.toContain(APPROVAL_EVIDENCE_HEADING)
+  })
+
+  it('says that rewind is shut until the question is answered', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    expect(frame).toContain('Rewind stays shut')
+    expect(APPROVAL_REWIND_NOTE).toContain('Esc')
+  })
+
+  it('wraps a long evidence line inside the card rather than spilling past it', async () => {
+    const frame = await frameOf(
+      drawer({ evidence: [`the worktree ${'and on '.repeat(20)}`] }),
+      WIDTH,
+    )
+
+    for (const row of rowsOf(frame)) expect(row.trimEnd().length).toBeLessThanOrEqual(WIDTH)
   })
 })

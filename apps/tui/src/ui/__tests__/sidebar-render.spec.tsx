@@ -1,6 +1,6 @@
 import { homedir } from 'node:os'
 
-import { EAgentStatus, ERetryReason, toCallId } from '@dltech/atlas-core'
+import { EAgentStatus, ERetryReason, ERiskDimension, toCallId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React, { act } from 'react'
@@ -678,4 +678,48 @@ describe('a section a plugin contributed', () => {
 
     expect(rows.some((row) => row.includes('DEPLOYS'))).toBe(false)
   })
+})
+
+describe('the nudge figure', () => {
+  const watched = (over: Partial<SidebarModel['classifier']> = {}): SidebarModel => ({
+    ...IDLE_SIDEBAR,
+    classifier: {
+      pauses: 2,
+      turns: 40,
+      topDimension: ERiskDimension.Contention,
+      quietedCalls: 0,
+      judgeUnreachable: false,
+      ...over,
+    },
+  })
+
+  it('says how often it stopped the operator, against how many turns it watched', async () => {
+    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
+
+    expect(rowWith({ rows, text: 'pauses' })).toContain('2 / 40 turns')
+  }, 30_000)
+
+  it('names the dimension it interrupted about most', async () => {
+    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
+
+    expect(rowWith({ rows, text: 'most often' })).toContain(ERiskDimension.Contention)
+  }, 30_000)
+
+  it('stands under its own heading with no outstanding question to answer', async () => {
+    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
+
+    expect(rows.join('\n')).toContain('APPROVALS')
+  }, 30_000)
+
+  it('says when a thread has spent its interruptions and gone quiet', async () => {
+    const rows = await rowsOf({ model: watched({ quietedCalls: 3 }), turn: IDLE_TURN })
+
+    expect(rowWith({ rows, text: 'went quiet' })).toContain('3')
+  }, 30_000)
+
+  it('keeps the quiet row away when nothing has been waved through', async () => {
+    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
+
+    expect(rowWith({ rows, text: 'went quiet' })).toBe('')
+  }, 30_000)
 })

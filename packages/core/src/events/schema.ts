@@ -198,8 +198,11 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     dimensions: z.array(z.enum(ERiskDimension)),
     judgedDimension: z.enum(ERiskDimension).optional(),
     signalIds: z.array(z.string()),
+    details: z.array(z.string()).optional(),
     reason: z.string(),
     consulted: z.boolean(),
+    wouldAsk: z.boolean().optional(),
+    fatigued: z.boolean().optional(),
     elapsedMs: z.number().int().nonnegative(),
   }),
   z.object({

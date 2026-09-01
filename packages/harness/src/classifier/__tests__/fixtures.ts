@@ -9,11 +9,15 @@ import {
   EPathPresence,
   EToolEffect,
   NO_FACTS,
+  stampDrafts,
   toCallId,
+  toEventId,
+  toRunId,
   toThreadId,
   WorkspaceFactsPort,
   type ClassifierPolicy,
   type Event,
+  type EventDraft,
   type FactRequest,
   type ToolCall,
   type ToolDeclaration,
@@ -162,4 +166,23 @@ export async function classify(args: {
     events: args.events ?? [],
     signal: new AbortController().signal,
   })
+}
+
+export const stamped = (drafts: readonly EventDraft[]): readonly Event[] =>
+  stampDrafts({
+    drafts,
+    envelopes: drafts.map((_, index) => ({
+      id: toEventId(`evt-${String(index + 1)}`),
+      seq: index + 1,
+      threadId: toThreadId('thread-1'),
+      runId: toRunId('run-1'),
+      depth: 0,
+      at: '2026-09-01T00:00:00.000Z',
+    })),
+  })
+
+export function judgedIn(outcome: { drafts?: readonly EventDraft[] | undefined }) {
+  const draft = (outcome.drafts ?? []).find((one) => one.type === 'classifier-judged')
+  if (draft?.type !== 'classifier-judged') throw new Error('no classifier-judged draft was written')
+  return draft
 }

@@ -139,8 +139,11 @@ export type EventBody =
       dimensions: readonly ERiskDimension[]
       judgedDimension?: ERiskDimension | undefined
       signalIds: readonly string[]
+      details?: readonly string[] | undefined
       reason: string
       consulted: boolean
+      wouldAsk?: boolean | undefined
+      fatigued?: boolean | undefined
       elapsedMs: number
     }
   | {

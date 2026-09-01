@@ -1,124 +1,27 @@
 import { describe, expect, it } from 'bun:test'
 
-import { toCallId, toThreadId } from '../../../events/ids'
-import { EToolEffect, type ToolCall } from '../../../tools/tool'
 import { EBeforeToolDecision } from '../../before-tool'
-import { adjudicate, EConsultation, type Consultation, type JudgedDraft } from '../adjudicate'
-import { ERiskDimension, ESeverity } from '../dimension'
-import type { RiskSignal } from '../signals'
-import {
-  DEFAULT_CLASSIFIER_POLICY,
-  EClassifierMode,
-  ETriage,
-  type ClassifierPolicy,
-  type Triage,
-} from '../triage'
+import { EConsultation } from '../adjudicate'
+import { ERiskDimension } from '../dimension'
+import { EClassifierMode, ETriage } from '../triage'
 import { EJudgment } from '../verdict'
-
-const CALL: ToolCall = {
-  callId: toCallId('call-1'),
-  name: 'bash',
-  input: { command: 'git worktree remove --force ../eng-412-sidebar' },
-  effect: EToolEffect.Destructive,
-  threadId: toThreadId('thread-1'),
-}
-
-const signalOf = (args: {
-  severity: ESeverity
-  ungrantable?: boolean | undefined
-  dimension?: ERiskDimension | undefined
-}): RiskSignal => ({
-  dimension: args.dimension ?? ERiskDimension.Contention,
-  severity: args.severity,
-  id: `probe:${args.severity}`,
-  subject: 'worktree:eng-412-sidebar',
-  detail: 'the sibling worktree carries three uncommitted changes',
-  ungrantable: args.ungrantable ?? false,
-})
-
-const NOTE = signalOf({ severity: ESeverity.Note })
-const SERIOUS = signalOf({ severity: ESeverity.Serious })
-const SERIOUS_UNGRANTABLE = signalOf({ severity: ESeverity.Serious, ungrantable: true })
-const GRAVE = signalOf({ severity: ESeverity.Grave })
-
-const triageOver = (args: {
-  triage: ETriage
-  standing: readonly RiskSignal[]
-  fatigued?: boolean | undefined
-}): Triage => ({
-  triage: args.triage,
-  standing: args.standing,
-  cleared: [],
-  fatigued: args.fatigued ?? false,
-})
-
-const CHECK: Consultation = {
-  kind: EConsultation.Judged,
-  verdict: {
-    judgment: EJudgment.Check,
-    reason: 'contention: eng-412-sidebar carries three uncommitted changes',
-  },
-  elapsedMs: 610,
-}
-
-const PROCEED: Consultation = {
-  kind: EConsultation.Judged,
-  verdict: { judgment: EJudgment.Proceed, reason: '' },
-  elapsedMs: 480,
-}
-
-const UNREACHABLE: Consultation = { kind: EConsultation.Unreachable, fault: 'fetch failed' }
-const BUDGETED: Consultation = { kind: EConsultation.Budgeted, calls: 6 }
-
-const policyIn = (mode: EClassifierMode): ClassifierPolicy => ({
-  ...DEFAULT_CLASSIFIER_POLICY,
-  mode,
-})
-
-const decide = (args: {
-  mode: EClassifierMode
-  triage: Triage
-  consultation: Consultation | undefined
-}) =>
-  adjudicate({
-    call: CALL,
-    triage: args.triage,
-    consultation: args.consultation,
-    policy: policyIn(args.mode),
-    elapsedMs: 3,
-  })
-
-const draftOf = (outcome: ReturnType<typeof decide>): JudgedDraft => {
-  const draft = outcome.drafts?.[0]
-  if (draft === undefined || draft.type !== 'classifier-judged') {
-    throw new Error('the outcome carried no classifier row')
-  }
-  return draft
-}
-
-const EVERY_TRIAGE: readonly Triage[] = [
-  triageOver({ triage: ETriage.Clear, standing: [] }),
-  triageOver({ triage: ETriage.Clear, standing: [SERIOUS], fatigued: true }),
-  triageOver({ triage: ETriage.Consult, standing: [NOTE] }),
-  triageOver({ triage: ETriage.Consult, standing: [SERIOUS] }),
-  triageOver({ triage: ETriage.Consult, standing: [SERIOUS_UNGRANTABLE] }),
-  triageOver({ triage: ETriage.Consult, standing: [GRAVE] }),
-  triageOver({ triage: ETriage.Consult, standing: [NOTE, GRAVE] }),
-]
-
-const EVERY_CONSULTATION: readonly (Consultation | undefined)[] = [
-  undefined,
-  PROCEED,
-  CHECK,
-  UNREACHABLE,
+import {
   BUDGETED,
-]
-
-const EVERY_MODE: readonly EClassifierMode[] = [
-  EClassifierMode.Off,
-  EClassifierMode.Shadow,
-  EClassifierMode.Nudge,
-]
+  CALL,
+  CHECK,
+  decide,
+  draftOf,
+  EVERY_CONSULTATION,
+  EVERY_MODE,
+  EVERY_TRIAGE,
+  GRAVE,
+  NOTE,
+  PROCEED,
+  SERIOUS,
+  SERIOUS_UNGRANTABLE,
+  triageOver,
+  UNREACHABLE,
+} from './adjudicate-fixtures'
 
 describe('adjudicate', () => {
   it('never denies, for any combination of triage, consultation and mode', () => {

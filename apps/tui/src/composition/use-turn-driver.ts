@@ -2,7 +2,6 @@ import {
   isResumable,
   resumeDrafts,
   rowsOwnedBy,
-  type ApprovalRequest,
   type Event,
   type EventDraft,
   type EventLogPort,
@@ -13,7 +12,7 @@ import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harne
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 import type { ConversationStore } from '../store'
-import { unansweredApproval } from '../ui/approval-model'
+import { unansweredApproval, type ApprovalQuestion } from '../ui/approval-model'
 import { useApproval, type ApprovalControl } from './use-approval'
 import type { AtlasApp } from './compose'
 import { discardInterrupted, EDiscard } from './resume-turn'
@@ -39,7 +38,7 @@ async function pausedOnApproval(args: {
   log: EventLogPort
   threadId: ThreadId
   outcome: TurnOutcome
-}): Promise<ApprovalRequest | null> {
+}): Promise<ApprovalQuestion | null> {
   if (args.outcome.status !== ETurnStatus.Paused) return null
 
   const events = await args.log.read({ threadId: args.threadId })

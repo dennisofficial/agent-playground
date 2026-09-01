@@ -49,6 +49,7 @@ import { LostChildren } from '../ui/components/lost-children'
 import { hasLostChildren } from '../ui/lost-children-model'
 import { Shortcuts } from '../ui/components/shortcuts'
 import { Sidebar } from '../ui/components/sidebar'
+import { withNudgeMarker } from '../ui/nudge-marker'
 import { WelcomeScreen } from '../ui/components/welcome-screen'
 import { Transcript } from '../ui/components/transcript'
 import { useDraft } from '../ui/hooks/use-draft'
@@ -669,10 +670,21 @@ function Workspace(props: {
         width: chromeWidth,
         model: card?.label ?? modelLabel(selection.ref.modelId),
         effort: selection.effort,
-        items: surfaces.footerItems,
+        items: withNudgeMarker({
+          items: surfaces.footerItems,
+          fold: conversation.sidebar.classifier,
+        }),
         context: readout,
       }),
-    [card, chromeWidth, readout, selection.effort, selection.ref, surfaces.footerItems],
+    [
+      card,
+      chromeWidth,
+      conversation.sidebar.classifier,
+      readout,
+      selection.effort,
+      selection.ref,
+      surfaces.footerItems,
+    ],
   )
 
   const footerStrip = useFooterStrip({ items: footerRow.instruments.items, draft })

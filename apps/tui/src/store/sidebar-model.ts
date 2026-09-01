@@ -7,6 +7,7 @@ import {
   type Event,
 } from '@dltech/atlas-core'
 
+import { classifierFold, type ClassifierFold } from './classifier-fold'
 import { truncateCells } from '../ui/components/sidebar/cells'
 import { orderSections, type SidebarSection } from '../ui/sidebar-section'
 import type { TurnClock } from '../ui/components/transcript'
@@ -43,6 +44,7 @@ export type SidebarModel = {
   crewFold?: SidebarCrewFold
   teammates?: readonly SidebarTeammate[]
   sections?: readonly SidebarSection[]
+  classifier?: ClassifierFold
 }
 
 export const IDLE_SIDEBAR: SidebarModel = {
@@ -107,6 +109,7 @@ export function deriveSidebar(args: {
   const lastTurnOutputTokens = running ? null : (turn.completed?.outputTokens ?? null)
 
   const todo = todoOf(events)
+  const classifier = classifierFold({ events })
 
   return {
     title: titleOf({ events, name }),
@@ -117,6 +120,7 @@ export function deriveSidebar(args: {
     liveOutputTokens,
     lastTurnOutputTokens,
     ...(todo.length === 0 ? {} : { todo }),
+    ...(classifier === null ? {} : { classifier }),
   }
 }
 

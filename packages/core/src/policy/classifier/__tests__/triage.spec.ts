@@ -147,6 +147,26 @@ describe('the fatigue cap', () => {
   it('is not fatigued when nothing was standing in the first place', () => {
     expect(triage({ signals: [], asksSoFar: 40 }).fatigued).toBe(false)
   })
+
+  it('goes quiet even about a grave signal no grant could ever cover', () => {
+    const decided = triage({
+      signals: [signal({ severity: ESeverity.Grave, ungrantable: true })],
+      asksSoFar: DEFAULT_CLASSIFIER_POLICY.asksPerThread,
+    })
+
+    expect(decided.triage).toBe(ETriage.Clear)
+    expect(decided.fatigued).toBe(true)
+  })
+
+  it('still consults on the ask that brings the thread level with the cap', () => {
+    const decided = triage({
+      signals: [signal({ severity: ESeverity.Grave })],
+      asksSoFar: DEFAULT_CLASSIFIER_POLICY.asksPerThread - 1,
+    })
+
+    expect(decided.triage).toBe(ETriage.Consult)
+    expect(decided.fatigued).toBe(false)
+  })
 })
 
 describe('a grant on the incident this feature exists for', () => {
