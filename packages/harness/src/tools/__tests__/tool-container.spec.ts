@@ -28,6 +28,7 @@ const BUILTIN_NAMES = [
   'shell_output',
   'shell_kill',
   'task_write',
+  'skill',
   'agent_spawn',
   'agent_say',
   'agent_resume',
@@ -51,13 +52,13 @@ function toolNamed({ container, name }: { container: DependencyContainer; name: 
 const invoke = (
   tool: ToolDefinition,
   input: unknown,
-  sessionDirectory = tmpdir(),
+  projectDirectory = tmpdir(),
 ): Promise<ToolOutcome> =>
   tool.invoke({
     input,
     signal: AbortSignal.timeout(10_000),
     idempotencyKey: 'key-1',
-    sessionDirectory,
+    projectDirectory,
     threadId: toThreadId('thread-1'),
   })
 

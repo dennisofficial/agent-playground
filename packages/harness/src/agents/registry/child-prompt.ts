@@ -15,12 +15,16 @@ export function subAgentPrompt({
   prompts,
   agentType,
   provider,
+  projectDirectory,
 }: {
   prompts: PromptRegistry
   agentType: AgentType
   provider: ProviderIdentity
+  projectDirectory: string
 }): CompiledPrompt {
-  const compiled = prompts.compile(promptContextFor({ agent: EPromptAgent.Sub, provider }))
+  const compiled = prompts.compile(
+    promptContextFor({ agent: EPromptAgent.Sub, provider, projectDirectory }),
+  )
   const identity = agentType.prompt.trim()
 
   const parts: readonly PromptPart[] = [

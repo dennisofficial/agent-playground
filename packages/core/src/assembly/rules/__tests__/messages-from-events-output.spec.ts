@@ -149,3 +149,36 @@ describe('messagesFromEvents rendering a tool result', () => {
     expect(outputOf(settled(Number.NaN))).toMatchObject({ output: { type: 'text', value: 'NaN' } })
   })
 })
+
+describe('messagesFromEvents rendering a tool result that carries parts', () => {
+  const withParts = (modelParts: readonly ({ type: 'text'; text: string } | { type: 'image'; data: string; mediaType: string })[]) =>
+    log([
+      { type: 'tool-called', callId: toCallId('call-1'), name: 'read', input: { path: 'shot.png' }, ordinal: 0 },
+      {
+        type: 'tool-result',
+        callId: toCallId('call-1'),
+        name: 'read',
+        output: { path: 'shot.png', inlined: true },
+        modelText: 'shot.png — image/png, 8×8, 1 KB.',
+        modelParts,
+      },
+    ])
+
+  const contentOf = (events: ReturnType<typeof log>) =>
+    messagesFromEvents()(empty, contextFor({ events })).messages[1]?.message.content[0]
+
+  it('hands the model the parts rather than the summary text', () => {
+    const parts = [
+      { type: 'text' as const, text: 'shot.png — image/png, 8×8, 1 KB.' },
+      { type: 'image' as const, data: 'iVBOR', mediaType: 'image/png' },
+    ]
+
+    expect(contentOf(withParts(parts))).toMatchObject({ output: { type: 'content', value: parts } })
+  })
+
+  it('falls back to the summary text when the parts are empty', () => {
+    expect(contentOf(withParts([]))).toMatchObject({
+      output: { type: 'text', value: 'shot.png — image/png, 8×8, 1 KB.' },
+    })
+  })
+})

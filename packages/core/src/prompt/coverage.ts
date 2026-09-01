@@ -8,14 +8,23 @@ export const MODEL_ID_OUTSIDE_THE_CATALOGUE = 'uncatalogued-model'
 export function reachablePromptContexts(args: {
   agents: readonly EPromptAgent[]
   providerIds: readonly string[]
+  projectDirectory: string
 }): readonly PromptContext[] {
+  const { projectDirectory } = args
+
   return args.agents.flatMap((agent) =>
     args.providerIds.flatMap((id) => [
-      ...MODEL_CATALOG.map((model) => ({ agent, provider: { id, modelId: model.id }, model })),
+      ...MODEL_CATALOG.map((model) => ({
+        agent,
+        provider: { id, modelId: model.id },
+        model,
+        projectDirectory,
+      })),
       {
         agent,
         provider: { id, modelId: MODEL_ID_OUTSIDE_THE_CATALOGUE },
         model: undefined,
+        projectDirectory,
       },
     ]),
   )

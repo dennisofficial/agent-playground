@@ -88,7 +88,11 @@ describe('the step in flight', () => {
     publisher.settleAppend({ events: [assistantSaid({ seq: 2, text: 'first' })] })
     publisher.onChunk({ type: 'text-delta', id: 't2', text: 'second' })
 
-    const stepIds = seen.flatMap((signal) => (signal.type === 'events-appended' ? [] : [signal.stepId]))
+    const stepIds = seen.flatMap((signal) =>
+      signal.type === 'step-started' || signal.type === 'chunk' || signal.type === 'step-ended'
+        ? [signal.stepId]
+        : [],
+    )
     expect(new Set(stepIds.slice(0, 3)).size).toBe(1)
     expect(stepIds[3]).not.toBe(stepIds[0])
   })

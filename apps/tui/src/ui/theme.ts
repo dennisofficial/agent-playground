@@ -12,7 +12,9 @@ export const SIDEBAR_WIDTH = 42
 
 export const SIDEBAR_GUTTER = 2
 
-export const SIDEBAR_MIN_TERMINAL_WIDTH = 120
+export const SIDEBAR_FOLD_BELOW = 120
+
+export const MIN_TRANSCRIPT_WIDTH = 40
 
 export const SIDE_BY_SIDE_MIN_TERMINAL_WIDTH = 140
 

@@ -4,6 +4,8 @@ import { fitHints, hintSpans, type Hint } from '../hint-layout'
 import { usePress } from '../hooks/use-press'
 import { currentPage, type SettingsModel, type SettingsState } from '../settings-model'
 import { theme } from '../theme'
+import type { Appearance } from '../appearance'
+import { SettingsBand } from './settings/band'
 import { SettingsDetail } from './settings/detail'
 import { SettingsHead } from './settings/head'
 import { SettingLine, SettingsGroupHeader, SettingsLine, SETTINGS_PAD } from './settings/rows'
@@ -63,6 +65,7 @@ export function Settings(props: {
   state: SettingsState
   cwd: string
   origin: string
+  appearance: Appearance
   problem?: string | undefined
   onActivate: (target: { pageIndex: number; rowIndex: number }) => void
   onDismiss: () => void
@@ -123,6 +126,11 @@ export function Settings(props: {
               ))}
             </box>
           </scrollbox>
+          <SettingsBand
+            width={columnWidth}
+            setting={selected}
+            appearance={props.appearance}
+          />
           <FooterLine
             cells={cells}
             status={props.problem ?? `edits write to ${props.origin}`}

@@ -1,15 +1,16 @@
-import { randomUUID } from 'node:crypto'
-import { realpath } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { stat } from 'node:fs/promises'
 
 import { z } from 'zod'
 
 import {
+  EContentAccess,
+  EPathForm,
+  EPathPresence,
   EToolEffect,
   SchemaTool,
   idledSeconds,
   waitsBySleeping,
+  type DeclaredPathField,
   type ThreadId,
   type ToolOutcome,
   type ToolRun,
@@ -20,7 +21,6 @@ import { ShellRegistryPort } from '../../shells/shell-registry'
 import {
   countLineBreaks,
   messageOf,
-  probeCwd,
   readShell,
   render,
   startShell,
@@ -35,6 +35,7 @@ const MAXIMUM_OUTPUT_CHARACTERS = 30_000
 
 const inputSchema = z.strictObject({
   command: z.string().min(1),
+  workdir: z.string().min(1).optional(),
   timeoutMs: z.number().int().positive().optional(),
   description: z.string().min(1),
   runInBackground: z.boolean().optional(),
@@ -42,9 +43,11 @@ const inputSchema = z.strictObject({
 
 const description = [
   'Run a command in bash.',
-  'It starts in the directory your last command left, which is the project directory until something moves it, so never open a command with a cd back to where you already are.',
-  'Reach elsewhere by writing absolute paths in the command rather than by cd, and cd only when the developer asks you to move.',
-  'The directory is the only thing that carries: the process is new each call, so a shell variable, function or background job dies with the call that made it.',
+  'Every call starts in the project directory.',
+  'To run somewhere else, pass that directory as workdir rather than opening the command with a cd - a cd moves only the process that runs it, and that process ends with the call.',
+  'A relative workdir resolves against the project directory.',
+  'Good: workdir "packages/core" with command "bun test". Bad: command "cd packages/core && bun test".',
+  'Nothing carries between calls: the process is new each time, so a shell variable, function, background job or cd dies with the call that made it.',
   'stdout and stderr come back as one string, all of stdout first and then all of stderr, so the two are not interleaved.',
   'Only the tail is kept once the output grows past its cap.',
   'A non-zero exit is reported rather than raised, with the code named at the end.',
@@ -52,7 +55,7 @@ const description = [
   'Every call carries a description: a few imperative words naming the job - Run the core tests, Rebase onto main - which is what the developer reads in place of the command.',
   'A command that only sleeps is refused: idling advances nothing, so back the slow thing and end the turn instead.',
   'Set runInBackground to start a long-running command - a dev server, a watch, a slow test suite - and get a shell id back at once instead of waiting.',
-  'A background shell starts in that same directory, has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
+  'A background shell starts in the same directory workdir names, has no timeout, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
   'Its ending wakes you wherever you are, however it ends, carrying everything it printed - whether or not a turn is running when it lands.',
   'Its stdin is closed, so a command that stops to ask something can never be answered and will never end; that too is delivered to you, so a prompt is reported rather than waited out.',
   'So never wait on one: no sleeping, no polling, no idle loop. Move on to other work, or end the turn and be woken.',
@@ -120,7 +123,6 @@ function renderModelText(args: {
   exitCode: number
   timedOut: boolean
   timeoutMs: number
-  movedTo?: string | undefined
 }): string {
   const sections: string[] = []
   if (args.merged.length > 0) sections.push(args.merged)
@@ -130,7 +132,6 @@ function renderModelText(args: {
     )
   }
   if (args.exitCode !== 0) sections.push(`Exit code: ${args.exitCode}`)
-  if (args.movedTo !== undefined) sections.push(`You are now in ${args.movedTo}, and later commands start there.`)
   if (sections.length === 0) return 'The command completed with no output.'
   return sections.join('\n\n')
 }
@@ -141,6 +142,14 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    {
+      field: 'workdir',
+      presence: EPathPresence.Optional,
+      form: EPathForm.Absolute,
+      content: EContentAccess.None,
+    },
+  ]
 
   constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
     super()
@@ -180,12 +189,23 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     signal,
-    sessionDirectory,
+    projectDirectory,
     threadId,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn before the command started' }
 
     const { command, timeoutMs } = input
+    const cwd = input.workdir ?? projectDirectory
+
+    if (input.workdir !== undefined) {
+      const directory = await stat(input.workdir).catch(() => undefined)
+      if (directory === undefined) {
+        return { ok: false, reason: `workdir ${input.workdir} does not exist, so there is nowhere to run the command` }
+      }
+      if (!directory.isDirectory()) {
+        return { ok: false, reason: `workdir ${input.workdir} is a file, not a directory` }
+      }
+    }
 
     if (input.runInBackground === true) {
       if (timeoutMs !== undefined) {
@@ -199,7 +219,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         threadId,
         command,
         description: input.description,
-        cwd: sessionDirectory,
+        cwd,
       })
     }
 
@@ -212,17 +232,8 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
       }
     }
 
-    const probe = probeCwd({
-      command,
-      probeFile: join(tmpdir(), `atlas-cwd-${randomUUID()}`),
-    })
-
-    const startedIn = await realpath(sessionDirectory).catch(() => sessionDirectory)
-    const started = startShell({ command: probe.command, cwd: startedIn })
-    if (!started.ok) {
-      await probe.discard()
-      return started
-    }
+    const started = startShell({ command, cwd })
+    if (!started.ok) return started
 
     const { shell } = started
     const terminate = terminatorFor(shell)
@@ -237,16 +248,11 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     try {
       read = await readShell({ shell, limit: MAXIMUM_OUTPUT_CHARACTERS })
     } catch (error) {
-      await probe.discard()
       return { ok: false, reason: `the command could not be read back: ${messageOf(error)}` }
     } finally {
       clearTimeout(deadline)
       signal.removeEventListener('abort', terminate)
     }
-
-    const settledIn = await probe.settled()
-    await probe.discard()
-    const movedTo = settledIn !== undefined && settledIn !== startedIn ? settledIn : undefined
 
     if (signal.aborted && !timedOut) {
       return { ok: false, reason: 'the developer interrupted the turn while the command was running' }
@@ -264,14 +270,12 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         stderr: render(read.stderr),
         truncated: merged.truncated,
         timedOut,
-        ...(movedTo === undefined ? {} : { sessionDirectory: movedTo }),
       },
       modelText: renderModelText({
         merged: merged.text,
         exitCode: read.exitCode,
         timedOut,
         timeoutMs: timeout,
-        movedTo,
       }),
     }
   }

@@ -17,6 +17,7 @@ export type AgentSnapshot = {
   lastTool: string | undefined
   startedAt: string
   endedAt: string | undefined
+  deliveredAt?: string | undefined
   context?: ChildContext | undefined
 }
 

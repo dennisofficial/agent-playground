@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { collapseHome, tailOfPath, sessionLabel } from '../paths'
+import { collapseHome, expandHome, tailOfPath } from '../paths'
 
 const HOME = '/Users/ada'
 
@@ -26,6 +26,25 @@ describe('collapseHome', () => {
   })
 })
 
+describe('expandHome', () => {
+  it('answers the home directory for a bare ~', () => {
+    expect(expandHome({ path: '~', home: HOME })).toBe(HOME)
+  })
+
+  it('expands a path under ~', () => {
+    expect(expandHome({ path: '~/dev/atlas', home: HOME })).toBe(`${HOME}/dev/atlas`)
+  })
+
+  it('leaves a ~ that does not start a segment alone', () => {
+    expect(expandHome({ path: '~atlas', home: HOME })).toBe('~atlas')
+    expect(expandHome({ path: '/srv/~/atlas', home: HOME })).toBe('/srv/~/atlas')
+  })
+
+  it('leaves everything alone when there is no home', () => {
+    expect(expandHome({ path: '~/dev/atlas', home: '' })).toBe('~/dev/atlas')
+  })
+})
+
 describe('tailOfPath', () => {
   it('leaves a path that already fits', () => {
     expect(tailOfPath({ path: '~/dev/atlas', cells: 20 })).toBe('~/dev/atlas')
@@ -43,37 +62,5 @@ describe('tailOfPath', () => {
 
   it('falls back to the bare tail when no boundary fits', () => {
     expect(tailOfPath({ path: '~/averyverylongdirectory', cells: 8 })).toBe('…rectory')
-  })
-})
-
-describe('sessionLabel', () => {
-  const home = '/Users/dev'
-  const projectDirectory = '/Users/dev/atlas'
-
-  it('shows the collapsed project path while the session has not moved', () => {
-    expect(sessionLabel({ projectDirectory, sessionDirectory: projectDirectory, home })).toEqual({
-      path: '~/atlas',
-      moved: false,
-    })
-  })
-
-  it('shows the path relative to the project once the session moves inside it', () => {
-    expect(
-      sessionLabel({ projectDirectory, sessionDirectory: '/Users/dev/atlas/packages/harness', home }),
-    ).toEqual({ path: 'packages/harness', moved: true })
-  })
-
-  it('shows a collapsed absolute path once the session leaves the project', () => {
-    expect(sessionLabel({ projectDirectory, sessionDirectory: '/Users/dev/Downloads', home })).toEqual({
-      path: '~/Downloads',
-      moved: true,
-    })
-  })
-
-  it('does not mistake a sibling directory sharing the project prefix for a child', () => {
-    expect(sessionLabel({ projectDirectory, sessionDirectory: '/Users/dev/atlas-notes', home })).toEqual({
-      path: '~/atlas-notes',
-      moved: true,
-    })
   })
 })

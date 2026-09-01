@@ -29,7 +29,7 @@ const readWith = async (input: { path: string; offset?: number; limit?: number }
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'read-1',
-    sessionDirectory: SESSION_DIRECTORY,
+    projectDirectory: SESSION_DIRECTORY,
     threadId: toThreadId('thread-1'),
   })
 

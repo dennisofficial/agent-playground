@@ -59,10 +59,10 @@ export function shellStateLabel(shell: ShellSnapshot): string {
 export const shellCommandLabel = (command: string): string => command.replace(/\s+/g, ' ').trim()
 
 /**
- * What a human scanning the panel reads. The description is the name the model gave the job, so it
- * wins over the command it happened to spell.
+ * What a human scanning the panel reads. The description is the name the model gave the job and the
+ * bash tool requires one, so the fallback is only for a shell replayed from before it did.
  */
-export function shellNameLabel(shell: Pick<ShellSnapshot, 'command' | 'description'>): string {
+export function shellNameLabel(shell: { command: string; description?: string | undefined }): string {
   const named = shell.description?.trim() ?? ''
   return named === '' ? shellCommandLabel(shell.command) : named
 }

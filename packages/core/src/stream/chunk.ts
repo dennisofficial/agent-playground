@@ -24,6 +24,9 @@ export type Chunk =
   | { type: 'reasoning-start'; id: string; providerMetadata?: ProviderOptions }
   | { type: 'reasoning-delta'; id: string; text: string; providerMetadata?: ProviderOptions }
   | { type: 'reasoning-end'; id: string; providerMetadata?: ProviderOptions }
+  | { type: 'tool-input-start'; callId: CallId; name: string }
+  | { type: 'tool-input-delta'; callId: CallId; text: string }
+  | { type: 'tool-input-end'; callId: CallId }
   | { type: 'tool-call'; callId: CallId; name: string; input: unknown }
   | { type: 'finish'; reason: EFinishReason; usage?: ModelUsage }
   | { type: 'error'; message: string }

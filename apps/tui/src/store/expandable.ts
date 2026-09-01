@@ -9,6 +9,10 @@ export function isExpandable(entry: TranscriptEntry): boolean {
     return entry.run.calls.length > 0 && entry.run.calls.every(settled)
   }
   if (entry.kind === EEntryKind.BackgroundShellEnded) return entry.output.trimEnd().length > 0
+  if (entry.kind === EEntryKind.BackgroundShellAwaitingInput) {
+    return entry.output.trimEnd().length > 0
+  }
+  if (entry.kind === EEntryKind.AgentEnded) return entry.report.trim().length > 0
   if (entry.kind === EEntryKind.HistoryCompacted) return entry.text.trim().length > 0
   return false
 }

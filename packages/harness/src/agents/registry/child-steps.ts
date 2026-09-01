@@ -49,6 +49,7 @@ export class ChildSteps {
     child.status = EAgentStatus.Running
     child.killedBy = undefined
     child.endedAt = undefined
+    child.deliveredAt = undefined
     this.roster.changed()
 
     const settled = this.stepped({

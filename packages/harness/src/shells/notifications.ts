@@ -19,3 +19,20 @@ export function endedDraft(args: { snapshot: ShellSnapshot; delta: ShellDelta })
     remainingCharacters: delta.remainingCharacters,
   }
 }
+
+export function awaitingInputDraft(args: {
+  snapshot: ShellSnapshot
+  delta: ShellDelta
+}): EventDraft {
+  const { snapshot, delta } = args
+
+  return {
+    type: 'background-shell-awaiting-input',
+    shellId: snapshot.shellId,
+    command: snapshot.command,
+    description: snapshot.description,
+    output: delta.text,
+    droppedCharacters: delta.droppedCharacters,
+    remainingCharacters: delta.remainingCharacters,
+  }
+}

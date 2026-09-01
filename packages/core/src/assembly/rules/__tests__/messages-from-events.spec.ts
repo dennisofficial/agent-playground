@@ -177,7 +177,7 @@ describe('messagesFromEvents', () => {
 
     const rendered = messagesFromEvents()(empty, contextFor({ events })).messages.flatMap((entry) =>
       entry.message.role === 'user'
-        ? entry.message.content.map((part) => part.text)
+        ? entry.message.content.flatMap((part) => (part.type === 'text' ? [part.text] : []))
         : [],
     )
 

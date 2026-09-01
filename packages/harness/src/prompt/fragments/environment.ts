@@ -1,20 +1,15 @@
-import { PromptFragment } from '@dltech/atlas-core'
+import { PromptFragment, type PromptContext } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
+import { injectable } from '../../container/injection'
 
 @injectable()
 export class ProjectDirectoryFragment extends PromptFragment {
   readonly id = 'environment.project-directory'
 
-  constructor(@inject(WorkspaceRoot) private readonly root: string) {
-    super()
-  }
-
-  text(): string {
+  text(ctx: PromptContext): string {
     return [
-      `The project directory is ${this.root}, and it is where a bash command starts.`,
-      'Keep it there: reach elsewhere with absolute paths rather than cd, unless the developer asks you to move.',
+      `The project directory is ${ctx.projectDirectory}, and every bash command starts there.`,
+      'You are already in it, so never spend a cd returning to it, and run somewhere else by passing that directory as workdir rather than by cd.',
     ].join(' ')
   }
 }
@@ -26,7 +21,7 @@ export class RelativePathsFragment extends PromptFragment {
   text(): string {
     return [
       'A path you pass to a tool resolves against the project directory, so write those relative to it.',
-      'A path inside a bash command is resolved by the shell instead, so write those absolute.',
+      'A path inside a bash command is resolved by the shell instead, against workdir or the project directory, so write those absolute.',
     ].join(' ')
   }
 }

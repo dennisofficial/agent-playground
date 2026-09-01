@@ -75,10 +75,19 @@ export function targetOf(args: { call: ToolCall; cwd: string }): string | undefi
     case 'shell_output':
     case 'shell_kill':
       return str(input.shellId) ?? str(input.shell_id)
+    case 'skill':
+      return str(input.name)
     default:
       return str(input.query) ?? str(input.pattern) ?? str(input.command)
   }
 }
+
+/**
+ * The body a `write` sends, which rides on the CALL rather than the result — so it can be read while
+ * the call is still arriving, before the tool has run at all.
+ */
+export const writtenContentOf = (call: ToolCall): string | undefined =>
+  str(inputOf(call).content) ?? str(inputOf(call).text)
 
 export function diffOf(call: ToolCall): DiffFile | null {
   const patch = str(outputOf(call).diff)
@@ -135,3 +144,15 @@ export function commandLines(call: ToolCall): readonly string[] {
   if (command === commandLabel(call)) return []
   return command.split('\n')
 }
+
+export const lineCount = (text: string): number => (text.length === 0 ? 0 : text.split('\n').length)
+
+/**
+ * The sentence form, when there is something to put in it.
+ *
+ * `Read read` is what a fabricated one looks like: a call with no target has nothing for the verb to
+ * take, and prefixing the tool's own name with a verb reads as a stutter. Better to fall back to the
+ * bare label than to invent a sentence about nothing.
+ */
+export const standing = (args: { verb: string; target: string | undefined }): { alone?: string } =>
+  args.target === undefined ? {} : { alone: `${args.verb} ${args.target}` }

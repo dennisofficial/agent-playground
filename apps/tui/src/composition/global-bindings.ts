@@ -6,10 +6,11 @@ export type GlobalHandlers = {
   onShortcuts: () => void
   onTakeBackPending: () => boolean
   onInterrupt: () => void
-  onNewConversation: () => void
   onOpenSwitcher: () => void
-  onToggleSidebar: () => void
+  onAttachImage: () => boolean
+  onToggleSidebar: (() => void) | null
   onOpenShells: () => void
+  onCycleAgents: (() => void) | null
   onOpenSettings: () => void
   onOpenAccounts: () => void
   onQuit: () => void
@@ -20,7 +21,14 @@ const global = (binding: Omit<KeyBinding, 'layer'>): KeyBinding => ({
   layer: EKeyLayer.Global,
 })
 
+/**
+ * The sidebar toggle is absent, not inert, while the sidebar is docked: a chord the shortcuts list
+ * advertises has to do something when it is pressed. The sub-agent walk is absent on the same
+ * grounds, whenever the conversation has spawned nobody to walk.
+ */
 export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] {
+  const { onCycleAgents, onToggleSidebar } = handlers
+
   return [
     global({
       chord: 'return',
@@ -49,10 +57,11 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       run: () => handlers.draftIsEmpty() && handlers.onTakeBackPending(),
     }),
     global({
-      chord: 'ctrl+n',
-      hint: 'new conversation',
-      group: EKeyGroup.Session,
-      run: handlers.onNewConversation,
+      chord: 'ctrl+v',
+      hint: 'paste image',
+      describe: 'write the picture on the clipboard into the draft — ⌘V pastes only text',
+      group: EKeyGroup.Composer,
+      run: handlers.onAttachImage,
     }),
     global({
       chord: 'ctrl+p',
@@ -60,12 +69,17 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       group: EKeyGroup.Session,
       run: handlers.onOpenSwitcher,
     }),
-    global({
-      chord: 'ctrl+b',
-      hint: 'sidebar',
-      group: EKeyGroup.Session,
-      run: handlers.onToggleSidebar,
-    }),
+    ...(onToggleSidebar === null
+      ? []
+      : [
+          global({
+            chord: 'ctrl+b',
+            hint: 'sidebar',
+            describe: 'open the sidebar over the transcript — escape closes it',
+            group: EKeyGroup.Session,
+            run: onToggleSidebar,
+          }),
+        ]),
     global({
       chord: 'ctrl+t',
       hint: 'background shells',
@@ -73,6 +87,17 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       group: EKeyGroup.Session,
       run: handlers.onOpenShells,
     }),
+    ...(onCycleAgents === null
+      ? []
+      : [
+          global({
+            chord: 'ctrl+g',
+            hint: 'sub-agents',
+            describe: 'walk to the next sub-agent and read it — again to come back to the parent',
+            group: EKeyGroup.Session,
+            run: onCycleAgents,
+          }),
+        ]),
     global({
       chord: 'ctrl+o',
       hint: 'settings',

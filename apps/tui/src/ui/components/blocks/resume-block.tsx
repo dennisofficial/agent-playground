@@ -18,25 +18,12 @@ const RESUME: KeyDeclaration = {
   describe: 'pick a stopped turn up where it left off',
 }
 
-const FRESH = '/resume fresh'
-
-const SEPARATOR = ' · '
-
-const spansFor = (args: { hovered: boolean; fresh: boolean }): readonly Span[] => [
+const spansFor = (args: { hovered: boolean }): readonly Span[] => [
   { text: `${glyph.retry} ${spellChord(RESUME.chord)}`, fg: theme.accent },
   { text: ` ${RESUME.hint}`, fg: args.hovered ? theme.hover : theme.hint },
-  ...(args.fresh
-    ? [
-        { text: SEPARATOR, fg: theme.dim },
-        { text: `${FRESH} to say it again`, fg: theme.dim },
-      ]
-    : []),
 ]
 
-export function ResumeBlock(props: {
-  onResume: () => void
-  onResumeFresh?: () => void
-}): React.ReactNode {
+export function ResumeBlock(props: { onResume: () => void }): React.ReactNode {
   const region = useClickRegion(props.onResume)
 
   useKeyBindings([
@@ -46,9 +33,7 @@ export function ResumeBlock(props: {
   return (
     <box flexDirection="row" marginBottom={1} flexShrink={0}>
       <text {...region.handlers}>
-        <Spans
-          spans={spansFor({ hovered: region.hovered, fresh: props.onResumeFresh !== undefined })}
-        />
+        <Spans spans={spansFor({ hovered: region.hovered })} />
       </text>
     </box>
   )

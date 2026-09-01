@@ -8,6 +8,8 @@ import { EMPTY_PROMPT, systemPrompt } from '../rules/system-prompt'
 import { EAssemblyStage, ERuleFailurePolicy } from '../trace'
 import { contextFor, log } from './log-fixture'
 
+const LAUNCH = '/w'
+
 const PROJECT_DIRECTORY = '/w'
 
 const DOCTRINE = 'You are Atlas, a coding agent talking to a developer in their terminal.'
@@ -18,7 +20,8 @@ const doctrine = () =>
       blocks: [{ text: DOCTRINE }],
       parts: [{ id: 'fixture.doctrine', text: DOCTRINE, chars: DOCTRINE.length }],
       skipped: [],
-    })
+    }),
+    launchDirectory: LAUNCH,
   })
 
 const exchange = log([
@@ -93,8 +96,8 @@ describe('assemble', () => {
     })
 
     expect(
-      defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }).at(-1)?.ruleName,
-    ).toBe('sessionDirectoryBlock')
+      defaultRules({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }).at(-1)?.ruleName,
+    ).toBe('worktreeBlock')
     expect(assembled.system.map((block) => block.text)).toEqual([DOCTRINE])
     expect(assembled.messages).toEqual([])
     expect(trace.at(-1)).toMatchObject({

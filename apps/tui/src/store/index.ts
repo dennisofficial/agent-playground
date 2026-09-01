@@ -1,4 +1,14 @@
+export { agentEndedLine, agentEndingFailed, type AgentEndingRow } from './agent-ended-line'
 export { createConversationStore, type ConversationStore } from './conversation-store'
+export {
+  agentSpendOf,
+  ESpendReading,
+  NOTHING_COUNTED,
+  NOTHING_SPENT,
+  SPEND_UNAVAILABLE,
+  type AgentSpend,
+  type SpendTotals,
+} from './agent-spend'
 export { deriveTranscript } from './derive-transcript'
 export { durableEntries } from './durable-entries'
 export { isExpandable, newestExpandableKey } from './expandable'
@@ -16,9 +26,11 @@ export {
   trailingSaid,
   type PendingMessage,
   type PendingQueue,
+  type PendingSaid,
 } from './pending-queue'
 export { EPendingKind, pendingRows, type PendingRow } from './pending-rows'
 export {
+  shellAwaitingInputLine,
   shellEndedLine,
   shellEndingFailed,
   type ShellEnding,
@@ -56,6 +68,8 @@ export {
   EEntryKind,
   EMPTY_TRANSCRIPT,
   toolsRanEntry,
+  type AgentEndedEntry,
+  type BackgroundShellAwaitingInputEntry,
   type BackgroundShellEndedEntry,
   type ModelSaidEntry,
   type ModelThoughtEntry,
@@ -75,7 +89,7 @@ export {
   type SidebarGit,
   type SidebarModel,
   type SidebarPullRequest,
-  type SidebarSubagent,
   type SidebarTask,
   type SidebarTeammate,
 } from './sidebar-model'
+export { type SidebarCrewFold, type SidebarSubagent } from './subagent-row'

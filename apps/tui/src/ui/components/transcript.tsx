@@ -1,18 +1,21 @@
-import React, { useCallback, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { EEntryKind, type PendingRow, type TranscriptModel } from '../../store'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
 import { useTranscriptViewport } from '../transcript-viewport-store'
+import { applyTranscriptBounds } from '../viewport-rows-store'
 import { ErrorBlock } from './blocks/error-block'
 import { PendingBlock } from './blocks/pending-block'
 import { ResumeBlock } from './blocks/resume-block'
-import { WelcomeBlock } from './blocks/welcome-block'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
 import { PeekLine } from './peek-line'
+import type { RetryWait } from '../retry-countdown'
 import { EWorkingVerb, WorkingLine } from './working-line'
+
+export type { RetryWait }
 
 export type TurnClock = {
   startedAt: number | null
@@ -20,6 +23,7 @@ export type TurnClock = {
   interrupting: boolean
   reasoning: boolean
   completed: { durationMs: number; outputTokens: number } | null
+  retry: RetryWait | null
 }
 
 export const IDLE_TURN: TurnClock = {
@@ -28,6 +32,7 @@ export const IDLE_TURN: TurnClock = {
   interrupting: false,
   reasoning: false,
   completed: null,
+  retry: null,
 }
 
 const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
@@ -39,15 +44,12 @@ export function Transcript(props: {
   width: number
   now: number
   cwd: string
-  home: string
-  modelId: string
   turn?: TurnClock
   anchorKey?: string | null
   sends?: number
   pending?: readonly PendingRow[]
   onRetry?: () => void
   onResume?: () => void
-  onResumeFresh?: () => void
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
 }): React.ReactNode {
@@ -70,6 +72,11 @@ export function Transcript(props: {
     peekKeys,
   })
   const handleScroller = useHiddenVerticalScrollbar(follow.scroller)
+
+  useEffect(() => {
+    const box = follow.scroller.current?.viewport
+    applyTranscriptBounds({ top: box?.y ?? 0, rows: box?.height ?? 0 })
+  })
   const viewport = useTranscriptViewport()
   const peeked = model.entries.find((entry) => entry.key === viewport.peekKey) ?? null
 
@@ -85,8 +92,18 @@ export function Transcript(props: {
   const opened = props.opened ?? ownOpened
   const handleToggle = props.onToggle ?? handleOwnToggle
 
+  const peekLine =
+    viewport.tailing || peeked === null ? null : (
+      <PeekLine
+        text={peeked.text}
+        width={props.width}
+        onJumpTo={() => follow.handleJumpTo(peeked.key)}
+      />
+    )
+
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
+      {peekLine}
       <scrollbox
         ref={handleScroller}
         flexGrow={1}
@@ -117,15 +134,6 @@ export function Transcript(props: {
           </box>
         ))}
 
-        {model.isEmpty && !model.streaming ? (
-          <WelcomeBlock
-            cwd={props.cwd}
-            home={props.home}
-            modelId={props.modelId}
-            width={props.width}
-          />
-        ) : null}
-
         {model.failure ? (
           <ErrorBlock
             message={model.failure.message ?? FAILURE_WITHOUT_A_REASON}
@@ -141,10 +149,7 @@ export function Transcript(props: {
         ) : null}
 
         {model.failure !== null || model.streaming || props.onResume === undefined ? null : (
-          <ResumeBlock
-            onResume={props.onResume}
-            {...(props.onResumeFresh === undefined ? {} : { onResumeFresh: props.onResumeFresh })}
-          />
+          <ResumeBlock onResume={props.onResume} />
         )}
 
         {model.failure !== null ? null : model.streaming && turn.startedAt !== null ? (
@@ -154,20 +159,13 @@ export function Transcript(props: {
               outputTokens={turn.outputTokens}
               interrupting={turn.interrupting}
               verb={turn.reasoning ? EWorkingVerb.Thinking : EWorkingVerb.Working}
+              retry={turn.retry}
             />
           </box>
         ) : null}
 
         <PendingBlock rows={props.pending ?? NOTHING_PENDING} width={props.width} />
       </scrollbox>
-
-      {viewport.tailing || peeked === null ? null : (
-        <PeekLine
-          text={peeked.text}
-          width={props.width}
-          onJumpTo={() => follow.handleJumpTo(peeked.key)}
-        />
-      )}
 
       {viewport.tailing ? null : (
         <JumpToBottom width={props.width} onJump={follow.handleJumpToBottom} />

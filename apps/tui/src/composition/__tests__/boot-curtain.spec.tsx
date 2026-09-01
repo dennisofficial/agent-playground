@@ -41,7 +41,7 @@ const appWith = (accent?: string): FakeApp =>
 const ready = (app: FakeApp): Session => ({
   type: ESession.Ready,
   app,
-  opened: { threadId: THREAD, events: [], turns: [], name: null },
+  opened: { threadId: THREAD, events: [], turns: [], name: null, started: true },
   credentialNotice: null,
 })
 

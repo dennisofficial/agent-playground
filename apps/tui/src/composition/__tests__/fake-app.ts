@@ -15,6 +15,8 @@ import {
   type ModelPort,
   type ModelStepResult,
   type SettingsDocument,
+  toThreadId,
+  type ThreadId,
 } from '@dltech/atlas-core'
 import type { EventDraft } from '@dltech/atlas-core'
 
@@ -25,12 +27,17 @@ import {
   createDeltaChannel,
   memoryAccountStore,
   createSettingsService,
+  ESkillOrigin,
   MemorySettingsStore,
   ModelStreamError,
+  parseSkill,
   PublishingTurnRunner,
   RandomIds,
   ShellRegistryPort,
+  SkillRegistryPort,
   SystemClock,
+  EMPTY_AGENT_TYPE_CATALOG,
+  type AgentTypeCatalog,
   type DeltaChannel,
   type DiscoveredSkill,
   type ShellSnapshot,
@@ -39,10 +46,12 @@ import {
 import { FileBrowser } from '@dltech/atlas-harness'
 
 import { createPendingQueue } from '../../store'
+import { userSaidDraft } from '../user-said'
 import type { AtlasApp } from '../compose'
 import type { ActiveConversation } from '../resume-hint'
 import { heldChoice } from '../model-selection'
 import { DEFAULT_MODEL_ID, EOpenMode, type AtlasConfig } from '../config'
+import { fakeAgentRegistry, type FakeAgents } from './fake-agents'
 import {
   fakeThreadStore,
   fakeEventLog,
@@ -54,6 +63,7 @@ import {
 
 export const FAKE_CONFIG: AtlasConfig = {
   modelId: 'claude-haiku-4-5-20251001',
+  subagentModelId: undefined,
   databaseUrl: 'file::memory:',
   keychainService: undefined,
   thinkingBudgetTokens: 2048,
@@ -163,51 +173,76 @@ export function failingThenStallingModelPort(args: { message: string }): ModelPo
 }
 
 export type FakeShells = ShellRegistryPort & {
-  place: (snapshot: ShellSnapshot) => void
+  place: (snapshot: ShellSnapshot, owner?: ThreadId) => void
   print: (args: { shellId: string; text: string }) => void
-  announce: (snapshot: ShellSnapshot) => void
+  announce: (snapshot: ShellSnapshot, owner?: ThreadId) => void
   readonly killed: readonly string[]
 }
 
 const NO_NOTICES: readonly ShellSnapshot[] = Object.freeze([])
 
+export const FAKE_SHELL_OWNER = toThreadId('opened-thread')
+
+type OwnedShell = { snapshot: ShellSnapshot; threadId: ThreadId }
+
 export function fakeShellRegistry(): FakeShells {
-  const snapshots: ShellSnapshot[] = []
+  const owned: OwnedShell[] = []
   const printed = new Map<string, string>()
   const killed: string[] = []
   const listeners = new Set<() => void>()
-  let ended: readonly ShellSnapshot[] = NO_NOTICES
+  let ended: readonly OwnedShell[] = []
 
-  const settle = (next: readonly ShellSnapshot[]): void => {
+  const settle = (next: readonly OwnedShell[]): void => {
     ended = next
     for (const listener of [...listeners]) listener()
   }
 
-  const find = (shellId: string): ShellSnapshot | undefined =>
-    snapshots.find((snapshot) => snapshot.shellId === shellId)
+  const noticedBy = new Map<ThreadId, readonly ShellSnapshot[]>()
+  const notices = (threadId: ThreadId): readonly ShellSnapshot[] => {
+    const mine = ended.filter((one) => one.threadId === threadId).map((one) => one.snapshot)
+    if (mine.length === 0) {
+      noticedBy.delete(threadId)
+      return NO_NOTICES
+    }
+
+    const held = noticedBy.get(threadId)
+    if (
+      held !== undefined &&
+      held.length === mine.length &&
+      held.every((snapshot, at) => snapshot === mine[at])
+    ) {
+      return held
+    }
+
+    noticedBy.set(threadId, mine)
+    return mine
+  }
+
+  const find = (shellId: string, threadId: ThreadId): ShellSnapshot | undefined =>
+    owned.find((one) => one.snapshot.shellId === shellId && one.threadId === threadId)?.snapshot
 
   return {
     get killed() {
       return killed
     },
 
-    place: (snapshot) => {
-      snapshots.push(snapshot)
+    place: (snapshot, owner = FAKE_SHELL_OWNER) => {
+      owned.push({ snapshot, threadId: owner })
     },
 
     print: ({ shellId, text }) => {
       printed.set(shellId, text)
     },
 
-    announce: (snapshot) => {
-      snapshots.push(snapshot)
-      settle([...ended, snapshot])
+    announce: (snapshot, owner = FAKE_SHELL_OWNER) => {
+      owned.push({ snapshot, threadId: owner })
+      settle([...ended, { snapshot, threadId: owner }])
     },
 
     start: () => ({ ok: false, reason: 'the fake registry starts no processes' }),
 
-    read: ({ shellId }) => {
-      const snapshot = find(shellId)
+    read: ({ shellId, threadId }) => {
+      const snapshot = find(shellId, threadId)
       if (snapshot === undefined) return { ok: false, reason: `no shell ${shellId}` }
       return {
         ok: true,
@@ -216,24 +251,31 @@ export function fakeShellRegistry(): FakeShells {
       }
     },
 
-    peek: ({ shellId }) =>
-      find(shellId) === undefined ? undefined : (printed.get(shellId) ?? `output of ${shellId}`),
+    peek: ({ shellId, threadId }) =>
+      find(shellId, threadId) === undefined
+        ? undefined
+        : (printed.get(shellId) ?? `output of ${shellId}`),
 
-    kill: ({ shellId }) => {
-      const snapshot = find(shellId)
+    kill: ({ shellId, threadId }) => {
+      const snapshot = find(shellId, threadId)
       if (snapshot === undefined) return { ok: false, reason: `no shell ${shellId}` }
       killed.push(shellId)
       return { ok: true, snapshot }
     },
 
-    list: () => snapshots,
+    list: ({ threadId }) =>
+      owned.filter((one) => one.threadId === threadId).map((one) => one.snapshot),
 
-    drainNotifications: () => {
-      const handed = ended
+    listEverywhere: () => owned.map((one) => one.snapshot),
+
+    threadsAwaitingNotice: () => [...new Set(ended.map((one) => one.threadId))],
+
+    drainNotifications: ({ threadId }) => {
+      const handed = ended.filter((one) => one.threadId === threadId)
       if (handed.length === 0) return []
 
-      settle(NO_NOTICES)
-      return handed.map((snapshot): EventDraft => ({
+      settle(ended.filter((one) => one.threadId !== threadId))
+      return handed.map(({ snapshot }): EventDraft => ({
         type: 'background-shell-ended',
         shellId: snapshot.shellId,
         command: snapshot.command,
@@ -246,25 +288,103 @@ export function fakeShellRegistry(): FakeShells {
       }))
     },
 
-    pendingNotices: () => ended,
+    pendingNotices: ({ threadId }) => notices(threadId),
 
     onNotice: (listener) => {
       listeners.add(listener)
       return () => void listeners.delete(listener)
     },
 
-    forgetNotices: () => {
-      if (ended.length === 0) return
-      settle(NO_NOTICES)
+    forgetNotices: ({ threadId }) => {
+      const kept = ended.filter((one) => one.threadId !== threadId)
+      if (kept.length === ended.length) return
+      settle(kept)
     },
 
     closeAll: async () => {},
   }
 }
 
+export type FakeSkills = SkillRegistryPort & {
+  place: (skill: DiscoveredSkill) => void
+  drop: (name: string) => void
+  readonly reloads: number
+}
+
+const written = (args: {
+  name: string
+  summary: string
+  userInvocable: boolean
+  body: string
+}): string =>
+  [
+    '---',
+    `name: ${args.name}`,
+    `description: ${args.summary}`,
+    `user-invocable: ${args.userInvocable}`,
+    '---',
+    '',
+    args.body,
+  ].join('\n')
+
+export function fakeSkill(args: {
+  name: string
+  summary?: string
+  userInvocable?: boolean
+  body?: string
+}): DiscoveredSkill {
+  const name = args.name
+  const skill = parseSkill({
+    text: written({
+      name,
+      summary: args.summary ?? `the ${name} skill`,
+      userInvocable: args.userInvocable ?? true,
+      body: args.body ?? `Behave as ${name} would.`,
+    }),
+    fallbackName: name,
+    origin: ESkillOrigin.User,
+  })
+
+  if (skill === undefined) throw new Error(`the fake skill ${name} did not parse`)
+  return skill
+}
+
+export function fakeSkillRegistry(args: { skills: readonly DiscoveredSkill[] }): FakeSkills {
+  const onDisk: DiscoveredSkill[] = [...args.skills]
+  let loaded: readonly DiscoveredSkill[] = [...args.skills]
+  let reloads = 0
+
+  return {
+    get reloads() {
+      return reloads
+    },
+
+    place: (skill) => {
+      onDisk.push(skill)
+    },
+
+    drop: (name) => {
+      const at = onDisk.findIndex((one) => one.spec.name === name)
+      if (at !== -1) onDisk.splice(at, 1)
+    },
+
+    all: () => loaded,
+
+    byName: (name) => loaded.find((one) => one.spec.name === name),
+
+    reload: async () => {
+      reloads += 1
+      loaded = [...onDisk]
+      return loaded
+    },
+  }
+}
+
 export type FakeApp = AtlasApp & {
   channel: DeltaChannel
   shells: FakeShells
+  agents: FakeAgents
+  skillRegistry: FakeSkills
   log: FakeEventLog
   threads: FakeThreadStore
   ledger: FakeLedger
@@ -280,6 +400,7 @@ export function fakeApp(args: {
   summarises?: string | null
   summariseDelayMs?: number
   skills?: readonly DiscoveredSkill[]
+  agentTypes?: AgentTypeCatalog
   workspaceRoot?: string
 }): FakeApp {
   const channel = createDeltaChannel()
@@ -289,16 +410,17 @@ export function fakeApp(args: {
   const ledger = fakeLedger()
   const pending = createPendingQueue()
   const shells = fakeShellRegistry()
+  const agents = fakeAgentRegistry()
+  const skillRegistry = fakeSkillRegistry({ skills: args.skills ?? [] })
   const runner = new PublishingTurnRunner({
     channel,
     deps: {
       log,
       model: args.model,
       ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: FAKE_CONFIG.cwd }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: FAKE_CONFIG.cwd }),
       spend: { ledger, clock: new SystemClock() },
-      drainPending: async () =>
-        pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
+      drainPending: async () => pending.drain().map(userSaidDraft),
     },
   })
 
@@ -308,7 +430,9 @@ export function fakeApp(args: {
   const openedUrls: string[] = []
 
   return {
-    skills: args.skills ?? [],
+    skills: skillRegistry.all(),
+    skillRegistry,
+    agentTypes: args.agentTypes ?? EMPTY_AGENT_TYPE_CATALOG,
     files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),
     openUrl: (url: string) => {
@@ -367,6 +491,7 @@ export function fakeApp(args: {
     ids,
     pending,
     shells,
+    agents,
     model: heldChoice({ modelId: FAKE_CONFIG.modelId ?? DEFAULT_MODEL_ID, effort: EEffort.Medium }),
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,

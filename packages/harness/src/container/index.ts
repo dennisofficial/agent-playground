@@ -19,4 +19,5 @@ export {
   ProjectSettingsStoreToken,
   UserSettingsStoreToken,
   WorkspaceRoot,
+  WorktreeDirectoryToken,
 } from './tokens'

@@ -1,4 +1,5 @@
 export { classify } from './classify'
+export { humanBytes, imageOf, imageSummary, type ReadImage } from './images'
 export {
   CLAUSES,
   EDetail,
@@ -22,6 +23,7 @@ export {
   str,
   commandLines,
   detailOf,
+  writtenContentOf,
   diffOf,
   diffStatOf,
   outputOf,

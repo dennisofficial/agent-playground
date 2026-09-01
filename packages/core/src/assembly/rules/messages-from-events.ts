@@ -3,14 +3,18 @@ import { currentContextEvents } from '../../context/supersede'
 import type { AssistantPart } from '../../events/body'
 import type { Event, EventOfType, EventRef } from '../../events/envelope'
 import { liveNudgeIds } from '../../events/nudges'
-import type { TextPart, ToolCallPart, ToolResultPart } from '../../message/parts'
+import { imagePathLine, inlinable } from '../../images/attached'
+import type { ImagePart, TextPart, ToolCallPart, ToolResultPart } from '../../message/parts'
 import type { AssembledMessage } from '../assembled'
 import { defineRule, type Rule } from '../rule'
-import { backgroundShellBlock } from './background-shell-block'
+import {
+  backgroundShellAwaitingInputBlock,
+  backgroundShellBlock,
+} from './background-shell-block'
 import { nudgeBlock } from './nudge-block'
 
 type OpenMessage =
-  | { role: 'user'; content: TextPart[] }
+  | { role: 'user'; content: (TextPart | ImagePart)[] }
   | { role: 'assistant'; content: (AssistantPart | ToolCallPart)[] }
   | { role: 'tool'; content: ToolResultPart[] }
 
@@ -59,6 +63,9 @@ function unsettledResult(call: ToolCallPart): ToolResultPart {
 function settlementOutput(event: Settlement): ToolResultPart['output'] {
   if (event.type === 'tool-denied') return { type: 'error-text', value: event.reason }
   if (event.error !== undefined) return { type: 'error-text', value: event.error.message }
+  if (event.modelParts !== undefined && event.modelParts.length > 0) {
+    return { type: 'content', value: event.modelParts }
+  }
   if (event.modelText !== undefined) return { type: 'text', value: readableText(event.modelText) }
   return { type: 'text', value: renderOutput(event.output) }
 }
@@ -85,6 +92,31 @@ function appendCall({ groups, event, open }: { groups: Group[]; event: EventOfTy
   return group
 }
 
+/**
+ * A picture too heavy to send is named rather than shown: the model keeps a path it can `read`,
+ * where an inlined one over the ceiling would fail the whole step instead of just the attachment.
+ */
+function saidContent(event: EventOfType<'user-said'>): (TextPart | ImagePart)[] {
+  const shown: ImagePart[] = []
+  const named: string[] = []
+
+  for (const image of event.images ?? []) {
+    if (!inlinable(image)) {
+      named.push(imagePathLine(image))
+      continue
+    }
+
+    shown.push({
+      type: 'image',
+      data: image.data,
+      mediaType: image.mediaType,
+      source: image.path,
+    })
+  }
+
+  return [{ type: 'text', text: [event.text, ...named].join('\n') }, ...shown]
+}
+
 type Walk = { groups: readonly Group[]; settlements: ReadonlyMap<string, SettledCall> }
 
 function walkEvents(events: readonly Event[]): Walk {
@@ -98,7 +130,7 @@ function walkEvents(events: readonly Event[]): Walk {
   for (const event of events) {
     if (event.type === 'user-said') {
       groups.push({
-        message: { role: 'user', content: [{ type: 'text', text: event.text }] },
+        message: { role: 'user', content: saidContent(event) },
         origin: originOf(event),
       })
       openAssistant = undefined
@@ -135,6 +167,18 @@ function walkEvents(events: readonly Event[]): Walk {
     if (event.type === 'background-shell-ended') {
       groups.push({
         message: { role: 'user', content: [{ type: 'text', text: backgroundShellBlock(event) }] },
+        origin: originOf(event),
+      })
+      openAssistant = undefined
+      continue
+    }
+
+    if (event.type === 'background-shell-awaiting-input') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: backgroundShellAwaitingInputBlock(event) }],
+        },
         origin: originOf(event),
       })
       openAssistant = undefined

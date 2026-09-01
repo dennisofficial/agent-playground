@@ -1,10 +1,13 @@
-import { toCallId } from '@dltech/atlas-core'
+import { EAgentStatus, ERetryReason, toCallId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
+import { ESpendReading, SPEND_UNAVAILABLE } from '../../store/agent-spend'
 import { ESidebarTaskState, IDLE_SIDEBAR, type SidebarModel } from '../../store/sidebar-model'
+import { type SidebarSubagent } from '../../store/subagent-row'
 import { Sidebar } from '../components/sidebar'
+import { SIDEBAR_GUTTER } from '../components/sidebar/cells'
 import { IDLE_TURN, type TurnClock } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
 import { glyph, SPINNER_FRAMES, SIDEBAR_WIDTH } from '../theme'
@@ -17,7 +20,11 @@ const CWD = '/Users/dennis/Developer/atlas/apps/tui'
 
 const WORDMARK = '● atlas'
 
-const SCROLLBAR_COLUMN = SIDEBAR_WIDTH - 3
+const CONTENT_END = SIDEBAR_WIDTH - SIDEBAR_GUTTER
+
+const THUMB = /[█▀▄]/
+
+const OVERFLOWING_HEIGHT = 20
 
 const RUNNING: TurnClock = {
   startedAt: 1_000,
@@ -25,6 +32,7 @@ const RUNNING: TurnClock = {
   interrupting: false,
   reasoning: false,
   completed: null,
+  retry: null,
 }
 
 const TASKS = [
@@ -48,8 +56,40 @@ const FED: SidebarModel = {
   ci: { running: 2, passed: 3, failed: 1 },
   todo: TASKS,
   subagents: [
-    { id: 's1', name: 'test-writer', calls: 41, awaitingApproval: false },
-    { id: 's2', name: 'migration', calls: 3, awaitingApproval: true },
+    {
+      id: 's1',
+      name: 'test-writer',
+      status: EAgentStatus.Running,
+      calls: 41,
+      lastTool: 'edit',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      endedAt: null,
+      state: 'edit · 1m 4s',
+      spend: {
+        reading: ESpendReading.Counted,
+        totals: {
+          turns: 6,
+          steps: 12,
+          inputTokens: 48_200,
+          outputTokens: 3_100,
+          cacheReadTokens: 41_000,
+          cacheWriteTokens: 2_000,
+        },
+      },
+      selected: false,
+    },
+    {
+      id: 's2',
+      name: 'migration',
+      status: EAgentStatus.Blocked,
+      calls: 3,
+      lastTool: 'bash',
+      startedAt: '2026-01-01T00:00:00.000Z',
+      endedAt: null,
+      state: 'blocked · 12s',
+      spend: SPEND_UNAVAILABLE,
+      selected: false,
+    },
   ],
   teammates: [
     { id: 't1', name: 'dana', activity: 'reviewing #412' },
@@ -57,9 +97,24 @@ const FED: SidebarModel = {
   ],
 }
 
-async function rowsOf(args: { model: SidebarModel; turn?: TurnClock }): Promise<string[]> {
+const MEASURED: SidebarModel = {
+  ...FED,
+  subagents: [
+    {
+      ...(FED.subagents?.[0] as SidebarSubagent),
+      context: { tokens: 68_000, window: 200_000 },
+    },
+  ],
+}
+
+async function rowsOf(args: {
+  model: SidebarModel
+  turn?: TurnClock
+  height?: number
+}): Promise<string[]> {
+  const height = args.height ?? HEIGHT
   const setup = await testRender(
-    <box flexDirection="row" width={TERMINAL_WIDTH} height={HEIGHT}>
+    <box flexDirection="row" width={TERMINAL_WIDTH} height={height}>
       <Sidebar
         width={SIDEBAR_WIDTH}
         model={args.model}
@@ -68,7 +123,7 @@ async function rowsOf(args: { model: SidebarModel; turn?: TurnClock }): Promise<
         cwd={CWD}
       />
     </box>,
-    { width: TERMINAL_WIDTH, height: HEIGHT },
+    { width: TERMINAL_WIDTH, height },
   )
 
   try {
@@ -82,7 +137,18 @@ async function rowsOf(args: { model: SidebarModel; turn?: TurnClock }): Promise<
 const rowWith = (args: { rows: readonly string[]; text: string }): string =>
   args.rows.find((row) => row.includes(args.text)) ?? ''
 
-const written = (row: string): string => row.slice(0, SCROLLBAR_COLUMN)
+const written = (row: string): string => row.slice(0, CONTENT_END)
+
+describe('the scroll gutter', () => {
+  it('runs the scrollbar down the last column, a clear gutter away from the text', async () => {
+    const rows = await rowsOf({ model: FED, height: OVERFLOWING_HEIGHT })
+
+    const track = rows.filter((row) => THUMB.test(row.slice(SIDEBAR_WIDTH - 1, SIDEBAR_WIDTH)))
+    expect(track.length).toBeGreaterThan(0)
+
+    for (const row of rows) expect(row.slice(CONTENT_END, SIDEBAR_WIDTH - 1).trim()).toBe('')
+  }, 30_000)
+})
 
 describe('the checklist', () => {
   it('marks the running task without animating it, so an idle sidebar holds still', async () => {
@@ -165,7 +231,7 @@ describe('what the sidebar says', () => {
 
     expect(git.trimStart().startsWith('git')).toBe(true)
     expect(written(git).trimEnd().endsWith('auth/rotation')).toBe(true)
-    expect(written(git).trimEnd().length).toBe(SCROLLBAR_COLUMN)
+    expect(written(git).trimEnd().length).toBe(CONTENT_END)
   }, 30_000)
 
   it('spells the pull request and what its checks are doing', async () => {
@@ -192,10 +258,118 @@ describe('what the sidebar says', () => {
     const rows = await rowsOf({ model: FED })
 
     expect(rowWith({ rows, text: 'SUBAGENTS' })).toContain('2')
-    expect(rowWith({ rows, text: 'test-writer' })).toContain('41 calls')
-    expect(rowWith({ rows, text: 'migration' })).toContain('? approval')
+    expect(rowWith({ rows, text: 'test-writer' })).toContain('edit · 1m 4s')
+    expect(rowWith({ rows, text: 'migration' })).toContain('blocked · 12s')
     expect(rowWith({ rows, text: 'dana' })).toContain('reviewing #412')
     expect(rowWith({ rows, text: 'omar' })).toContain('idle')
+  }, 30_000)
+
+  /**
+   * A child's approval routes to the parent agent and never to a human, so the row must not offer
+   * the operator a prompt they cannot answer. It says what happened and marks itself for attention.
+   */
+  it('flags a blocked child for attention without inviting an answer it cannot take', async () => {
+    const rows = await rowsOf({ model: FED })
+    const blocked = rowWith({ rows, text: 'migration' })
+
+    expect(blocked).toContain('blocked')
+    expect(blocked).not.toContain('approval')
+    expect(blocked.trim().startsWith(glyph.warning)).toBe(true)
+  }, 30_000)
+
+  it('leaves a running child unmarked by the attention glyph a blocked one carries', async () => {
+    const rows = await rowsOf({ model: FED })
+
+    expect(rowWith({ rows, text: 'test-writer' }).trim().startsWith(glyph.warning)).toBe(false)
+  }, 30_000)
+
+  it('gives a child a second line carrying what it spent, in both directions', async () => {
+    const rows = await rowsOf({ model: FED })
+
+    expect(rowWith({ rows, text: '↑ 48.2k' })).toContain('↓ 3.1k')
+  }, 30_000)
+
+  it('gives a measured child how full its own window has got, beside what it spent', async () => {
+    const rows = await rowsOf({ model: MEASURED })
+
+    expect(rowWith({ rows, text: '↑ 48.2k' })).toContain('ctx 34%')
+  }, 30_000)
+
+  it('keeps the spend off the line the name and state share', async () => {
+    const rows = await rowsOf({ model: FED })
+
+    expect(rowWith({ rows, text: 'test-writer' })).not.toContain('48.2k')
+  }, 30_000)
+
+  /**
+   * Hung off the value column's own right edge rather than the panel's, so a crew of five stacks
+   * its figures into a column rather than reading as ten unrelated lines.
+   */
+  it('ends the spend line on the same column the state above it ends on', async () => {
+    const rows = await rowsOf({ model: FED })
+    const state = written(rowWith({ rows, text: 'test-writer' })).trimEnd()
+    const spend = written(rowWith({ rows, text: '↑ 48.2k' })).trimEnd()
+
+    expect(spend.startsWith(' ')).toBe(true)
+    expect(spend.endsWith('↓ 3.1k')).toBe(true)
+    expect(spend.length).toBe(state.length)
+  }, 30_000)
+
+  it('ends on the same column as the state above once a third figure joins', async () => {
+    const rows = await rowsOf({ model: MEASURED })
+    const state = written(rowWith({ rows, text: 'test-writer' })).trimEnd()
+    const figures = written(rowWith({ rows, text: '↑ 48.2k' })).trimEnd()
+
+    expect(figures.startsWith(' ')).toBe(true)
+    expect(figures.endsWith('ctx 34%')).toBe(true)
+    expect(figures.length).toBe(state.length)
+  }, 30_000)
+
+  it('draws nothing at all for a child nothing has measured', async () => {
+    const rows = await rowsOf({ model: FED })
+
+    expect(rowWith({ rows, text: '↑ 48.2k' })).not.toContain('ctx')
+  }, 30_000)
+
+  /**
+   * The child's own window is the reading most tempting to pool with the parent's, and the parent's
+   * count sits four rows above it.
+   */
+  it('leaves the parent count untouched by how full the child window has got', async () => {
+    const frame = (await rowsOf({ model: MEASURED })).join('\n')
+
+    expect(frame).toContain('ctx 34%')
+    expect(frame).toContain('14 turns · 22.4k tokens')
+    expect(frame).not.toContain('90.4k')
+  }, 30_000)
+
+  it('right-aligns the missing reading too, so it reads as a row and not a mistake', async () => {
+    const rows = await rowsOf({ model: FED })
+    const state = written(rowWith({ rows, text: 'test-writer' })).trimEnd()
+    const missing = written(rowWith({ rows, text: 'tokens unavailable' })).trimEnd()
+
+    expect(missing.endsWith('tokens unavailable')).toBe(true)
+    expect(missing.length).toBe(state.length)
+  }, 30_000)
+
+  it('says a reading is missing rather than showing a child as free', async () => {
+    const rows = await rowsOf({ model: FED })
+
+    expect(rows.join('\n')).toContain('tokens unavailable')
+    expect(rowWith({ rows, text: 'tokens unavailable' })).not.toContain('0')
+  }, 30_000)
+
+  /**
+   * The context meter answers for this conversation's window. A child's window is a different one,
+   * and the row beneath it must never be read into the number above it.
+   */
+  it('leaves the parent context meter untouched by what the crew spent', async () => {
+    const rows = await rowsOf({ model: FED })
+    const frame = rows.join('\n')
+
+    expect(frame).toContain('↑ 48.2k')
+    expect(frame).not.toContain('51.3k')
+    expect(frame).not.toContain('60.7k')
   }, 30_000)
 
   it('keeps the live turn and the approval in view', async () => {
@@ -206,6 +380,25 @@ describe('what the sidebar says', () => {
     expect(rowWith({ rows, text: 'working' })).toContain('41s')
     expect(rowWith({ rows, text: 'APPROVALS' })).toContain('1')
     expect(frame).toContain('runs a shell command')
+  }, 30_000)
+
+  it('calls a stalled turn retrying rather than working', async () => {
+    const rows = await rowsOf({
+      model: FED,
+      turn: {
+        ...RUNNING,
+        retry: {
+          attempt: 3,
+          maxAttempts: 10,
+          delayMs: 8_000,
+          reason: ERetryReason.RateLimited,
+          startedAt: 40_000,
+        },
+      },
+    })
+
+    expect(rowWith({ rows, text: 'retrying' })).toContain('41s')
+    expect(rows.join('\n')).not.toContain('working')
   }, 30_000)
 
   it('pins where it is running to the bottom of the column', async () => {

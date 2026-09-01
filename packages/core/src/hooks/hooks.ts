@@ -21,13 +21,19 @@ export enum EHookPhase {
   AfterTurn = 'after-turn',
 }
 
-export type BeforeTurn = (args: { threadId: ThreadId }) => Promise<HookOutcome>
+export type BeforeTurn = (args: {
+  threadId: ThreadId
+  projectDirectory: string
+}) => Promise<HookOutcome>
 
 export type BeforeStep = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>
 
 export type BeforeRequest = (prompt: ProviderPrompt) => Promise<ProviderPrompt>
 
-export type BeforeTool = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
+export type BeforeTool = (args: {
+  call: ToolCall
+  projectDirectory: string
+}) => Promise<BeforeToolOutcome>
 
 export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>
 

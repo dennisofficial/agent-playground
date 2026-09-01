@@ -23,7 +23,8 @@ drifting on rewind is permanent work. This is why no graph framework is used.
 ## Events
 
 ```ts
-type EventEnvelope = { id: string; seq: number; threadId: string; runId: string; at: string }
+type EventEnvelope = { id: string; seq: number; threadId: string
+                       runId: string; parentRunId?: string; depth: number; at: string }
 type EventDraft = EventBody                      // what callers and hooks author
 type Event = EventBody & EventEnvelope           // what the log returns
 ```
@@ -31,9 +32,14 @@ type Event = EventBody & EventEnvelope           // what the log returns
 Only the log assigns `id`/`seq`/`at` — `seq` is its core invariant. **Hooks return
 `EventDraft[]`, never `Event[]`**; both the core-loop and hooks-di spikes hit this independently.
 
+**`parentRunId` and `depth` are run provenance, not a nesting budget.** They are columns on `Event`
+and they answer "which run caused this one", which is what makes a tool result stampable with the run
+that emitted its call rather than the run that settled it. They do not gate recursion: a sub-agent's
+depth is capped at one by the tool registry it is handed, not by a counter read off the envelope.
+
 ```ts
 type EventBody =
-  | { type: 'user-said';          text: string }
+  | { type: 'user-said';          text: string; via?: EMessageOrigin }
   | { type: 'assistant-said';     parts: AssistantPart[]; interrupted?: boolean }
   | { type: 'tool-called';        callId: string; name: string; input: unknown; ordinal: number }
   | { type: 'tool-result';        callId: string; name: string; output: unknown
@@ -44,12 +50,16 @@ type EventBody =
   | { type: 'approval-answered';  callId: string; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded';     slot: string; key: string; content: string; triggeredBy?: string }
   | { type: 'nudge';              text: string; lifetimeSteps: number }
-  | { type: 'cwd-changed';        path: string }
   | { type: 'background-shell-ended'
                                   shellId: string; command: string; description?: string
                                   status: EShellStatus; exitCode?: number
                                   output: string
                                   droppedCharacters: number; remainingCharacters: number }
+  | { type: 'agent-spawned';      agentId: string; agentType: string; intent: string
+                                  mode: EAgentStart }
+  | { type: 'agent-ended';        agentId: string; agentType: string; intent: string
+                                  status: EAgentStatus; killedBy?: EKilledBy
+                                  prose: string; turns: number; toolCalls: number }
 ```
 
 - **`tool-result.error` distinguishes a crash from a denial.** *Denied* means policy said no; a
@@ -77,6 +87,32 @@ type EventBody =
   lives in `core/shells` for this reason: `core` owns the value unions its event bodies store.
   The delta is read when the draft is **handed over**, not when the process exits, so an ending that
   is dropped rather than delivered leaves its output where `shell_output` can still find it.
+- **The two agent bodies are the whole of what a parent records about a child, and both live on the
+  parent's log.** That is the rule a delegate's work is counted, never quoted, expressed as a schema:
+  a child's own rows carry the child's `threadId` and never reach the parent, so the parent holds one
+  spawned row, live counts on it, and one ending carrying the child's final prose. `agent-spawned`
+  renders into the prompt as **nothing** — the tool result already told the model the child started,
+  and a second telling is noise. `agent-ended` is turn-taking, exactly like `background-shell-ended`,
+  which is what makes an ending a wake rather than an interrupt. `EAgentStatus` and `EAgentStart`
+  live in `core/agents` for the same reason `EShellStatus` lives in `core/shells`: `core` owns the
+  value unions its event bodies store. `EAgentStart` has one member, `Fresh`; the fork modes were
+  specified and are not in the enum.
+- **`agent-ended.killedBy` is shared with shells, and it is optional because it is not always
+  meaningful.** It reuses `EKilledBy` rather than declaring a second enum, since "who stopped this"
+  has the same answers for a child as for a process. `attributedStop` drops it on any status but
+  `Stopped`, so a child that failed or finished is never described as stopped by anyone, and the
+  absent case reads as an unattributed stop rather than as a lie. Without it a parent reads "was
+  stopped after 4 turns", assumes it stopped the child itself or that something broke, and
+  re-spawns it — which is the wrong answer to a human pressing stop. `EKilledBy.Unrecorded` is the
+  member for an ending nobody witnessed, and it is named for what is provable: Atlas does not
+  observe a process dying, only that no ending was written. It renders without the word "stopped"
+  and without an actor, and generalises to any reconstructed ending rather than to crashes alone.
+- **`user-said.via` records who said it, and defaults rather than branching.** `EMessageOrigin` has
+  two members, `Operator` and `ParentAgent`, read through the single `saidBy` accessor that treats
+  an absent `via` as `Operator` — so every row written before the field existed keeps its meaning
+  and no consumer needs a null check. Two members and not three: a spawn brief is the parent's
+  voice like any other steer, and its distinct role as the standing objective is carried by its
+  position at the head of the log, not by a third origin.
 - **`nudge.lifetimeSteps` replaces `ephemeral: true`**, which named a property rather than a
   behaviour and forced the core-loop spike to invent semantics that became load-bearing. The
   behaviour is counted from the log, not from a turn's step index: a nudge is rendered while fewer
@@ -126,6 +162,13 @@ sub-agent pays full input price for the whole inherited history — which is the
 reference exists to avoid. So the lookup spans the inherited chain, an unchanged re-offer resolves to the
 **parent's** event, and the child writes no row at all.
 
+**That rule is live and correct, and nothing exercises it yet.** `EAgentStart` ships `Fresh` alone, so
+no sub-agent inherits a prefix today and every child holds its own `context-loaded` rows. It is
+documented here rather than deleted because it is the reason the lookup is written the way it is, and
+because deleting it would guarantee the next person re-scopes the query to `where: { threadId }` and
+re-earns the finding. Do not implement against it as though reference forking were reachable — see
+"Compaction" in `docs/architecture.md` for why the spawn site cannot fork.
+
 The projection renders only the **latest** event per `(slot, key)`, so a changed file supersedes
 rather than accumulates, and arrives at maximum recency. `core/context/supersede.ts` owns that; the
 storage-level identity lives in `harness/store/append-plan.ts`, which digests the content rather than
@@ -149,9 +192,13 @@ the difference: assembly and the transcript want the composed view, because that
 anything reasoning about what this thread may *write* wants `readOwn`, because a child must never mutate
 a row it does not own.
 
-**Forking is not on this interface.** It writes a thread row and event rows together, so it has to be one
-transaction over both tables, and it lives on `ThreadStorePort.fork({ from, seq, mode, title })` next to
-`rewind` for that reason. `forkFrom` was specified here in an earlier revision and never implemented past
+**Nothing that writes a thread row and event rows together is on this interface.** Both need one
+transaction over two tables, so both live on `ThreadStorePort`: `fork({ from, seq, mode, title })`
+next to `rewind`, and `createWithFirstEvents` for opening a thread that must not exist empty — a
+sub-agent's, whose brief is the only thing making it its turn. Neither transaction extends to a
+*second* thread's rows, and that boundary is deliberate rather than incidental: `retryOnWriteConflict`
+re-runs the closure on `SQLITE_BUSY`, so a transaction spanning two live threads would either retry
+forever against the other thread's turn or duplicate its own effect on each attempt. `forkFrom` was specified here in an earlier revision and never implemented past
 a `throw`; the mode it lacked — copy for a fork the user keeps, reference for a sub-agent inheriting its
 parent's context — is the whole decision, so specifying it without one was specifying nothing.
 
@@ -411,11 +458,18 @@ fails if absent or ambiguous, so its blast radius is bounded by a string the mod
 branch on `call.name`, which is the table `pathFields` exists to have deleted.
 
 **Whether a read showed the whole file is answered by the tool, not read off its input.**
-`ToolDeclaration.revealsWholeFile?(input)` is optional and defaults, at the call site, to `false`. A
-guard reading `offset`/`limit` field names itself would silently credit a future reader using
-`startLine`/`maxLines` with a whole-file view, which is the same fail-open one step along. The
+`ToolDeclaration.revealsWholeFile?({ input, output })` is optional and defaults, at the call site, to
+`false`. A guard reading `offset`/`limit` field names itself would silently credit a future reader
+using `startLine`/`maxLines` with a whole-file view, which is the same fail-open one step along. The
 predicate may **under-claim** and must never **over-claim**: a generous `limit` that happened to return
 everything reads as a window, so the model re-reads. That direction is free; the other destroys files.
+
+It is handed the **outcome** and not only the input because a read can be cut short by something the
+input never mentioned. `read` caps itself at 2000 lines and clips each line at 2000 characters, so an
+input carrying neither `offset` nor `limit` is no longer evidence that the whole file came back — only
+`output.truncated` is. An input-only predicate was sound while a bare read was all-or-nothing; adding a
+default cap is exactly the change that turns it into an over-claim, and an over-claim here lets `write`
+replace a file the model has seen the first 2000 lines of.
 
 **A guard that cannot verify must deny.** `stat(path).catch(() => null)` collapses "absent" and "not
 permitted to look" into one value, making a guard strongest against the benign case and weakest against

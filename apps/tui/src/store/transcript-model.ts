@@ -1,3 +1,5 @@
+import type { SaidImage } from '@dltech/atlas-core'
+
 import { runLabel } from './tools'
 import { settled, type ToolRun } from './tool-runs'
 
@@ -13,6 +15,8 @@ export enum EEntryKind {
   ToolsRan = 'tools-ran',
   HistoryCompacted = 'history-compacted',
   BackgroundShellEnded = 'background-shell-ended',
+  BackgroundShellAwaitingInput = 'background-shell-awaiting-input',
+  AgentEnded = 'agent-ended',
   TurnEnded = 'turn-ended',
 }
 
@@ -25,6 +29,7 @@ export type OperatorSaidEntry = {
   steer: boolean
   skills: readonly string[]
   files: readonly string[]
+  images: readonly SaidImage[]
 }
 
 export type ModelSaidEntry = {
@@ -74,6 +79,15 @@ export type HistoryCompactedEntry = {
   compactedEntries: number
 }
 
+export type BackgroundShellAwaitingInputEntry = {
+  kind: EEntryKind.BackgroundShellAwaitingInput
+  author: EAuthor.Model
+  key: string
+  text: string
+  shellId: string
+  output: string
+}
+
 export type BackgroundShellEndedEntry = {
   kind: EEntryKind.BackgroundShellEnded
   author: EAuthor.Model
@@ -81,6 +95,16 @@ export type BackgroundShellEndedEntry = {
   text: string
   shellId: string
   output: string
+  failed: boolean
+}
+
+export type AgentEndedEntry = {
+  kind: EEntryKind.AgentEnded
+  author: EAuthor.Model
+  key: string
+  text: string
+  agentId: string
+  report: string
   failed: boolean
 }
 
@@ -102,6 +126,8 @@ export type TranscriptEntry =
   | ToolsRanEntry
   | HistoryCompactedEntry
   | BackgroundShellEndedEntry
+  | BackgroundShellAwaitingInputEntry
+  | AgentEndedEntry
   | TurnEndedEntry
 
 export type StepFailure = { message: string | null }

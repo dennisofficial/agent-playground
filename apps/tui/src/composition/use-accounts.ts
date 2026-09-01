@@ -1,9 +1,11 @@
-import { decodePasteBytes, stripAnsiSequences, type KeyEvent, type PasteEvent } from '@opentui/core'
+import type { KeyEvent, PasteEvent } from '@opentui/core'
 import { usePaste } from '@opentui/react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
 import { EAuthProvider, type Account, type AccountId } from '@dltech/atlas-core'
 import type { AccountsService, LoginTicket, UrlOpener } from '@dltech/atlas-harness'
+
+import { pastedText } from '../ui/pasted-text'
 
 import {
   accountRows,
@@ -46,14 +48,6 @@ const isPrintable = (key: KeyEvent): boolean => {
   const sequence = key.sequence ?? ''
   return sequence.length > 0 && !key.ctrl && !key.meta && !/[\u0000-\u001f]/.test(sequence)
 }
-
-/**
- * A terminal in bracketed-paste mode wraps the clipboard in ESC[200~ … ESC[201~, and OpenTUI's
- * stdin parser lifts that whole run out of the key stream into a paste event. A prompt that only
- * listens for keypresses therefore never sees a pasted code at all.
- */
-const pastedText = (event: PasteEvent): string =>
-  stripAnsiSequences(decodePasteBytes(event.bytes)).replace(/[\r\n]/g, '').trim()
 
 const providerOf = (state: AccountsState): EAuthProvider =>
   selectedRow(state)?.account.provider ?? EAuthProvider.Anthropic

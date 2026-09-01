@@ -21,7 +21,7 @@ describe('hook types', () => {
         ? { decision: EBeforeToolDecision.Allow, input: candidate.input }
         : { decision: EBeforeToolDecision.Deny, reason: 'outside workspace' }
 
-    expect(await denyOutsideWorkspace({ call })).toEqual({
+    expect(await denyOutsideWorkspace({ call, projectDirectory: '/w' })).toEqual({
       decision: EBeforeToolDecision.Deny,
       reason: 'outside workspace',
     })
@@ -33,7 +33,7 @@ describe('hook types', () => {
       input: { path: '/private/var' },
     })
 
-    expect(await normalisePath({ call })).toEqual({
+    expect(await normalisePath({ call, projectDirectory: '/w' })).toEqual({
       decision: EBeforeToolDecision.Allow,
       input: { path: '/private/var' },
     })
@@ -73,7 +73,12 @@ describe('hook types', () => {
       drafts: [{ type: 'nudge', text: 'commit first', lifetimeSteps: 1 }],
     })
 
-    expect(await openWithGitState({ threadId: toThreadId('thread-1') })).toEqual({
+    const opening = await openWithGitState({
+      threadId: toThreadId('thread-1'),
+      projectDirectory: '/repo',
+    })
+
+    expect(opening).toEqual({
       additionalContext: 'branch: main, 3 files dirty',
       drafts: [{ type: 'nudge', text: 'commit first', lifetimeSteps: 1 }],
     })
@@ -82,7 +87,9 @@ describe('hook types', () => {
   it('let a hook that has nothing to say return an empty outcome', async () => {
     const quiet: BeforeTurn = async () => ({})
 
-    expect(await quiet({ threadId: toThreadId('thread-1') })).toEqual({})
+    expect(await quiet({ threadId: toThreadId('thread-1'), projectDirectory: '/repo' })).toEqual(
+      {},
+    )
   })
 
   it('let an on-chunk hook drop a chunk entirely', async () => {

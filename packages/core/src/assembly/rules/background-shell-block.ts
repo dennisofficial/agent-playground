@@ -5,6 +5,9 @@ import { EKilledBy, shellEnding } from '../../shells/status'
 const OPEN = '<background-shell-ended>'
 const CLOSE = '</background-shell-ended>'
 
+const AWAITING_OPEN = '<background-shell-awaiting-input>'
+const AWAITING_CLOSE = '</background-shell-awaiting-input>'
+
 const PRINTED_NOTHING = 'It printed nothing.'
 
 const USER_KILLED =
@@ -32,4 +35,27 @@ export function backgroundShellBlock(event: EventOfType<'background-shell-ended'
   }
 
   return [OPEN, sections.join('\n\n'), CLOSE].join('\n')
+}
+
+const AWAITING_HOW_TO_CLEAR =
+  'Kill it with shell_kill and start it again with its input piped in, or run it a way that does not ask. Waiting changes nothing: no ending is coming.'
+
+export function backgroundShellAwaitingInputBlock(
+  event: EventOfType<'background-shell-awaiting-input'>,
+): string {
+  const headline = `Background shell ${event.shellId} ${shellLabel(event)} is waiting on input. Its stdin is closed, so nothing can answer it and it will never end on its own. Everything it has printed that you have not seen follows.`
+
+  const sections = [headline]
+
+  if (event.droppedCharacters > 0) sections.push(droppedNote(event.droppedCharacters))
+
+  sections.push(event.output.trimEnd() === '' ? PRINTED_NOTHING : event.output.trimEnd())
+
+  if (event.remainingCharacters > 0) {
+    sections.push(remainingNote({ characters: event.remainingCharacters, shellId: event.shellId }))
+  }
+
+  sections.push(AWAITING_HOW_TO_CLEAR)
+
+  return [AWAITING_OPEN, sections.join('\n\n'), AWAITING_CLOSE].join('\n')
 }

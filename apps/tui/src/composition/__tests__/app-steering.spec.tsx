@@ -114,7 +114,7 @@ describe('typing while the turn is running', () => {
       })
       expect(queued).toBe(true)
 
-      expect(mounted.app.pending.drain()).toEqual([STEER])
+      expect(mounted.app.pending.drain()).toEqual([{ text: STEER, images: [] }])
 
       mounted.pressUp()
       await mounted.frame()

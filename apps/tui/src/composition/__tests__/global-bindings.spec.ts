@@ -11,9 +11,10 @@ const handlers = (over: Partial<GlobalHandlers>): GlobalHandlers => ({
   onShortcuts: noop,
   onTakeBackPending: () => true,
   onInterrupt: noop,
-  onNewConversation: noop,
   onOpenSwitcher: noop,
+  onAttachImage: () => false,
   onOpenShells: noop,
+  onCycleAgents: noop,
   onToggleSidebar: noop,
   onOpenSettings: noop,
   onOpenAccounts: noop,
@@ -83,6 +84,20 @@ describe('the keys the app itself owns', () => {
     expect(pressHandled({ press: press({ name: 'return' }), bindings })).toBe(true)
     expect(pressHandled({ press: press({ name: 'return', shift: true }), bindings })).toBe(false)
     expect(sent).toBe(1)
+  })
+
+  it('walks to the next sub-agent on ctrl+g', () => {
+    let walked = 0
+    const bindings = placedFrom({ onCycleAgents: () => void (walked += 1) })
+
+    expect(pressHandled({ press: press({ name: 'g', ctrl: true }), bindings })).toBe(true)
+    expect(walked).toBe(1)
+  })
+
+  it('drops the walk entirely when the conversation has spawned nobody', () => {
+    const chords = globalBindings(handlers({ onCycleAgents: null })).map((one) => one.chord)
+
+    expect(chords).not.toContain('ctrl+g')
   })
 
   it('interrupts on esc and quits on ctrl+c', () => {

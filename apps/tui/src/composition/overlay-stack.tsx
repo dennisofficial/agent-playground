@@ -6,15 +6,19 @@ import type { Span } from '../ui/components/spans'
 import type { AccountRow } from '../ui/accounts-model'
 import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
 import { ExitGuard } from '../ui/components/exit-guard'
-import { exitGuardRow } from '../ui/exit-guard-model'
+import { exitGuardAgentRow, exitGuardRow } from '../ui/exit-guard-model'
 import { Rewind } from '../ui/components/rewind'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
 import { Threads } from '../ui/components/threads'
+import { AgentsPicker } from '../ui/components/agents-picker'
 import { isShellRunning } from '../ui/shells-model'
+import { isSubagentRunning } from '../store/subagent-row'
 import { modelIsReachable } from './model-selection'
 import type { AccountsControl } from './use-accounts'
+import type { AgentsControl } from './use-agents'
+import type { AgentsPickerControl } from './use-agents-picker'
 import type { ExitGuardControl } from './use-exit-guard'
 import type { RewindControl } from './use-rewind'
 import type { SettingsControl } from './use-settings'
@@ -29,6 +33,8 @@ export function OverlayStack(props: {
   activeModelId: string
   switcher: SwitcherControl
   shells: ShellsControl
+  agents: AgentsControl
+  agentsPicker: AgentsPickerControl
   settings: SettingsControl
   accounts: AccountsControl
   threads: ThreadsControl
@@ -38,7 +44,8 @@ export function OverlayStack(props: {
   compacting: Compacting | null
   now: number
 }): React.ReactNode {
-  const { switcher, shells, settings, accounts, threads, rewind, exitGuard } = props
+  const { switcher, shells, agents, agentsPicker, settings, accounts, threads, rewind, exitGuard } =
+    props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
@@ -75,6 +82,15 @@ export function OverlayStack(props: {
           onDismiss={threads.handleDismiss}
         />
       )}
+      {agentsPicker.state === null ? null : (
+        <AgentsPicker
+          width={sidebarWidth}
+          state={agentsPicker.state}
+          overlay
+          onPick={agentsPicker.handlePick}
+          onDismiss={agentsPicker.handleDismiss}
+        />
+      )}
       {switcher.state === null ? null : (
         <Switcher
           width={sidebarWidth}
@@ -102,7 +118,10 @@ export function OverlayStack(props: {
       {exitGuard.state === null ? null : (
         <ExitGuard
           width={Math.min(props.contentWidth, props.width)}
-          running={shells.shells.filter(isShellRunning).map(exitGuardRow)}
+          running={[
+            ...shells.everywhere.filter(isShellRunning).map(exitGuardRow),
+            ...agents.everywhere.filter(isSubagentRunning).map(exitGuardAgentRow),
+          ]}
           state={exitGuard.state}
           overlay
           onPick={exitGuard.handlePick}
@@ -117,6 +136,7 @@ export function OverlayStack(props: {
           state={settings.state}
           cwd={props.cwd}
           origin={settings.origin}
+          appearance={settings.appearance}
           problem={settings.problem}
           onActivate={settings.handleActivate}
           onDismiss={settings.handleDismiss}

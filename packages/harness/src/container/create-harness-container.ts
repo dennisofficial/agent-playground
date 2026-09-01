@@ -25,6 +25,7 @@ import { AiSdkModelPort } from '../model/ai-sdk-model-port'
 import { createRawTape } from '../model/raw-tape'
 import { registerFileState } from '../files'
 import { registerShells } from '../shells/register-shells'
+import { registerSkills } from '../skills/register-skills'
 import { ThreadStorePort, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
 import { AgentRegistrySourceToken, AgentTypesToken } from '../tools/builtin/agent-tokens'
 import { HookedToolDispatcher, ToolDispatcher } from '../tools/dispatch'
@@ -128,6 +129,7 @@ export function createHarnessContainer(): DependencyContainer {
 
   registerFileState({ container: harness })
   registerShells({ container: harness })
+  registerSkills({ container: harness })
   registerAgents({ container: harness })
   registerBuiltinTools({ container: harness })
   registerBuiltinHooks({ container: harness })

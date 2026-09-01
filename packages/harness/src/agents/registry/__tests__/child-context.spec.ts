@@ -155,14 +155,14 @@ async function openRealChild(): Promise<RealChild> {
 
   const assembly = defaultPipeline({
     prompt: () => EMPTY_PROMPT,
-    projectDirectory: PROJECT_DIRECTORY,
+    launchDirectory: PROJECT_DIRECTORY,
   })
   const parentTurn: TurnDeps = {
     log: harness.log,
     model: harness.model,
     ids: harness.ids,
     assembly,
-    projectDirectory: PROJECT_DIRECTORY,
+    launchDirectory: PROJECT_DIRECTORY,
   }
 
   const supervisor = new AgentSupervisor({

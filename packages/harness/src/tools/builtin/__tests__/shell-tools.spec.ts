@@ -3,10 +3,12 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EToolEffect, type ToolOutcome } from '@dltech/atlas-core'
+import { EToolEffect, type ToolOutcome,
+  toThreadId,
+} from '@dltech/atlas-core'
 
 import { EShellStatus } from '../../../shells/background-shell'
-import { BunShellRegistry } from '../../../shells/shell-registry'
+import { BunShellRegistry, PROMPT_SETTLE_MS } from '../../../shells/shell-registry'
 import { SystemClock } from '../../../store'
 import { BashTool } from '../bash'
 import { ShellKillTool } from '../shell-kill'
@@ -49,14 +51,20 @@ function openSuite(): Suite {
 const invoke = (
   tool: { invoke: (args: never) => Promise<ToolOutcome> },
   input: unknown,
-  sessionDirectory = tmpdir(),
+  projectDirectory = tmpdir(),
 ): Promise<ToolOutcome> =>
   tool.invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'key-1',
-    sessionDirectory,
+    projectDirectory,
+    threadId: toThreadId('thread-1'),
   } as never)
+
+const runBash = (
+  suite: { bash: BashTool },
+  input: Record<string, unknown>,
+): Promise<ToolOutcome> => invoke(suite.bash, { description: 'Exercise the shell', ...input })
 
 const outputOf = (outcome: ToolOutcome): Record<string, unknown> => {
   if (!outcome.ok) throw new Error(`expected success, got: ${outcome.reason}`)
@@ -75,7 +83,7 @@ const modelTextOf = (outcome: ToolOutcome): string => {
 
 async function settled(suite: Suite, shellId: string): Promise<void> {
   for (let attempt = 0; attempt < 400; attempt += 1) {
-    const snapshot = suite.shells.list().find((entry) => entry.shellId === shellId)
+    const snapshot = suite.shells.list({ threadId: toThreadId('thread-1') }).find((entry) => entry.shellId === shellId)
     if (snapshot !== undefined && snapshot.status !== EShellStatus.Running) return
     await Bun.sleep(25)
   }
@@ -86,7 +94,7 @@ describe('asking bash to run something in the background', () => {
   it('comes back with a shell id instead of waiting for a long command', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    const outcome = await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     const output = outputOf(outcome)
     expect(output.shellId).toBe('bash_1')
@@ -98,7 +106,7 @@ describe('asking bash to run something in the background', () => {
     const suite = openSuite()
     const before = Date.now()
 
-    await invoke(suite.bash, { command: 'sleep 10', runInBackground: true })
+    await runBash(suite, { command: 'sleep 10', runInBackground: true })
 
     expect(Date.now() - before).toBeLessThan(2_000)
   })
@@ -106,7 +114,7 @@ describe('asking bash to run something in the background', () => {
   it('names the tools that read and stop it', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    const outcome = await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     expect(modelTextOf(outcome)).toContain('shell_output')
     expect(modelTextOf(outcome)).toContain('shell_kill')
@@ -115,7 +123,7 @@ describe('asking bash to run something in the background', () => {
   it('refuses a timeout on a background shell rather than ignoring it', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, {
+    const outcome = await runBash(suite, {
       command: 'sleep 30',
       runInBackground: true,
       timeoutMs: 5_000,
@@ -129,10 +137,10 @@ describe('asking bash to run something in the background', () => {
   it('still waits for a command when runInBackground is absent', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'echo waited' })
+    const outcome = await runBash(suite, { command: 'echo waited' })
 
     expect(String(outputOf(outcome).stdout)).toContain('waited')
-    expect(suite.shells.list()).toEqual([])
+    expect(suite.shells.list({ threadId: toThreadId('thread-1') })).toEqual([])
   })
 
   it('stays unsafe to run concurrently, background or not', () => {
@@ -146,7 +154,7 @@ describe('asking bash to run something in the background', () => {
 describe('reading a background shell through shell_output', () => {
   it('hands back what the command printed once it has finished', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'echo hello', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'echo hello', runInBackground: true }))
     await settled(suite, String(started.shellId))
 
     const outcome = await invoke(suite.output, { shellId: started.shellId })
@@ -158,7 +166,7 @@ describe('reading a background shell through shell_output', () => {
 
   it('consumes what it returns, so the second read is not the first again', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'echo once', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'echo once', runInBackground: true }))
     await settled(suite, String(started.shellId))
 
     await invoke(suite.output, { shellId: started.shellId })
@@ -170,7 +178,7 @@ describe('reading a background shell through shell_output', () => {
 
   it('says a shell is still running rather than implying it finished', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'sleep 30', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'sleep 30', runInBackground: true }))
 
     const outcome = await invoke(suite.output, { shellId: started.shellId })
 
@@ -179,7 +187,7 @@ describe('reading a background shell through shell_output', () => {
 
   it('reports a failing exit code', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'exit 4', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'exit 4', runInBackground: true }))
     await settled(suite, String(started.shellId))
 
     const outcome = await invoke(suite.output, { shellId: started.shellId })
@@ -190,7 +198,7 @@ describe('reading a background shell through shell_output', () => {
 
   it('fails with a correctable message on an unknown shell id', async () => {
     const suite = openSuite()
-    await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     const outcome = await invoke(suite.output, { shellId: 'bash_404' })
 
@@ -212,7 +220,7 @@ describe('stopping a background shell through shell_kill', () => {
   it('stops a running shell and leaves its output readable', async () => {
     const suite = openSuite()
     const started = outputOf(
-      await invoke(suite.bash, { command: 'echo before; sleep 60', runInBackground: true }),
+      await runBash(suite, { command: 'echo before; sleep 60', runInBackground: true }),
     )
     await Bun.sleep(200)
 
@@ -227,7 +235,7 @@ describe('stopping a background shell through shell_kill', () => {
 
   it('says so rather than pretending, when the shell had already finished', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'echo quick', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'echo quick', runInBackground: true }))
     await settled(suite, String(started.shellId))
 
     const killed = await invoke(suite.kill, { shellId: started.shellId })
@@ -255,7 +263,7 @@ describe('refusing to burn the turn asleep', () => {
   it('turns down the sleep the model was polling behind', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 115; echo waited' })
+    const outcome = await runBash(suite, { command: 'sleep 115; echo waited' })
 
     expect(outcome.ok).toBe(false)
     expect(reasonOf(outcome)).toContain('115 seconds asleep')
@@ -265,7 +273,7 @@ describe('refusing to burn the turn asleep', () => {
   it('still runs a short settle before a real command', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 1 && echo booted' })
+    const outcome = await runBash(suite, { command: 'sleep 1 && echo booted' })
 
     expect(outcome.ok).toBe(true)
     expect(modelTextOf(outcome)).toContain('booted')
@@ -274,7 +282,7 @@ describe('refusing to burn the turn asleep', () => {
   it('leaves a backgrounded sleep alone, since it costs nothing to wait for', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 300', runInBackground: true })
+    const outcome = await runBash(suite, { command: 'sleep 300', runInBackground: true })
 
     expect(outcome.ok).toBe(true)
   })
@@ -284,7 +292,7 @@ describe('telling the model it will hear about the ending', () => {
   it('promises the notice and says the output rides along, so nothing invites a poll', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    const outcome = await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     expect(modelTextOf(outcome)).toContain('Its ending will be delivered to you with everything it printed')
     expect(modelTextOf(outcome)).toContain('no polling')
@@ -293,7 +301,7 @@ describe('telling the model it will hear about the ending', () => {
   it('names waiting on the shell as the mistake and ending the turn as the alternative', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    const outcome = await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     expect(modelTextOf(outcome)).toContain('no sleeping')
     expect(modelTextOf(outcome)).toContain('end the turn and be woken')
@@ -302,7 +310,7 @@ describe('telling the model it will hear about the ending', () => {
   it('scopes shell_output to a shell that will not end on its own', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    const outcome = await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     expect(modelTextOf(outcome)).toContain('only for a shell that will not end on its own')
   })
@@ -310,7 +318,7 @@ describe('telling the model it will hear about the ending', () => {
   it('offers no way to turn the notice off', async () => {
     const suite = openSuite()
 
-    const outcome = await invoke(suite.bash, {
+    const outcome = await runBash(suite, {
       command: 'sleep 30',
       runInBackground: true,
       notifyOnExit: 'never',
@@ -331,8 +339,8 @@ describe('listing background shells through shell_list', () => {
 
   it('names every shell with its command and state', async () => {
     const suite = openSuite()
-    await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
-    await invoke(suite.bash, { command: 'sleep 31', runInBackground: true })
+    await runBash(suite, { command: 'sleep 30', runInBackground: true })
+    await runBash(suite, { command: 'sleep 31', runInBackground: true })
 
     const outcome = await invoke(suite.list, {})
 
@@ -344,7 +352,7 @@ describe('listing background shells through shell_list', () => {
 
   it('keeps a finished shell listed, so its output stays findable', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'exit 5', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'exit 5', runInBackground: true }))
     await settled(suite, String(started.shellId))
 
     const outcome = await invoke(suite.list, {})
@@ -354,9 +362,9 @@ describe('listing background shells through shell_list', () => {
 
   it('leaves the finished ones out when asked for only what is running', async () => {
     const suite = openSuite()
-    const done = outputOf(await invoke(suite.bash, { command: 'echo done', runInBackground: true }))
+    const done = outputOf(await runBash(suite, { command: 'echo done', runInBackground: true }))
     await settled(suite, String(done.shellId))
-    await invoke(suite.bash, { command: 'sleep 30', runInBackground: true })
+    await runBash(suite, { command: 'sleep 30', runInBackground: true })
 
     const outcome = await invoke(suite.list, { runningOnly: true })
 
@@ -366,18 +374,18 @@ describe('listing background shells through shell_list', () => {
 
   it('says a shell stuck on a prompt must be killed rather than waited on', async () => {
     const suite = openSuite()
-    await invoke(suite.bash, { command: `printf 'Password: '; sleep 30`, runInBackground: true })
-    await Bun.sleep(300)
+    await runBash(suite, { command: `printf 'Password: '; sleep 30`, runInBackground: true })
+    await Bun.sleep(PROMPT_SETTLE_MS + 400)
 
     const outcome = await invoke(suite.list, {})
 
     expect(modelTextOf(outcome)).toContain('awaiting input')
     expect(modelTextOf(outcome)).toContain('kill it')
-  })
+  }, 15_000)
 
   it('does not consume the output the model has yet to read', async () => {
     const suite = openSuite()
-    const started = outputOf(await invoke(suite.bash, { command: 'echo kept', runInBackground: true }))
+    const started = outputOf(await runBash(suite, { command: 'echo kept', runInBackground: true }))
     await settled(suite, String(started.shellId))
 
     await invoke(suite.list, {})

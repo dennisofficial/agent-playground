@@ -10,6 +10,7 @@ import {
   exchangeFaults,
   outstandingApproval,
   pendingCalls,
+  projectDirectoryOf,
   rowsOwnedBy,
   type Assembled,
   type AssemblyPipeline,
@@ -27,7 +28,7 @@ import {
 
 import type { HookChain } from '../hooks/registry'
 import type { ToolDispatcher } from '../tools/dispatch'
-import { takeModelStep } from './model-step'
+import { takeModelStepWithRetry, type RetryDeps } from './retrying-step'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
 import { appendResumeDrafts } from './resume-turn'
 import { createSettlePending, type SettlePending } from './settle-pending'
@@ -54,7 +55,8 @@ export type TurnDeps = {
   spend?: TurnLedgerDeps | undefined
   compact?: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   autoCompactAtPercent?: (() => number) | undefined
-  projectDirectory?: string | undefined
+  launchDirectory?: string | undefined
+  retry?: RetryDeps | undefined
 }
 
 export class LoopTurnRunner extends TurnRunner {
@@ -74,6 +76,8 @@ export class LoopTurnRunner extends TurnRunner {
   private readonly settlePending: SettlePending | undefined
   private readonly compact: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   private readonly autoCompactAtPercent: () => number
+  private readonly launchDirectory: string
+  private readonly retry: RetryDeps | undefined
 
   constructor(deps: TurnDeps) {
     super()
@@ -90,6 +94,8 @@ export class LoopTurnRunner extends TurnRunner {
     this.spend = deps.spend
     this.compact = deps.compact
     this.autoCompactAtPercent = deps.autoCompactAtPercent ?? (() => AUTO_COMPACT_OFF)
+    this.launchDirectory = deps.launchDirectory ?? process.cwd()
+    this.retry = deps.retry
     this.settlePending =
       deps.dispatch === undefined
         ? undefined
@@ -97,7 +103,7 @@ export class LoopTurnRunner extends TurnRunner {
             log: deps.log,
             dispatch: deps.dispatch,
             tools: this.tools,
-            projectDirectory: deps.projectDirectory,
+            launchDirectory: deps.launchDirectory,
           })
   }
 
@@ -178,7 +184,12 @@ export class LoopTurnRunner extends TurnRunner {
       ),
     })
 
-    const opening = (await this.hooks?.beforeTurn({ threadId })) ?? []
+    const projectDirectory = projectDirectoryOf({
+      events: await this.log.read({ threadId }),
+      launchDirectory: this.launchDirectory,
+    })
+
+    const opening = (await this.hooks?.beforeTurn({ threadId, projectDirectory })) ?? []
     if (opening.length > 0) await this.log.append({ threadId, runId, drafts: opening })
 
     for (;;) {
@@ -264,12 +275,13 @@ export class LoopTurnRunner extends TurnRunner {
         return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
       }
 
-      const stepped = await takeModelStep({
+      const stepped = await takeModelStepWithRetry({
         model: this.model,
         tools: this.tools,
         onChunk: this.onChunk,
         assembled,
         signal: abortSignal,
+        retry: this.retry,
       })
 
       modelSteps += 1

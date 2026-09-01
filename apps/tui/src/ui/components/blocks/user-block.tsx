@@ -1,6 +1,8 @@
+import type { SaidImage } from '@dltech/atlas-core'
 import React from 'react'
 
 import { MarkdownView } from '../../markdown/markdown-view'
+import { saidImageLine } from '../../said-images'
 import { glyph, theme, TRANSCRIPT_INSET } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 
@@ -33,11 +35,13 @@ export function UserBlock(props: {
   takeBack?: boolean
   skills?: readonly string[]
   files?: readonly string[]
+  images?: readonly SaidImage[]
 }): React.ReactNode {
   const columns = Math.max(NARROWEST_BAND, props.width - RESERVED)
   const mark = MARK_TEXT[props.mark ?? EUserMark.Plain]
   const skills = props.skills ?? []
   const files = props.files ?? []
+  const images = props.images ?? []
 
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0}>
@@ -80,6 +84,11 @@ export function UserBlock(props: {
           <text fg={theme.meta}>{fileLine(files)}</text>
         </box>
       )}
+      {images.map((image) => (
+        <box key={image.path} paddingLeft={PANEL_PAD}>
+          <text fg={theme.meta}>{saidImageLine(image)}</text>
+        </box>
+      ))}
     </box>
   )
 }

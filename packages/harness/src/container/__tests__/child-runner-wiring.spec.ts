@@ -62,11 +62,11 @@ function bindChildRunner({ container }: { container: DependencyContainer }): voi
           assembly: defaultPipeline({
             prompt: () =>
               prompts.compile(
-                promptContextFor({ agent: EPromptAgent.Main, provider: modelPort.identity }),
+                promptContextFor({ agent: EPromptAgent.Main, provider: modelPort.identity, projectDirectory: '/w' }),
               ),
-            projectDirectory: ROOT,
+            launchDirectory: ROOT,
           }),
-          projectDirectory: ROOT,
+          launchDirectory: ROOT,
           dispatch: container.resolve(portToken(ToolDispatcher)),
           hooks: container.resolve(HookChainToken),
         },
@@ -76,8 +76,8 @@ function bindChildRunner({ container }: { container: DependencyContainer }): voi
         assemblyFor: ({ agentType }) =>
           defaultPipeline({
             prompt: () =>
-              subAgentPrompt({ prompts, agentType, provider: modelPort.identity }),
-            projectDirectory: ROOT,
+              subAgentPrompt({ prompts, agentType, provider: modelPort.identity, projectDirectory: '/w' }),
+            launchDirectory: ROOT,
           }),
       }
     },

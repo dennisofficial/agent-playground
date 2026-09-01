@@ -53,7 +53,7 @@ async function childTurn(args: {
   let operatorDrains = 0
   const assembly = defaultPipeline({
     prompt: () => EMPTY_PROMPT,
-    projectDirectory: PROJECT_DIRECTORY,
+    launchDirectory: PROJECT_DIRECTORY,
   })
 
   const parent: TurnDeps = {
@@ -61,7 +61,7 @@ async function childTurn(args: {
     model: harness.model,
     ids: harness.ids,
     assembly,
-    projectDirectory: PROJECT_DIRECTORY,
+    launchDirectory: PROJECT_DIRECTORY,
     drainPending: async () => {
       operatorDrains += 1
       return [{ type: 'user-said', text: OPERATOR_TEXT }]

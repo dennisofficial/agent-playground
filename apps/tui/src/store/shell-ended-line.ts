@@ -8,9 +8,11 @@ export type ShellEnding = {
   exitCode?: number | undefined
 }
 
-const named = (ending: ShellEnding): string => {
-  const description = ending.description?.trim() ?? ''
-  return description === '' ? quotedShellCommand(ending.command) : `"${description}"`
+type NamedShell = { command: string; description?: string | undefined }
+
+const named = (shell: NamedShell): string => {
+  const description = shell.description?.trim() ?? ''
+  return description === '' ? quotedShellCommand(shell.command) : `"${description}"`
 }
 
 const killedOutcome = (killedBy: EKilledBy | undefined): string => {
@@ -34,3 +36,6 @@ export const shellEndedLine = (ending: ShellEnding): string =>
 export const shellEndingFailed = (ending: ShellEnding): boolean =>
   ending.status === EShellStatus.Overflowed ||
   (ending.exitCode !== undefined && ending.exitCode !== 0)
+
+export const shellAwaitingInputLine = (shell: NamedShell): string =>
+  `Background shell ${named(shell)} is waiting on input and cannot be answered`

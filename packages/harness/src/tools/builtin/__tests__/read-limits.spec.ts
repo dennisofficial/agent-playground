@@ -28,7 +28,7 @@ const read = async (input: { path: string; offset?: number; limit?: number }) =>
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'read-limits',
-    sessionDirectory: '/workspace',
+    projectDirectory: '/workspace',
     threadId: toThreadId('thread-1'),
   })
 

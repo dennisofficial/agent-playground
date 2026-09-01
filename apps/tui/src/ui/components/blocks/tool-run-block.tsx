@@ -43,6 +43,8 @@ const LANE = 8
 
 const NARROWEST_BAND = 24
 
+const moreKey = (callId: string): string => `more:${callId}`
+
 /**
  * A row of the list under a sentence.
  *
@@ -76,7 +78,16 @@ function Row(props: {
         <span fg={theme.rule} {...region.wash}>{`${' '.repeat(GAP)}${reading.note}`}</span>
       </text>
       {props.only || props.opened.has(call.callId) ? (
-        <ToolDetail detail={reading.detail} call={call} inner={props.inner} cwd={props.cwd} />
+        <ToolDetail
+          detail={reading.detail}
+          call={call}
+          inner={props.inner}
+          cwd={props.cwd}
+          expand={{
+            expanded: props.opened.has(moreKey(call.callId)),
+            onToggle: () => props.onToggle(moreKey(call.callId)),
+          }}
+        />
       ) : null}
     </box>
   )
@@ -128,11 +139,10 @@ function SentenceBlock(props: {
   const region = useClickRegion(
     running === undefined && done.length > 0 ? () => props.onToggle(props.blockKey) : undefined,
   )
-  const failed = done.some((read) => read.reading.failed)
   const paint = markPaint({
     style: props.mark,
     klass: EToolClass.Gathered,
-    ok: !failed,
+    ok: true,
     opensCluster: props.opensCluster,
     ...(running === undefined ? {} : { spinner: spinnerFrame(props.now) }),
   })
@@ -196,11 +206,18 @@ function AloneBlock(props: {
   const room = Math.max(8, props.inner - 2 - reading.note.length - GAP)
   const label = tailOfPath({ path: said, cells: room })
   const pad = ' '.repeat(Math.max(0, room - [...label].length))
-  /** A change shows what it changed unasked; everything else waits to be opened. */
+  /** A change shows what it changed, a picture shows itself, a failure shows what broke. */
   const shows =
     reading.detail === EDetail.Diff ||
     reading.detail === EDetail.Created ||
+    reading.detail === EDetail.Image ||
+    reading.failed ||
     props.opened.has(call.callId)
+  /**
+   * A file still being dictated shows the file, not the streaming tail: the content is on the call,
+   * so the panel it will settle into can be drawn now rather than after the last argument lands.
+   */
+  const dictating = running && reading.detail === EDetail.Created
 
   return (
     <box flexDirection="column" marginBottom={1} width={props.inner} flexShrink={0}>
@@ -211,9 +228,18 @@ function AloneBlock(props: {
         <span fg={paint.text} {...region.wash}>{`${label}${pad}`}</span>
         <span fg={paint.note} {...region.wash}>{`${' '.repeat(GAP)}${reading.note}`}</span>
       </text>
-      {running ? <Streaming call={call} inner={props.inner} /> : null}
-      {!running && shows ? (
-        <ToolDetail detail={reading.detail} call={call} inner={props.inner} cwd={props.cwd} />
+      {running && !dictating ? <Streaming call={call} inner={props.inner} /> : null}
+      {dictating || (!running && shows) ? (
+        <ToolDetail
+          detail={reading.detail}
+          call={call}
+          inner={props.inner}
+          cwd={props.cwd}
+          expand={{
+            expanded: props.opened.has(moreKey(call.callId)),
+            onToggle: () => props.onToggle(moreKey(call.callId)),
+          }}
+        />
       ) : null}
     </box>
   )

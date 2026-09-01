@@ -201,7 +201,7 @@ describe('a turn that settles its own tool call', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     })
@@ -239,7 +239,7 @@ async function runnerDispatchingWith(dispatch: ToolDispatcher): Promise<{ runner
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       dispatch,
     }),
   }

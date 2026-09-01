@@ -59,7 +59,7 @@ export async function openHooked(args: {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ prompt: () => fixturePrompt(), projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => fixturePrompt(), launchDirectory: PROJECT_DIRECTORY }),
       hooks: args.hooks,
       ...(args.withTools === true
         ? {

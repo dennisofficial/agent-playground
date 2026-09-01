@@ -5,7 +5,8 @@ import { useCallback, useRef } from 'react'
 import { screenRow } from './screen-rows'
 import { wordSpanAt, type WordSpan } from './word-span'
 
-export const DOUBLE_CLICK_MS = 400
+/** Matches @opentui/core's own CLICK_REPEAT_INTERVAL_MS, so the two double-click windows agree. */
+export const DOUBLE_CLICK_MS = 500
 
 const LEFT_BUTTON = 0
 

@@ -1,12 +1,24 @@
-import { readFile, readdir } from 'node:fs/promises'
-import { basename, extname, join } from 'node:path'
+import type { Dirent } from 'node:fs'
+import { readFile, readdir, stat } from 'node:fs/promises'
+import { basename, extname, join, resolve } from 'node:path'
 
-import { parseSkill, SkillSource, type DiscoveredSkill, type ESkillOrigin } from './skill'
+import {
+  isSkillEntryFilename,
+  parseSkill,
+  SkillSource,
+  type DiscoveredSkill,
+  type ESkillOrigin,
+} from './skill'
 
 const MARKDOWN_EXTENSION = '.md'
-const NESTED_FILENAME = 'SKILL.md'
 
-type SkillEntry = { name: string; nested: boolean }
+enum EEntryKind {
+  Directory = 'directory',
+  File = 'file',
+  Other = 'other',
+}
+
+type SkillEntry = { directory: string; entryPath: string; fallbackName: string }
 
 const readText = async (path: string): Promise<string | undefined> => {
   try {
@@ -16,53 +28,95 @@ const readText = async (path: string): Promise<string | undefined> => {
   }
 }
 
+const kindOf = async (args: { dirent: Dirent; path: string }): Promise<EEntryKind> => {
+  if (args.dirent.isDirectory()) return EEntryKind.Directory
+  if (args.dirent.isFile()) return EEntryKind.File
+  if (!args.dirent.isSymbolicLink()) return EEntryKind.Other
+
+  try {
+    const target = await stat(args.path)
+    if (target.isDirectory()) return EEntryKind.Directory
+    return target.isFile() ? EEntryKind.File : EEntryKind.Other
+  } catch {
+    return EEntryKind.Other
+  }
+}
+
+const entryFilenameIn = async (directory: string): Promise<string | undefined> => {
+  try {
+    return (await readdir(directory)).find(isSkillEntryFilename)
+  } catch {
+    return undefined
+  }
+}
+
 export class FilesystemSkillSource extends SkillSource {
   readonly origin: ESkillOrigin
-  private readonly directory: string
+  readonly directory: string
 
   constructor(args: { directory: string; origin: ESkillOrigin }) {
     super()
-    this.directory = args.directory
+    this.directory = resolve(args.directory)
     this.origin = args.origin
   }
 
   async load(): Promise<readonly DiscoveredSkill[]> {
-    const entries = await this.entries()
     const discovered: DiscoveredSkill[] = []
 
-    for (const entry of entries) {
-      const found = entry.nested
-        ? await this.read({
-            path: join(this.directory, entry.name, NESTED_FILENAME),
-            name: entry.name,
-          })
-        : await this.read({
-            path: join(this.directory, entry.name),
-            name: basename(entry.name, MARKDOWN_EXTENSION),
-          })
-      if (found !== undefined) discovered.push(found)
+    for (const entry of await this.entries()) {
+      const text = await readText(entry.entryPath)
+      if (text === undefined) continue
+
+      const skill = parseSkill({
+        text,
+        fallbackName: entry.fallbackName,
+        origin: this.origin,
+        directory: entry.directory,
+        entryPath: entry.entryPath,
+      })
+      if (skill !== undefined) discovered.push(skill)
     }
 
     return discovered
   }
 
   private async entries(): Promise<readonly SkillEntry[]> {
-    try {
-      const found = await readdir(this.directory, { withFileTypes: true })
-      return found.flatMap((entry): readonly SkillEntry[] => {
-        if (entry.isDirectory()) return [{ name: entry.name, nested: true }]
-        if (extname(entry.name).toLowerCase() !== MARKDOWN_EXTENSION) return []
-        return [{ name: entry.name, nested: false }]
+    const entries: SkillEntry[] = []
+
+    for (const dirent of await this.dirents()) {
+      const path = join(this.directory, dirent.name)
+      const kind = await kindOf({ dirent, path })
+
+      if (kind === EEntryKind.Directory) {
+        const filename = await entryFilenameIn(path)
+        if (filename === undefined) continue
+        entries.push({
+          directory: path,
+          entryPath: join(path, filename),
+          fallbackName: dirent.name,
+        })
+        continue
+      }
+
+      if (kind !== EEntryKind.File) continue
+
+      const extension = extname(dirent.name)
+      if (extension.toLowerCase() !== MARKDOWN_EXTENSION) continue
+      entries.push({
+        directory: this.directory,
+        entryPath: path,
+        fallbackName: basename(dirent.name, extension),
       })
+    }
+
+    return entries
+  }
+
+  private async dirents(): Promise<readonly Dirent[]> {
+    try {
+      return await readdir(this.directory, { withFileTypes: true })
     } catch {
       return []
     }
-  }
-
-  private async read(args: { path: string; name: string }): Promise<DiscoveredSkill | undefined> {
-    const text = await readText(args.path)
-    if (text === undefined) return undefined
-
-    return parseSkill({ text, fallbackName: args.name, origin: this.origin })
   }
 }

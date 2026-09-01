@@ -10,12 +10,16 @@ export enum ESettingId {
   SmoothStreaming = 'transcript.smoothStreaming',
   ThinkingBlocks = 'transcript.thinkingBlocks',
   SidebarWidth = 'sidebar.width',
+  SidebarFoldBelow = 'sidebar.foldBelow',
   ProjectInstructions = 'context.projectInstructions',
   UserInstructions = 'context.userInstructions',
   InstructionFilenames = 'context.filenames',
   NestedInstructions = 'context.nestedInstructions',
   ReloadInstructions = 'context.reload',
   AutoCompact = 'context.autoCompact',
+  ImagesKept = 'context.imagesKept',
+  ImageRows = 'transcript.imageRows',
+  WorktreeDirectory = 'worktree.directory',
   FooterMeters = 'usage.meters',
   WarnFiveHour = 'usage.warnFiveHour',
   WarnWeekly = 'usage.warnWeekly',
@@ -23,6 +27,8 @@ export enum ESettingId {
   BlockPadding = 'appearance.blockPadding',
   ComposerEdge = 'appearance.composerEdge',
 }
+
+export const DEFAULT_WORKTREE_DIRECTORY = '.atlas/worktrees'
 
 export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
   {
@@ -53,17 +59,47 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     ],
   },
   {
+    id: ESettingId.ImageRows,
+    page: ESettingPage.General,
+    group: 'Transcript',
+    label: 'Tallest image',
+    description:
+      'How many rows a picture in the transcript may fill. In a terminal that draws real pixels this is the resolution knob, not just the size one — the image is transmitted at the pixel size of the cell box it is given, so a taller box is a sharper picture. Tall images push the text around them further apart, which is the trade.',
+    environmentVariable: 'ATLAS_IMAGE_ROWS',
+    kind: ESettingKind.Range,
+    fallback: 30,
+    minimum: 8,
+    maximum: 80,
+    step: 2,
+    unit: ' rows',
+  },
+  {
     id: ESettingId.SidebarWidth,
     page: ESettingPage.General,
     group: 'Layout',
     label: 'Sidebar width',
     description:
-      'How many columns every side pane takes: the transcript sidebar, the model picker, and the explanation beside these settings. The sidebar docks on its own above 120 columns and floats over the transcript below that.',
+      'How many columns every side pane takes: the transcript sidebar, the model picker, and the explanation beside these settings.',
     environmentVariable: 'ATLAS_SIDEBAR_WIDTH',
     kind: ESettingKind.Range,
     fallback: 42,
     minimum: 30,
     maximum: 64,
+    step: 2,
+    unit: ' cols',
+  },
+  {
+    id: ESettingId.SidebarFoldBelow,
+    page: ESettingPage.General,
+    group: 'Layout',
+    label: 'Fold the sidebar below',
+    description:
+      'The terminal width at which the sidebar stops docking beside the transcript and becomes an overlay you open with ctrl+b and close with escape. Above it the sidebar is always docked. Set it to match the narrowest tile you want the sidebar in. A width that leaves the transcript no room folds regardless of this.',
+    environmentVariable: 'ATLAS_SIDEBAR_FOLD_BELOW',
+    kind: ESettingKind.Range,
+    fallback: 120,
+    minimum: 60,
+    maximum: 240,
     step: 2,
     unit: ' cols',
   },
@@ -141,6 +177,36 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 100,
     step: 5,
     unit: '%',
+  },
+  {
+    id: ESettingId.ImagesKept,
+    page: ESettingPage.General,
+    group: 'Context window',
+    label: 'Images kept in context',
+    description:
+      'How many of the most recent images stay in the prompt as pixels. An older one is replaced by a line naming its path and dimensions, so the model still knows it saw the image and can read the file again, without the screenshot being re-billed on every step for the rest of the session.',
+    environmentVariable: 'ATLAS_IMAGES_KEPT',
+    kind: ESettingKind.Range,
+    fallback: 2,
+    minimum: 1,
+    maximum: 8,
+    step: 1,
+    unit: ' images',
+  },
+  {
+    id: ESettingId.WorktreeDirectory,
+    page: ESettingPage.General,
+    group: 'Worktrees',
+    label: 'Where worktrees go',
+    description:
+      'The directory, relative to the repository root, that enter_worktree creates a worktree in. Atlas writes a .gitignore of its own inside it, so the checkouts never show up as untracked files however the repository is configured.',
+    environmentVariable: 'ATLAS_WORKTREE_DIRECTORY',
+    kind: ESettingKind.Choice,
+    fallback: DEFAULT_WORKTREE_DIRECTORY,
+    options: [
+      { value: DEFAULT_WORKTREE_DIRECTORY, label: DEFAULT_WORKTREE_DIRECTORY, detail: 'shipped' },
+      { value: '.worktrees', label: '.worktrees' },
+    ],
   },
   {
     id: ESettingId.FooterMeters,

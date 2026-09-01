@@ -33,7 +33,7 @@ export abstract class ToolDispatcher {
   abstract dispatch(args: {
     call: DispatchableCall
     signal: AbortSignal
-    sessionDirectory: string
+    projectDirectory: string
   }): Promise<readonly EventDraft[]>
 }
 
@@ -64,9 +64,9 @@ export class HookedToolDispatcher extends ToolDispatcher {
   async dispatch(args: {
     call: DispatchableCall
     signal: AbortSignal
-    sessionDirectory: string
+    projectDirectory: string
   }): Promise<readonly EventDraft[]> {
-    const { call, signal, sessionDirectory } = args
+    const { call, signal, projectDirectory } = args
     const definition = this.registry.find(call.name)
     if (definition === undefined) return [this.unknownToolDraft({ call })]
 
@@ -83,7 +83,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
 
     const { outcome } = resolveBeforeTool({
       call: candidate,
-      outcomes: await this.consultBeforeTool({ call: candidate }),
+      outcomes: await this.consultBeforeTool({ call: candidate, projectDirectory }),
     })
 
     if (outcome.decision === EBeforeToolDecision.Deny) {
@@ -101,7 +101,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
       call: allowed,
       signal,
       idempotencyKey,
-      sessionDirectory,
+      projectDirectory,
       threadId: call.threadId,
     })
 
@@ -151,9 +151,10 @@ export class HookedToolDispatcher extends ToolDispatcher {
   private async outcomeOf(args: {
     hook: RegisteredHook<BeforeTool>
     call: ToolCall
+    projectDirectory: string
   }): Promise<BeforeToolOutcome> {
     try {
-      return await args.hook.run({ call: args.call })
+      return await args.hook.run({ call: args.call, projectDirectory: args.projectDirectory })
     } catch (error) {
       return {
         decision: EBeforeToolDecision.Deny,
@@ -162,12 +163,19 @@ export class HookedToolDispatcher extends ToolDispatcher {
     }
   }
 
-  private async consultBeforeTool(args: { call: ToolCall }): Promise<ConsultedHook[]> {
+  private async consultBeforeTool(args: {
+    call: ToolCall
+    projectDirectory: string
+  }): Promise<ConsultedHook[]> {
     const consulted: ConsultedHook[] = []
     let input = args.call.input
 
     for (const hook of this.hooks.beforeTool) {
-      const outcome = await this.outcomeOf({ hook, call: { ...args.call, input } })
+      const outcome = await this.outcomeOf({
+        hook,
+        call: { ...args.call, input },
+        projectDirectory: args.projectDirectory,
+      })
       if (outcome.decision === EBeforeToolDecision.Allow) input = outcome.input
       consulted.push({ hookName: hook.name, outcome })
     }
@@ -180,7 +188,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     call: ToolCall
     signal: AbortSignal
     idempotencyKey: string
-    sessionDirectory: string
+    projectDirectory: string
     threadId: ThreadId
   }): Promise<ToolOutcome> {
     try {
@@ -188,7 +196,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
         input: args.call.input,
         signal: args.signal,
         idempotencyKey: args.idempotencyKey,
-        sessionDirectory: args.sessionDirectory,
+        projectDirectory: args.projectDirectory,
         threadId: args.threadId,
       })
     } catch (error) {
@@ -222,6 +230,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
         name: args.call.name,
         output: args.result.output,
         modelText: args.result.modelText,
+        ...(args.result.modelParts === undefined ? {} : { modelParts: args.result.modelParts }),
       }
     }
 

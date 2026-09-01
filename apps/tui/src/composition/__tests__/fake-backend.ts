@@ -2,8 +2,10 @@ import {
   stampEvent,
   toThreadId,
   ECompactionAnchor,
+  toCallId,
   toEventId,
   toRunId,
+  type IdPort,
   type ThreadId,
   type Event,
   type EventLogPort,
@@ -17,6 +19,17 @@ import type {
 } from '@dltech/atlas-harness'
 
 const AT = '2026-08-25T00:00:00.000Z'
+
+export function fakeIds(): IdPort {
+  let handed = 0
+
+  return {
+    nextThreadId: () => toThreadId(`handed-${(handed += 1)}`),
+    nextRunId: () => toRunId(`run-${(handed += 1)}`),
+    nextEventId: () => toEventId(`event-${(handed += 1)}`),
+    nextCallId: () => toCallId(`call-${(handed += 1)}`),
+  }
+}
 
 export const FAKE_WORKSPACE = '/work'
 
@@ -134,8 +147,38 @@ export function fakeThreadStore(
       return row
     },
 
+    async createWithFirstEvents({ threadId, drafts, runId, title, workspace, repo, agent }) {
+      created += 1
+      createdWith.push({
+        workspace: workspace ?? null,
+        repo: repo ?? null,
+        ...(agent === undefined ? {} : { agent }),
+      })
+      const thread: ThreadSummary = {
+        id: threadId ?? toThreadId(`made-${created}`),
+        head: drafts.length,
+        createdAt: AT,
+        updatedAt: AT,
+        workspace: workspace ?? workspaceOf,
+        repo: repo ?? null,
+        ...(title === undefined ? {} : { title }),
+        ...(agent === undefined ? {} : { agent }),
+      }
+      rows.push(thread)
+
+      const events = (await args.log?.append({ threadId: thread.id, runId, drafts })) ?? []
+      return { thread, events: [...events] }
+    },
+
     async find({ threadId }) {
       return rows.find((row) => row.id === threadId)
+    },
+
+    /**
+     * Filtered on the supervision link rather than on `parent`, so a fork never comes back from it.
+     */
+    async spawned({ threadId }) {
+      return rows.filter((row) => row.agent?.spawnedBy === threadId)
     },
 
     async mostRecent({ workspace }) {
@@ -303,7 +346,16 @@ const standInSeq = ({
 
 export type FakeLedger = TurnLedgerPort & { readonly rows: readonly TurnSpend[] }
 
-export function fakeLedger(args: { spent?: readonly TurnSpend[] } = {}): FakeLedger {
+/**
+ * `children` is what makes `forThreadTree` able to answer with anything: the ledger holds spend by
+ * thread and has no idea which of them was delegated, so a test that cares has to say.
+ */
+export function fakeLedger(
+  args: {
+    spent?: readonly TurnSpend[]
+    children?: Readonly<Record<string, readonly ThreadId[]>>
+  } = {},
+): FakeLedger {
   const rows: TurnSpend[] = [...(args.spent ?? [])]
 
   return {
@@ -314,5 +366,14 @@ export function fakeLedger(args: { spent?: readonly TurnSpend[] } = {}): FakeLed
       rows.push(spend)
     },
     forThread: async ({ threadId }) => rows.filter((row) => row.threadId === threadId),
+
+    forThreadTree: async ({ threadId }) => {
+      const children = new Set<string>(args.children?.[threadId] ?? [])
+
+      return {
+        own: rows.filter((row) => row.threadId === threadId),
+        delegated: rows.filter((row) => children.has(row.threadId)),
+      }
+    },
   }
 }

@@ -4,7 +4,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { instructionPlanOf } from '../instruction-plan'
 
-const CWD = '/workspace'
+const PROJECT_DIRECTORY = '/workspace'
 
 const planWith = (values: Record<string, boolean | string | number>) =>
   instructionPlanOf({
@@ -12,7 +12,7 @@ const planWith = (values: Record<string, boolean | string | number>) =>
       definitions: ATLAS_SETTINGS,
       user: new MemorySettingsStore({ document: { values } }),
     }),
-    cwd: CWD,
+    projectDirectory: PROJECT_DIRECTORY,
   })
 
 describe('instructionPlanOf', () => {
@@ -22,7 +22,7 @@ describe('instructionPlanOf', () => {
     expect(plan.request.family).toBe(EInstructionFamily.Both)
     expect(plan.request.includeProject).toBe(true)
     expect(plan.request.includeUser).toBe(true)
-    expect(plan.request.root).toBe(CWD)
+    expect(plan.request.root).toBe(PROJECT_DIRECTORY)
     expect(plan.reload).toBe(true)
   })
 

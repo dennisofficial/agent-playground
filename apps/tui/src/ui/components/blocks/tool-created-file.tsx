@@ -13,17 +13,15 @@
 import React from 'react'
 
 import type { ToolCall } from '../../../store'
-import { inputOf, relativise, str } from '../../../store/tools'
+import { inputOf, relativise, str, writtenContentOf } from '../../../store/tools'
 import { theme } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
+import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
 import { CodeLines, codeLinesOf } from './tool-code-lines'
 
 const CHROME = PANEL_INSET + PANEL_PAD
 
 const MAX_ROWS = 20
-
-export const createdContentOf = (call: ToolCall): string | undefined =>
-  str(inputOf(call).content) ?? str(inputOf(call).text)
 
 const plural = (many: number): string => `${many.toLocaleString('en-US')} ${many === 1 ? 'line' : 'lines'}`
 
@@ -45,13 +43,15 @@ export function ToolCreatedFile(props: {
   call: ToolCall
   inner: number
   cwd: string
+  expand?: Expander
 }): React.ReactNode {
-  const content = createdContentOf(props.call)
+  const content = writtenContentOf(props.call)
   if (content === undefined) return null
 
+  const expand = props.expand ?? NOT_EXPANDABLE
   const path = relativise(str(inputOf(props.call).path) ?? props.call.name, props.cwd)
   const body = content.replace(/\n$/, '').split('\n')
-  const shown = body.slice(0, MAX_ROWS)
+  const shown = shownOf({ body, cap: MAX_ROWS, expand })
   const width = Math.max(24, props.inner - PANEL_PAD)
 
   return (
@@ -69,9 +69,7 @@ export function ToolCreatedFile(props: {
           inner={Math.max(1, width - CHROME)}
           indent=""
         />
-        {body.length > shown.length ? (
-          <text fg={theme.rule} wrapMode="none">{`… +${body.length - shown.length} more`}</text>
-        ) : null}
+        <MoreToggle hidden={body.length - MAX_ROWS} indent="" expand={expand} />
       </Panel>
     </box>
   )

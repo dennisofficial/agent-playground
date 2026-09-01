@@ -15,6 +15,12 @@ export const AGENT_TOOL_NAMES: readonly string[] = [
   'agent_stop',
 ]
 
+export const WORKTREE_TOOL_NAMES: readonly string[] = [
+  'enter_worktree',
+  'exit_worktree',
+  'worktree_list',
+]
+
 const ALL_TOOLS = '*'
 const NAME_PATTERN = /^[a-z][a-z0-9-]*$/
 

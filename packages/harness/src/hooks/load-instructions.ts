@@ -9,7 +9,7 @@ import {
 import { readInstructionFiles, type InstructionRequest } from '../context/read-instructions'
 
 export type InstructionPlan = { request: InstructionRequest; reload: boolean }
-export type InstructionSource = () => InstructionPlan
+export type InstructionSource = (args: { projectDirectory: string }) => InstructionPlan
 
 export class LoadInstructionsHook extends BeforeTurnHook {
   readonly name = 'instructions'
@@ -23,11 +23,12 @@ export class LoadInstructionsHook extends BeforeTurnHook {
     this.source = args.source
   }
 
-  readonly run: BeforeTurn = async ({ threadId }) => {
-    const plan = this.source()
-    if (!plan.reload && this.seen.has(threadId)) return {}
+  readonly run: BeforeTurn = async ({ threadId, projectDirectory }) => {
+    const plan = this.source({ projectDirectory })
+    const key = `${threadId} ${projectDirectory}`
+    if (!plan.reload && this.seen.has(key)) return {}
 
-    this.seen.add(threadId)
+    this.seen.add(key)
     const instructions = await readInstructionFiles(plan.request)
     if (instructions.length === 0) return {}
 

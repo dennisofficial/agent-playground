@@ -21,6 +21,7 @@ export class ThreadNeedsOpeningDrafts extends Error {
 }
 
 export type OpenThreadArgs = {
+  threadId?: ThreadId | undefined
   drafts: readonly EventDraft[]
   runId: RunId
   title?: string | undefined
@@ -33,6 +34,7 @@ export async function createThreadWithEvents({
   tx,
   ids,
   clock,
+  threadId: given,
   drafts,
   runId,
   title,
@@ -47,7 +49,7 @@ export async function createThreadWithEvents({
   if (drafts.length === 0) throw new ThreadNeedsOpeningDrafts()
 
   const at = clock.now()
-  const threadId = ids.nextThreadId()
+  const threadId = given ?? ids.nextThreadId()
 
   await tx.thread.create({
     data: {

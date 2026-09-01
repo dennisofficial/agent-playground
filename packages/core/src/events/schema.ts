@@ -4,7 +4,7 @@ import { EAgentStart } from '../agents/start'
 import { EAgentStatus } from '../agents/status'
 import type { ProviderOptions } from '../provider'
 import { EKilledBy, EShellStatus } from '../shells/status'
-import { ECompactionAnchor, EDecision, EMessageOrigin, type EventBody } from './body'
+import { ECompactionAnchor, EDecision, EMessageOrigin, EWorktreeExit, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
 import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema } from './ids'
 
@@ -35,11 +35,35 @@ const assistantPartSchema = z.discriminatedUnion('type', [
   }),
 ])
 
+const toolResultPartSchema = z.discriminatedUnion('type', [
+  z.object({
+    type: z.literal('text'),
+    text: z.string(),
+    providerOptions: providerOptionsSchema.optional(),
+  }),
+  z.object({
+    type: z.literal('image'),
+    data: z.string(),
+    mediaType: z.string(),
+    source: z.string().optional(),
+    providerOptions: providerOptionsSchema.optional(),
+  }),
+])
+
+const saidImageSchema = z.object({
+  path: z.string(),
+  mediaType: z.string(),
+  data: z.string(),
+  width: z.number().int().positive().optional(),
+  height: z.number().int().positive().optional(),
+})
+
 export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('user-said'),
     text: z.string(),
     via: z.enum(EMessageOrigin).optional(),
+    images: z.array(saidImageSchema).optional(),
   }),
   z.object({
     type: z.literal('assistant-said'),
@@ -62,6 +86,7 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     name: z.string(),
     output: z.unknown().optional(),
     modelText: z.string().optional(),
+    modelParts: z.array(toolResultPartSchema).optional(),
     error: z.object({ message: z.string() }).optional(),
     interrupted: z.boolean().optional(),
   }),
@@ -91,7 +116,17 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     triggeredBy: z.string().optional(),
   }),
   z.object({ type: z.literal('nudge'), text: z.string(), lifetimeSteps: z.number().int().nonnegative() }),
-  z.object({ type: z.literal('cwd-changed'), path: z.string().min(1) }),
+  z.object({
+    type: z.literal('worktree-entered'),
+    path: z.string().min(1),
+    branch: z.string().min(1),
+    base: z.string().min(1),
+  }),
+  z.object({
+    type: z.literal('worktree-exited'),
+    path: z.string().min(1),
+    action: z.enum(EWorktreeExit),
+  }),
   z.object({
     type: z.literal('background-shell-ended'),
     shellId: z.string().min(1),

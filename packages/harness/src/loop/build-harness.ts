@@ -54,7 +54,7 @@ export type BuildHarnessArgs = {
   hooks?: HookChain | undefined
   compact?: ((args: { threadId: ThreadId }) => Promise<boolean>) | undefined
   autoCompactAtPercent?: (() => number) | undefined
-  projectDirectory?: string | undefined
+  launchDirectory?: string | undefined
 }
 
 export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness> {
@@ -82,7 +82,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
       args.assembly ??
       defaultPipeline({
         prompt: () => args.prompt ?? EMPTY_PROMPT,
-        projectDirectory: args.projectDirectory ?? process.cwd(),
+        launchDirectory: args.launchDirectory ?? process.cwd(),
       }),
     tools: args.tools,
     dispatch: args.dispatch,
@@ -90,7 +90,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
     onChunk: args.onChunk,
     hooks: args.hooks,
     spend: { ledger, clock },
-    projectDirectory: args.projectDirectory,
+    launchDirectory: args.launchDirectory,
     ...(args.compact === undefined ? {} : { compact: args.compact }),
     ...(args.autoCompactAtPercent === undefined
       ? {}

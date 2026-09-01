@@ -18,7 +18,7 @@ export enum EDispatch {
 }
 
 export type Dispatch =
-  | { type: EDispatch.Ran }
+  | { type: EDispatch.Ran; notice?: string | undefined }
   | { type: EDispatch.Refused; reason: string }
   | { type: EDispatch.Send; text: string; drafts: readonly EventDraft[] }
 
@@ -29,8 +29,13 @@ export function commandSpecs(args: {
   return [...args.commands, ...args.skills.map((skill) => skill.spec)]
 }
 
+/**
+ * True of every settled command, which is the point: `/compact` rewrites the history, `/new` and
+ * `/resume` swap the thread out from under it. Naming the shared consequence keeps one message
+ * honest for all three.
+ */
 const MID_TURN = (name: string): string =>
-  `/${name} would rewrite the history this turn is reading, so it has to wait for the turn to finish`
+  `/${name} would change what this turn is reading, so it has to wait for the turn to finish`
 
 export async function dispatchSubmission(args: {
   text: string
@@ -56,6 +61,9 @@ export async function dispatchSubmission(args: {
     const effect = await command.run({ argumentText: invoked.argumentText })
     if (effect.type === ECommandEffect.Refused) {
       return { type: EDispatch.Refused, reason: effect.reason }
+    }
+    if (effect.type === ECommandEffect.Ran && effect.notice !== undefined) {
+      return { type: EDispatch.Ran, notice: effect.notice }
     }
 
     return { type: EDispatch.Ran }

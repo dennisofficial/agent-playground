@@ -1,15 +1,19 @@
+import { toThreadId } from '@dltech/atlas-core'
 import { toShellId } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
 import {
+  AGENT_TAG,
   DETACH_NOTE,
   EExitChoice,
   EXIT_GUARD_OPTIONS,
+  exitGuardAgentRow,
   exitGuardRow,
   moveSelection,
   openExitGuard,
   resolve,
   selectedOption,
+  SHELL_TAG,
 } from '../exit-guard-model'
 
 const opened = () => openExitGuard()
@@ -115,7 +119,7 @@ describe('resolving a choice', () => {
   })
 })
 
-describe('rows for running shells', () => {
+describe('rows for live background work', () => {
   it('labels a shell with its description', () => {
     const row = exitGuardRow({
       shellId: toShellId('bash_1'),
@@ -123,7 +127,7 @@ describe('rows for running shells', () => {
       description: 'dev server',
     })
 
-    expect(row).toEqual({ shellId: 'bash_1', label: 'dev server' })
+    expect(row).toEqual({ id: 'bash_1', tag: SHELL_TAG, label: 'dev server' })
   })
 
   it('falls back to the command when there is no description', () => {
@@ -140,5 +144,44 @@ describe('rows for running shells', () => {
     })
 
     expect(row.label).toBe('bun test --watch')
+  })
+})
+
+describe('rows for live sub-agents', () => {
+  it('names a child by what it was asked to do', () => {
+    const row = exitGuardAgentRow({
+      agentId: toThreadId('thr_child'),
+      agentType: 'explore',
+      intent: 'auditing the credential vault',
+    })
+
+    expect(row).toEqual({
+      id: 'thr_child',
+      tag: AGENT_TAG,
+      label: 'auditing the credential vault',
+    })
+  })
+
+  it('falls back to the agent type when the child was spawned without an intent', () => {
+    const row = exitGuardAgentRow({
+      agentId: toThreadId('thr_child'),
+      agentType: 'explore',
+      intent: '   ',
+    })
+
+    expect(row.label).toBe('explore')
+  })
+
+  it('tells a child apart from a shell so the guard can say which is which', () => {
+    const shell = exitGuardRow({ shellId: toShellId('bash_1'), command: 'bun run dev' })
+    const child = exitGuardAgentRow({
+      agentId: toThreadId('thr_child'),
+      agentType: 'explore',
+      intent: 'looking',
+    })
+
+    expect(shell.tag).toBe(SHELL_TAG)
+    expect(child.tag).toBe(AGENT_TAG)
+    expect(shell.tag).not.toBe(child.tag)
   })
 })

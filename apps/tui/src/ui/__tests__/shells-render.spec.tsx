@@ -21,6 +21,7 @@ const PANEL_WIDTH = 72
 const shell = (over: Omit<Partial<ShellSnapshot>, 'shellId'> & { shellId: string }): ShellSnapshot =>
   ({
     command: 'bun test --watch',
+    description: 'Watch the tests',
     status: EShellStatus.Running,
     pid: 4242,
     startedAt: '2026-08-27T12:00:00.000Z',
@@ -85,22 +86,34 @@ describe('what the sidebar says about background shells', () => {
     expect(has(rows, 'SHELLS')).toBe(false)
   })
 
-  it('lists a running shell by its command, with a count of what is live', async () => {
+  it('lists a running shell by the name the model gave it, with a count of what is live', async () => {
     const rows = await sidebarRows([shell({ shellId: 'bash_1' }), shell({ shellId: 'bash_2' })])
 
     expect(has(rows, 'SHELLS')).toBe(true)
-    expect(has(rows, 'bun test --watch')).toBe(true)
+    expect(has(rows, 'Watch the tests')).toBe(true)
+    expect(has(rows, 'bun test --watch')).toBe(false)
     expect(has(rows, '2/2')).toBe(true)
+  })
+
+  it('falls back to the command for a shell replayed from before names were required', async () => {
+    const rows = await sidebarRows([shell({ shellId: 'bash_1', description: '' })])
+
+    expect(has(rows, 'bun test --watch')).toBe(true)
   })
 
   it('counts the finished ones out of the live tally but keeps them listed', async () => {
     const rows = await sidebarRows([
       shell({ shellId: 'bash_1' }),
-      shell({ shellId: 'bash_2', status: EShellStatus.Exited, exitCode: 0, command: 'bun run build' }),
+      shell({
+        shellId: 'bash_2',
+        status: EShellStatus.Exited,
+        exitCode: 0,
+        description: 'Build the app',
+      }),
     ])
 
     expect(has(rows, '1/2')).toBe(true)
-    expect(has(rows, 'bun run build')).toBe(true)
+    expect(has(rows, 'Build the app')).toBe(true)
   })
 
   it('marks a shell waiting on input, since that one will never finish on its own', async () => {

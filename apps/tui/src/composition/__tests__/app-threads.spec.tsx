@@ -33,7 +33,7 @@ async function seed(args: { app: FakeApp; title: string; said: string }): Promis
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
-    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />,
     WIDE,
   )
   await setup.flush()
@@ -129,6 +129,37 @@ describe('/resume', () => {
       const frame = setup.captureCharFrame()
       expect(frame).toContain('shell teardown')
       expect(frame).not.toContain('the auth overlay')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('goes straight to a conversation named by its handle, without the picker', async () => {
+    const app = appWith()
+    await seed({ app, title: 'the auth overlay', said: 'wire up accounts' })
+    const setup = await opened(app)
+
+    try {
+      await ran(setup, '/resume the-auth-overlay')
+
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain('wire up accounts')
+      expect(frame).not.toContain(THREADS_HEADING.toUpperCase())
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('says so when the handle names no conversation here', async () => {
+    const app = appWith()
+    await seed({ app, title: 'the auth overlay', said: 'wire up accounts' })
+    const setup = await opened(app)
+
+    try {
+      await ran(setup, '/resume no-such-conversation')
+
+      expect(setup.captureCharFrame()).toContain('no-such-conversation')
+      expect(setup.captureCharFrame()).not.toContain('wire up accounts')
     } finally {
       await teardown(setup)
     }

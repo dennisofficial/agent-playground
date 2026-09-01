@@ -39,6 +39,8 @@ export enum EDetail {
   Created = 'created',
   /** A file that was read — numbered rows, syntax-highlighted under the path's filetype. */
   File = 'file',
+  /** A picture that was read — for now its name, dimensions and weight on one line. */
+  Image = 'image',
   Output = 'output',
   /** Why a call never ran, or why it came back an error — the sentence the model was handed. */
   Reason = 'reason',

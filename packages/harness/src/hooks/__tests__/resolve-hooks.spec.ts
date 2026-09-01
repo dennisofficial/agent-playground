@@ -130,7 +130,9 @@ describe('resolveHookChain', () => {
     expect(await chain.beforeStep({ assembled, trace: [] })).toBe(assembled)
     expect(await chain.beforeRequest({ prompt })).toBe(prompt)
     expect(await chain.onChunk({ chunk: text })).toBe(text)
-    expect(await chain.beforeTurn({ threadId: toThreadId('thread-1') })).toEqual([])
+    expect(
+      await chain.beforeTurn({ threadId: toThreadId('thread-1'), projectDirectory: '/repo' }),
+    ).toEqual([])
     expect(await chain.afterTurn({ threadId: toThreadId('thread-1') })).toEqual([])
   })
 
@@ -148,7 +150,9 @@ describe('resolveHookChain', () => {
 
     const chain = resolveHookChain({ container: child })
 
-    expect(await chain.beforeTurn({ threadId: toThreadId('thread-1') })).toEqual([
+    expect(
+      await chain.beforeTurn({ threadId: toThreadId('thread-1'), projectDirectory: '/repo' }),
+    ).toEqual([
       { type: 'context-loaded', slot: 'gitState', key: HOOK_CONTEXT_KEY, content: '3 files dirty' },
     ])
   })

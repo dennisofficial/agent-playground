@@ -1,4 +1,4 @@
-import { choiceValueOf, ESettingId, type SettingsResolution } from '@dltech/atlas-core'
+import { choiceValueOf, ESettingId, rangeValueOf, type SettingsResolution } from '@dltech/atlas-core'
 
 import { accentHex, accentPalette } from './accents'
 import {
@@ -8,6 +8,7 @@ import {
   type EComposerEdge,
 } from './composer-edge-store'
 import { applyBlockDensity, blockDensityOf, SHIPPED_DENSITY, type EBlockDensity } from './density-store'
+import { applyImageRows, SHIPPED_IMAGE_ROWS } from './image-rows-store'
 import { applyPalette } from './palette-store'
 import { theme } from './theme'
 
@@ -17,6 +18,7 @@ export type Appearance = {
   accent: string
   density: EBlockDensity
   composer: EComposerEdge
+  imageRows: number
 }
 
 export function appearanceOf(args: { resolution: SettingsResolution }): Appearance {
@@ -40,6 +42,11 @@ export function appearanceOf(args: { resolution: SettingsResolution }): Appearan
         fallback: SHIPPED_COMPOSER_EDGE,
       }),
     ),
+    imageRows: rangeValueOf({
+      resolution: args.resolution,
+      id: ESettingId.ImageRows,
+      fallback: SHIPPED_IMAGE_ROWS,
+    }),
   }
 }
 
@@ -47,4 +54,5 @@ export function applyAppearance(appearance: Appearance): void {
   if (theme.accent !== accentHex(appearance.accent)) applyPalette(accentPalette(appearance.accent))
   applyBlockDensity(appearance.density)
   applyComposerEdge(appearance.composer)
+  applyImageRows(appearance.imageRows)
 }

@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 
-import type { KeyEvent } from '@opentui/core'
-import { useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/react'
+import type { KeyEvent, PasteEvent } from '@opentui/core'
+import { usePaste, useKeyboard, useRenderer, useTerminalDimensions } from '@opentui/react'
 import React, {
   useCallback,
   useEffect,
@@ -14,10 +14,15 @@ import React, {
 import {
   contextPressure,
   ECompactionAnchor,
+  imageTag,
+  imageTagAround,
+  imageTagSpans,
+  nearerEdgeOf,
   modelEntry,
   type EUsageWindow,
   type ModelEntry,
 } from '@dltech/atlas-core'
+import type { DiscoveredSkill } from '@dltech/atlas-harness'
 
 import { newestExpandableKey } from '../store'
 import { accountMeterSpans } from '../ui/account-meters'
@@ -27,31 +32,45 @@ import { usageMeters, type FooterMeter } from '../ui/usage-meters'
 import { CommandMenu } from '../ui/components/command-menu'
 import { FileMenu } from '../ui/components/file-menu'
 import { Composer, composerRows, composerTone } from '../ui/components/composer'
+import { readClipboardImage, readImageBase64, type ClipboardImageReader } from '../ui/clipboard-image'
+import { restoredImages, submissionOf } from '../ui/draft-images'
+import { isEmptyPaste } from '../ui/pasted-text'
+import { useDraftImages } from '../ui/hooks/use-draft-images'
+import { pasteDirectoryOf } from './paste-directory'
 import { Footer, type FooterContext } from '../ui/components/footer'
 import { Screen } from '../ui/components/screen'
+import { AgentTypes } from '../ui/components/agent-types'
+import { LostChildren } from '../ui/components/lost-children'
+import { hasLostChildren } from '../ui/lost-children-model'
 import { Shortcuts } from '../ui/components/shortcuts'
 import { Sidebar } from '../ui/components/sidebar'
+import { WelcomeScreen } from '../ui/components/welcome-screen'
 import { Transcript } from '../ui/components/transcript'
 import { useDraft } from '../ui/hooks/use-draft'
 import { composerEdgeVersion, subscribeComposerEdge } from '../ui/composer-edge-store'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { modelLabel } from '../ui/model-label'
+import { theme } from '../ui/theme'
+import { notify } from '../ui/notice-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import { SelectionSurface } from '../ui/selection/selection-surface'
 import { useCopyOnSelect } from '../ui/selection/use-copy-on-select'
 import type { SwitcherChoice } from '../ui/switcher-model'
-import { SIDEBAR_GUTTER } from '../ui/theme'
 import {
+  chromeWidthOf,
+  contentWidthOf,
   ESidebarLayout,
-  flipSidebar,
-  sidebarChoiceInForce,
+  floatingSidebarWidth,
+  peekInForce,
   sidebarLayout,
   sidebarShown,
-  type SidebarChoice,
 } from '../ui/sidebar-visibility'
+import { welcomeCells, welcoming } from '../ui/welcome-state'
 import {
   createKeyRegistry,
+  EKeyGroup,
+  EKeyLayer,
   KeyRegistryContext,
   useKeyBindings,
   useKeyRegistry,
@@ -61,7 +80,9 @@ import { useComposerMenus } from './use-composer-menus'
 import { workspaceFileLoader } from './mentioned-files'
 import { useResolvedMentions } from './use-resolved-mentions'
 import type { AtlasApp } from './compose'
+import { reloadedSkills, type SkillsReloaded } from './skills-reload'
 import { globalBindings } from './global-bindings'
+import { applyTranscriptCovered } from '../ui/covered-store'
 import { OverlayStack } from './overlay-stack'
 import type { ModelSelection } from './model-selection'
 import type { OpenedConversation } from './open-conversation'
@@ -72,6 +93,9 @@ import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
 import { useRewind } from './use-rewind'
 import { useAccounts } from './use-accounts'
+import { useAgents } from './use-agents'
+import { useAgentView } from './use-agent-view'
+import { useAgentsPicker } from './use-agents-picker'
 import { useSwitcher } from './use-switcher'
 import { useThreads } from './use-threads'
 
@@ -79,7 +103,24 @@ const PLACEHOLDER = 'Ask anything'
 
 const STEER_PLACEHOLDER = 'Steer the turn'
 
+const SUBAGENT_PLACEHOLDER = 'Message this sub-agent'
+
 const HELP_KEY = '?'
+
+/**
+ * Reference the operator reads and dismisses, drawn above the composer rather than over it. One at
+ * a time, and any key puts it away, which is what makes it a veil rather than an overlay.
+ */
+enum EChromePanel {
+  Shortcuts = 'shortcuts',
+  AgentTypes = 'agent-types',
+  LostAgents = 'lost-agents',
+}
+
+const composerPlaceholder = (args: { addressingChild: boolean; working: boolean }): string => {
+  if (args.addressingChild) return SUBAGENT_PLACEHOLDER
+  return args.working ? STEER_PLACEHOLDER : PLACEHOLDER
+}
 
 const readoutOf = (args: {
   entry: ModelEntry | undefined
@@ -98,6 +139,7 @@ export function App(props: {
   opened: OpenedConversation
   credentialNotice?: string | null
   covered?: boolean
+  clipboard?: ClipboardImageReader
 }): React.ReactNode {
   const registry = useMemo(() => createKeyRegistry(), [])
 
@@ -108,6 +150,7 @@ export function App(props: {
         opened={props.opened}
         credentialNotice={props.credentialNotice ?? null}
         covered={props.covered === true}
+        clipboard={props.clipboard ?? readClipboardImage}
       />
     </KeyRegistryContext.Provider>
   )
@@ -118,6 +161,7 @@ function Workspace(props: {
   opened: OpenedConversation
   credentialNotice: string | null
   covered: boolean
+  clipboard: ClipboardImageReader
 }): React.ReactNode {
   const renderer = useRenderer()
   const exitGuard = useExitGuard({ onExit: () => renderer.destroy() })
@@ -133,6 +177,8 @@ function Workspace(props: {
 
   const draft = useDraft()
 
+  const handleFocusComposer = useCallback(() => draft.editor.current?.focus(), [draft])
+
   const conversation = useConversation({
     app: props.app,
     opened: props.opened,
@@ -143,14 +189,15 @@ function Workspace(props: {
     canWake: exitGuard.state === null,
   })
 
-  const [sidebarChoice, setSidebarChoice] = useState<SidebarChoice | null>(null)
-  const layout = sidebarLayout(width)
+  const attachments = useDraftImages({
+    read: props.clipboard,
+    directory: pasteDirectoryOf(conversation.threadId),
+  })
+
+  const [peeking, setPeeking] = useState(false)
+  const { sidebarWidth, sidebarFoldBelow } = settings
+  const layout = sidebarLayout({ width, foldBelow: sidebarFoldBelow, sidebarWidth })
   const wide = layout === ESidebarLayout.Wide
-  const sidebarVisible = sidebarShown({ layout, choice: sidebarChoice })
-  const docked = sidebarVisible && wide
-  const overlay = sidebarVisible && !wide
-  const contentWidth = width - (docked ? settings.sidebarWidth : 0)
-  const chromeWidth = contentWidth - (docked ? SIDEBAR_GUTTER : 0)
 
   const tone = composerTone({
     working: conversation.working,
@@ -158,9 +205,12 @@ function Workspace(props: {
   })
 
   const [selection, setSelection] = useState<ModelSelection>(() => props.app.model.choice())
-  const [shortcuts, setShortcuts] = useState(false)
+  const [panel, setPanel] = useState<EChromePanel | null>(null)
   const [sends, setSends] = useState(0)
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const [loadedSkills, setLoadedSkills] = useState<readonly DiscoveredSkill[]>(() =>
+    props.app.skillRegistry.all(),
+  )
 
   /**
    * A configured model id carries its release stamp; the catalog is keyed without one, so every
@@ -189,7 +239,6 @@ function Workspace(props: {
     usage.stopTracking()
   }, [usage, working])
 
-
   const handleNewConversation = useCallback(() => {
     draft.clear()
     conversation.handleNewConversation()
@@ -211,7 +260,27 @@ function Workspace(props: {
     onPick: handlePicked,
   })
 
-  const shells = useShells({ app: props.app })
+  const shells = useShells({ app: props.app, threadId: conversation.threadId })
+
+  const { lost } = conversation
+
+  const handleShowLostAgents = useCallback((): boolean => {
+    if (!hasLostChildren(lost)) return false
+
+    setPanel(EChromePanel.LostAgents)
+    return true
+  }, [lost])
+
+  /**
+   * Raised by the open rather than asked for, because nothing else in the conversation will ever
+   * mention these: a child with no `agent-spawned` behind it is absent from the log the transcript
+   * is built from and from the roster the sidebar reads.
+   */
+  useEffect(() => {
+    if (!hasLostChildren(lost)) return
+
+    setPanel(EChromePanel.LostAgents)
+  }, [lost])
 
   const handleOpenThread = useCallback(
     (threadId: string) => {
@@ -221,11 +290,64 @@ function Workspace(props: {
     [conversation, draft],
   )
 
+  const agentView = useAgentView({
+    app: props.app,
+    threadId: conversation.threadId,
+    thinking: settings.thinking,
+    onFocusComposer: handleFocusComposer,
+    onProblem: conversation.handleReportProblem,
+  })
+
+  const agents = useAgents({
+    app: props.app,
+    threadId: conversation.threadId,
+    sidebar: conversation.sidebar,
+    viewing: agentView.viewing,
+  })
+
+  const agentsPicker = useAgentsPicker({
+    app: props.app,
+    threadId: conversation.threadId,
+    onPick: agentView.handleSelect,
+  })
+
+  /**
+   * Nothing said yet is a state of its own, not an empty transcript: the wordmark and the composer
+   * sit centred with the whole terminal to themselves, and the sidebar stays away until there is a
+   * conversation for it to read.
+   */
+  const welcome = welcoming({
+    model: agentView.transcript ?? conversation.model,
+    addressingChild: agentView.viewing !== null,
+  })
+  const sidebarVisible = !welcome && sidebarShown({ layout, peeking })
+  const overlay = sidebarVisible && !wide
+  const docked = wide && !welcome
+  const contentWidth = contentWidthOf({ width, sidebarWidth, docked })
+  const chromeWidth = chromeWidthOf({ width, sidebarWidth, docked })
+  const composerWidth = welcome ? welcomeCells({ width: chromeWidth }) : chromeWidth
+
   const threads = useThreads({
     app: props.app,
     activeThreadId: conversation.threadId,
     onPick: handleOpenThread,
   })
+
+  /**
+   * `/resume` with a handle goes straight there, the way `atlas --resume` does; bare, it opens the
+   * picker. One command, because naming a conversation and choosing one are the same intent.
+   */
+  const handleResumeConversation = useCallback(
+    (handle: string) => {
+      if (handle === '') {
+        threads.handleOpen()
+        return
+      }
+
+      handleOpenThread(handle)
+    },
+    [handleOpenThread, threads],
+  )
 
   const accounts = useAccounts({ accounts: props.app.accounts, openUrl: props.app.openUrl })
   const accountsOpen = accounts.state !== null
@@ -299,6 +421,13 @@ function Workspace(props: {
     return true
   }, [conversation.model.entries, handleToggle])
 
+  const handleReloadSkills = useCallback(async (): Promise<SkillsReloaded> => {
+    const before = props.app.skillRegistry.all()
+    const after = await props.app.skillRegistry.reload()
+    setLoadedSkills(after)
+    return reloadedSkills({ before, after })
+  }, [props.app.skillRegistry])
+
   // OpenTUI parses a whole input burst before React re-renders, so a paste — or ⏎ arriving in the
   // same burst as the text — reaches here with `draft.value` still empty. The buffer is the truth.
   const commands = useMemo(
@@ -306,30 +435,35 @@ function Workspace(props: {
       localCommands({
         onCompact: conversation.handleCompact,
         onRewind: rewind.handleOpen,
-        onShortcuts: () => setShortcuts(true),
+        onShortcuts: () => setPanel(EChromePanel.Shortcuts),
         onOpenSwitcher: switcher.handleOpen,
         onOpenShells: () => shells.handleOpen(),
+        onOpenAgents: agentsPicker.handleOpen,
+        onShowAgentTypes: () => setPanel(EChromePanel.AgentTypes),
+        onShowLostAgents: handleShowLostAgents,
         onOpenSettings: settings.handleOpen,
         onOpenAccounts: () => accounts.handleOpen(),
         onNewConversation: handleNewConversation,
-        onOpenThreads: threads.handleOpen,
+        onOpenThreads: handleResumeConversation,
+        onRename: conversation.handleRename,
+        onReloadSkills: handleReloadSkills,
       }),
     [
       accounts,
+      agentsPicker.handleOpen,
       conversation.handleCompact,
+      conversation.handleRename,
       handleNewConversation,
+      handleReloadSkills,
       rewind.handleOpen,
       settings.handleOpen,
       shells,
       switcher.handleOpen,
-      threads.handleOpen,
+      handleResumeConversation,
     ],
   )
 
-  const skills = useMemo(
-    () => props.app.skills.filter((skill) => skill.userInvocable),
-    [props.app.skills],
-  )
+  const skills = useMemo(() => loadedSkills.filter((skill) => skill.userInvocable), [loadedSkills])
 
   const specs = useMemo(() => commandSpecs({ commands, skills }), [commands, skills])
 
@@ -343,35 +477,137 @@ function Workspace(props: {
 
   const mentionSpans = useResolvedMentions({ text: draft.value, files: props.app.files })
 
+  /**
+   * The tag goes in at the cursor and the buffer is read straight back, because OpenTUI's editor
+   * owns the text and only mirrors it into React on its own change event.
+   */
+  /**
+   * The tag is written as a `virtual` extmark, which is what makes it one thing to the cursor rather
+   * than ten characters: OpenTUI's `ExtmarksController` wraps the buffer's own motion and deletion —
+   * left, right, visual up and down, backspace, delete, selection delete, undo and redo — so every
+   * one of them steps over the span whole instead of into it. Teaching those keys about tags by hand
+   * would be a worse copy of a mechanism the editor already has.
+   */
+  /**
+   * A draft taken back out of the queue arrives as plain text, so its tags come back without the
+   * extmarks that made them whole. They are re-marked here, or a picture that survived a take-back
+   * would be the one the cursor could still walk into.
+   */
+  /**
+   * Extmarks make every motion the editor owns step over a tag whole, but a click sets the caret by
+   * row and column rather than by offset, so it lands where it was clicked. A caret that ends up
+   * inside a tag is put back out by the nearer edge — the one door the editor cannot close itself.
+   */
+  const handleCursorMoved = useCallback(() => {
+    const editor = draft.editor.current
+    if (editor === null) return
+
+    const inside = imageTagAround({ text: editor.plainText, offset: editor.cursorOffset })
+    if (inside === null) return
+
+    editor.cursorOffset = nearerEdgeOf({ span: inside, offset: editor.cursorOffset })
+  }, [draft])
+
+  const markImageTags = useCallback(
+    (text: string) => {
+      const editor = draft.editor.current
+      if (editor === null) return
+
+      editor.extmarks.clear()
+      for (const span of imageTagSpans(text)) {
+        editor.extmarks.create({ start: span.start, end: span.end, virtual: true })
+      }
+    },
+    [draft],
+  )
+
+  const handleAttachImage = useCallback((): boolean => {
+    void attachments.handleAttach().then((image) => {
+      if (image === null) return
+
+      const editor = draft.editor.current
+      if (editor === null) return
+
+      const tag = imageTag(image.ordinal)
+      const start = editor.cursorOffset
+
+      editor.insertText(`${tag} `)
+      editor.extmarks.create({ start, end: start + tag.length, virtual: true })
+      draft.sync(editor.plainText)
+    })
+
+    return true
+  }, [attachments, draft])
+
+  const imageTags = useMemo(() => imageTagSpans(draft.value), [draft.value])
+
+  const highlights = useMemo(() => [...mentionSpans, ...imageTags], [imageTags, mentionSpans])
+
+
   const handleSubmit = useCallback(() => {
     const said = draft.editor.current?.plainText ?? draft.value
-    if (said.trim().length === 0) {
+    const attached = attachments.images
+    if (said.trim().length === 0 && attached.length === 0) {
       handleOpenNewest()
       return
     }
 
     draft.clear()
+    attachments.clear()
     setSends((count) => count + 1)
+
+    const putBack = () => {
+      draft.setValue(said)
+      attachments.restore(attached)
+    }
+
+    if (agentView.viewing !== null) {
+      const spoken = submissionOf({ text: said, images: attached, load: () => null })
+      void agentView.handleSay(spoken.text).then((refusal) => {
+        if (refusal === null) return
+
+        putBack()
+        conversation.handleReportProblem(refusal)
+      })
+      return
+    }
 
     void dispatchSubmission({
       text: said,
       commands,
       skills,
       working: conversation.working,
-      ...(props.app.files === undefined
-        ? {}
-        : { loadFile: workspaceFileLoader(props.app.files) }),
+      ...(props.app.files === undefined ? {} : { loadFile: workspaceFileLoader(props.app.files) }),
     }).then((dispatched) => {
       if (dispatched.type === EDispatch.Refused) {
-        draft.setValue(said)
+        putBack()
         conversation.handleReportProblem(dispatched.reason)
+        return
+      }
+      if (dispatched.type === EDispatch.Ran) {
+        attachments.restore(attached)
+        if (dispatched.notice !== undefined) notify({ text: dispatched.notice })
         return
       }
       if (dispatched.type !== EDispatch.Send) return
 
-      conversation.handleSend(dispatched.text, dispatched.drafts)
+      const sending = submissionOf({
+        text: dispatched.text,
+        images: attached,
+        load: readImageBase64,
+      })
+      conversation.handleSend({ ...sending, context: dispatched.drafts })
     })
-  }, [commands, conversation, draft, handleOpenNewest, props.app.files, skills])
+  }, [
+    agentView,
+    attachments,
+    commands,
+    conversation,
+    draft,
+    handleOpenNewest,
+    props.app.files,
+    skills,
+  ])
 
   /**
    * The draft is asked for its buffer rather than its mirror because OpenTUI parses a whole input
@@ -383,19 +619,21 @@ function Workspace(props: {
   )
 
   const handleTakeBackPending = useCallback((): boolean => {
-    const text = conversation.handleTakeBackPending()
-    if (text === null) return false
+    const taken = conversation.handleTakeBackPending()
+    if (taken === null) return false
 
-    draft.setValue(text)
+    draft.setValue(taken.text)
+    markImageTags(taken.text)
+    attachments.restore(restoredImages({ images: taken.images, text: taken.text }))
     return true
-  }, [conversation, draft])
+  }, [attachments, conversation, draft, markImageTags])
 
-  const handleToggleSidebar = useCallback(() => {
-    setSidebarChoice((choice) => flipSidebar({ layout, choice }))
-  }, [layout])
+  const handleToggleSidebar = useCallback(() => setPeeking((open) => !open), [])
+
+  const handleClosePeek = useCallback(() => setPeeking(false), [])
 
   useEffect(() => {
-    setSidebarChoice((choice) => sidebarChoiceInForce({ layout, choice }))
+    setPeeking((open) => peekInForce({ layout, peeking: open }))
   }, [layout])
 
   const handleQuit = useCallback(() => {
@@ -404,39 +642,59 @@ function Workspace(props: {
       return
     }
 
-    if (shells.running > 0) {
+    if (shells.running + agents.running > 0) {
       exitGuard.handleOpen()
       return
     }
 
     renderer.destroy()
-  }, [conversation, exitGuard, renderer, shells])
+  }, [agents.running, conversation, exitGuard, renderer, shells])
 
   useEffect(() => {
-    if (exitGuard.state !== null && shells.running === 0) exitGuard.handleDismiss()
-  }, [exitGuard, shells.running])
+    if (exitGuard.state !== null && shells.running + agents.running === 0) exitGuard.handleDismiss()
+  }, [agents.running, exitGuard, shells.running])
 
   useKeyBindings(
     globalBindings({
       draftIsEmpty,
       onSubmit: handleSubmit,
-      onShortcuts: () => setShortcuts(true),
+      onShortcuts: () => setPanel(EChromePanel.Shortcuts),
       onTakeBackPending: handleTakeBackPending,
       onInterrupt: conversation.handleInterrupt,
-      onNewConversation: handleNewConversation,
       onOpenSwitcher: switcher.handleOpen,
+      onAttachImage: handleAttachImage,
       onOpenShells: () => shells.handleOpen(),
-      onToggleSidebar: handleToggleSidebar,
+      onCycleAgents: agents.count === 0 ? null : agentView.handleCycle,
+      onToggleSidebar: wide ? null : handleToggleSidebar,
       onOpenSettings: settings.handleOpen,
       onOpenAccounts: () => accounts.handleOpen(),
       onQuit: handleQuit,
     }),
   )
 
+  /**
+   * Escape closes the floating sidebar rather than interrupting the turn, and it wins by sitting a
+   * layer above the global chord instead of by owning the keyboard — everything else the app binds
+   * has to keep working while the sidebar is up.
+   */
+  useKeyBindings(
+    overlay
+      ? [
+          {
+            chord: 'escape',
+            hint: 'close sidebar',
+            layer: EKeyLayer.Block,
+            group: EKeyGroup.Session,
+            run: handleClosePeek,
+          },
+        ]
+      : [],
+  )
+
   const registry = useKeyRegistry()
 
   const handleKey = useOverlayKeys({
-    veil: { shown: shortcuts, dismiss: () => setShortcuts(false), keys: [HELP_KEY] },
+    veil: { shown: panel !== null, dismiss: () => setPanel(null), keys: [HELP_KEY] },
     owners: [
       { open: exitGuard.state !== null, handleKey: exitGuard.handleKey },
       { open: rewind.state !== null, handleKey: rewind.handleKey },
@@ -444,6 +702,7 @@ function Workspace(props: {
       { open: shells.state !== null, handleKey: shells.handleKey },
       { open: accounts.state !== null, handleKey: accounts.handleKey },
       { open: threads.state !== null, handleKey: threads.handleKey },
+      { open: agentsPicker.state !== null, handleKey: agentsPicker.handleKey },
       { open: settings.state !== null, handleKey: settings.handleKey, porous: true },
     ],
     bindings: registry.snapshot,
@@ -472,52 +731,126 @@ function Workspace(props: {
    */
   const overlaid =
     props.covered ||
+    overlay ||
     exitGuard.state !== null ||
     switcher.state !== null ||
     accounts.state !== null ||
     threads.state !== null ||
+    agentsPicker.state !== null ||
     settings.state !== null ||
     shells.state !== null ||
     rewind.state !== null ||
     conversation.compacting !== null
 
+  /**
+   * Which overlays a picture has to be withheld for.
+   *
+   * Every one of these paints across the transcript, and a kitty image cannot be layered over — the
+   * terminal composites it above the text plane whatever z-order was asked for. The sidebar is left
+   * out on purpose: it narrows the transcript rather than covering it, so the picture beside it is
+   * still worth showing.
+   */
+  const picturesCovered =
+    props.covered ||
+    exitGuard.state !== null ||
+    switcher.state !== null ||
+    accounts.state !== null ||
+    threads.state !== null ||
+    agentsPicker.state !== null ||
+    settings.state !== null ||
+    shells.state !== null ||
+    rewind.state !== null ||
+    conversation.compacting !== null
+
+  useEffect(() => {
+    applyTranscriptCovered(picturesCovered)
+  }, [picturesCovered])
+
+  /**
+   * The terminal's own paste is the gesture that carries a picture, whatever key it is bound to —
+   * ⌘V here, ctrl+v in Warp. It arrives with no text, because a terminal asked to paste an image has
+   * nothing to send, so the empty paste is what a screenshot looks like from inside the app. It is
+   * ignored while the composer is covered, because then the draft is not what the paste is aimed at.
+   */
+  usePaste(
+    useCallback(
+      (event: PasteEvent) => {
+        if (overlaid || !isEmptyPaste(event)) return
+
+        event.preventDefault()
+        event.stopPropagation()
+        handleAttachImage()
+      },
+      [handleAttachImage, overlaid],
+    ),
+  )
+
   return (
     <Screen>
       <SelectionSurface>
         <box flexDirection="column" width={contentWidth} flexGrow={1} flexShrink={1} flexBasis={0}>
-          <Transcript
-            model={conversation.model}
-            width={contentWidth}
-            now={conversation.now}
-            cwd={props.app.config.cwd}
-            home={homedir()}
-            modelId={selection.modelId}
-            turn={conversation.turn}
-            sends={sends}
-            pending={conversation.pending}
-            {...(conversation.handleRetry === null ? {} : { onRetry: conversation.handleRetry })}
-            {...(conversation.handleResume === null ? {} : { onResume: conversation.handleResume })}
-            {...(conversation.handleResumeFresh === null
-              ? {}
-              : { onResumeFresh: conversation.handleResumeFresh })}
-            opened={opened}
-            onToggle={handleToggle}
-          />
-          {shortcuts ? <Shortcuts width={chromeWidth} /> : null}
-          {menus.command === null ? null : (
-            <CommandMenu state={menus.command} width={chromeWidth} />
+          <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
+          {welcome ? (
+            <WelcomeScreen
+              cwd={props.app.config.cwd}
+              home={homedir()}
+              modelId={selection.modelId}
+              width={contentWidth}
+            />
+          ) : (
+            <Transcript
+              model={agentView.transcript ?? conversation.model}
+              width={contentWidth}
+              now={conversation.now}
+              cwd={props.app.config.cwd}
+              turn={conversation.turn}
+              sends={sends}
+              pending={conversation.pending}
+              {...(conversation.handleRetry === null ? {} : { onRetry: conversation.handleRetry })}
+              {...(conversation.handleResume === null
+                ? {}
+                : { onResume: conversation.handleResume })}
+              opened={opened}
+              onToggle={handleToggle}
+            />
           )}
-          {menus.file === null ? null : <FileMenu state={menus.file} width={chromeWidth} />}
-          <Composer
-            draft={draft}
-            width={chromeWidth}
-            tone={tone}
-            placeholder={conversation.working ? STEER_PLACEHOLDER : PLACEHOLDER}
-            maxRows={composerRows(height)}
-            focused={!overlaid}
-            highlights={mentionSpans}
-            {...(conversation.handle === null ? {} : { title: conversation.handle })}
-          />
+          {panel === EChromePanel.Shortcuts ? <Shortcuts width={chromeWidth} /> : null}
+          {panel === EChromePanel.AgentTypes ? (
+            <AgentTypes width={chromeWidth} catalog={props.app.agentTypes} />
+          ) : null}
+          {panel === EChromePanel.LostAgents ? (
+            <LostChildren width={chromeWidth} lost={conversation.lost} />
+          ) : null}
+          <box
+            flexDirection="column"
+            flexShrink={0}
+            width={composerWidth}
+            alignSelf={welcome ? 'center' : 'flex-start'}
+          >
+            {menus.command === null ? null : (
+              <CommandMenu state={menus.command} width={composerWidth} />
+            )}
+            {menus.file === null ? null : <FileMenu state={menus.file} width={composerWidth} />}
+            <Composer
+              draft={draft}
+              width={composerWidth}
+              tone={tone}
+              placeholder={composerPlaceholder({
+                addressingChild: agentView.viewing !== null,
+                working: conversation.working,
+              })}
+              maxRows={composerRows(height)}
+              focused={!overlaid}
+              highlights={highlights}
+              onCursorMoved={handleCursorMoved}
+              {...(agentView.name === null
+                ? conversation.handle === null
+                  ? {}
+                  : { title: conversation.handle }
+                : { title: `@${agentView.name}`, titleFg: theme.court.external })}
+            />
+          </box>
+          <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
           <Footer
             width={chromeWidth}
             model={entry?.label ?? modelLabel(selection.modelId)}
@@ -527,15 +860,16 @@ function Workspace(props: {
         </box>
         {sidebarVisible ? (
           <Sidebar
-            width={settings.sidebarWidth}
-            model={conversation.sidebar}
+            width={overlay ? floatingSidebarWidth({ width, sidebarWidth }) : sidebarWidth}
+            model={agents.sidebar}
             turn={conversation.turn}
             now={conversation.now}
-            cwd={props.app.config.cwd}
-            sessionDirectory={conversation.sessionDirectory}
+            cwd={conversation.projectDirectory}
             overlay={overlay}
-            shells={shells.shells}
+            shells={shells.folded}
+            shellFold={shells.fold}
             onOpenShell={shells.handleOpen}
+            onSelectSubagent={agentView.handleSelect}
           />
         ) : null}
         <OverlayStack
@@ -546,9 +880,11 @@ function Workspace(props: {
           accountMeters={accountMeters}
           switcher={switcher}
           shells={shells}
+          agents={agents}
           settings={settings}
           accounts={accounts}
           threads={threads}
+          agentsPicker={agentsPicker}
           rewind={rewind}
           exitGuard={exitGuard}
           compacting={conversation.compacting}

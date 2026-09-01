@@ -112,6 +112,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       lastText: '',
       startedAt: this.clock.now(),
       endedAt: undefined,
+      deliveredAt: undefined,
       abort: new AbortController(),
       pending: [],
       context: undefined,
@@ -230,7 +231,10 @@ export class AgentSupervisor extends AgentRegistryPort {
   }
 
   drainNotifications({ threadId }: { threadId: ThreadId }): readonly EventDraft[] {
-    return this.notices.drain({ threadId })
+    const handed = this.notices.pending({ threadId })
+    const drafts = this.notices.drain({ threadId })
+    this.recordDelivery(handed)
+    return drafts
   }
 
   pendingNotices({ threadId }: { threadId: ThreadId }): readonly AgentSnapshot[] {
@@ -263,6 +267,22 @@ export class AgentSupervisor extends AgentRegistryPort {
       child.abort.abort()
     }
     await this.steps.whenSettled()
+  }
+
+  private recordDelivery(handed: readonly AgentSnapshot[]): void {
+    if (handed.length === 0) return
+
+    const at = this.clock.now()
+    let stamped = false
+
+    for (const snapshot of handed) {
+      const child = this.roster.find(snapshot.agentId)
+      if (child === undefined || child.deliveredAt !== undefined) continue
+      child.deliveredAt = at
+      stamped = true
+    }
+
+    if (stamped) this.roster.changed()
   }
 
   private childFor({

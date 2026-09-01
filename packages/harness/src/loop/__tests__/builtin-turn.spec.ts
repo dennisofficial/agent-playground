@@ -52,7 +52,7 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       tools: declarations,
       dispatch: new HookedToolDispatcher({
         registry,

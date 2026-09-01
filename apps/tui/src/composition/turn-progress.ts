@@ -1,5 +1,10 @@
 import type { Chunk } from '@dltech/atlas-core'
-import { ETurnStatus, type ChannelSignal, type TurnOutcome } from '@dltech/atlas-harness'
+import {
+  ETurnStatus,
+  type ChannelSignal,
+  type RetryWaitingSignal,
+  type TurnOutcome,
+} from '@dltech/atlas-harness'
 
 import type { StepFailure, TranscriptModel } from '../store'
 import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
@@ -12,8 +17,10 @@ export const IDLE_PROGRESS: TurnProgress = { characters: 0, clock: IDLE_TURN }
 
 const tokensOf = (characters: number): number => Math.ceil(characters / CHARACTERS_PER_TOKEN)
 
-const deltaTextOf = (chunk: Chunk): string =>
-  chunk.type === 'text-delta' || chunk.type === 'reasoning-delta' ? chunk.text : ''
+const deltaTextOf = (chunk: Chunk): string => {
+  if (chunk.type === 'text-delta' || chunk.type === 'reasoning-delta') return chunk.text
+  return chunk.type === 'tool-input-delta' ? chunk.text : ''
+}
 
 function reasoningAfter(args: { chunk: Chunk; reasoning: boolean }): boolean {
   switch (args.chunk.type) {
@@ -23,6 +30,8 @@ function reasoningAfter(args: { chunk: Chunk; reasoning: boolean }): boolean {
     case 'reasoning-end':
     case 'text-start':
     case 'text-delta':
+    case 'tool-input-start':
+    case 'tool-input-delta':
     case 'tool-call':
     case 'finish':
       return false
@@ -39,31 +48,67 @@ export const turnStarted = (args: { now: number }): TurnProgress => ({
     interrupting: false,
     reasoning: false,
     completed: null,
+    retry: null,
   },
 })
 
 export const turnInterrupting = (progress: TurnProgress): TurnProgress =>
   progress.clock.startedAt === null
     ? progress
-    : { ...progress, clock: { ...progress.clock, interrupting: true } }
+    : { ...progress, clock: { ...progress.clock, interrupting: true, retry: null } }
+
+/**
+ * A retry throws away the attempt that failed, so the characters counted from it are thrown away
+ * too — otherwise the token estimate keeps the abandoned stream in it.
+ */
+const turnRetrying = (args: {
+  progress: TurnProgress
+  signal: RetryWaitingSignal
+  now: number
+}): TurnProgress => ({
+  characters: 0,
+  clock: {
+    ...args.progress.clock,
+    outputTokens: 0,
+    reasoning: false,
+    retry: {
+      attempt: args.signal.attempt,
+      maxAttempts: args.signal.maxAttempts,
+      delayMs: args.signal.delayMs,
+      reason: args.signal.reason,
+      startedAt: args.now,
+    },
+  },
+})
 
 export function turnAdvanced(args: {
   progress: TurnProgress
   signal: ChannelSignal
+  now: number
 }): TurnProgress {
-  if (args.signal.type !== 'chunk') return args.progress
+  if (args.signal.type === 'retry-waiting') {
+    return turnRetrying({ progress: args.progress, signal: args.signal, now: args.now })
+  }
 
   const { clock } = args.progress
+
+  if (args.signal.type === 'step-started') {
+    return clock.retry === null ? args.progress : { ...args.progress, clock: { ...clock, retry: null } }
+  }
+
+  if (args.signal.type !== 'chunk') return args.progress
+
   const reasoning = reasoningAfter({ chunk: args.signal.chunk, reasoning: clock.reasoning })
   const text = deltaTextOf(args.signal.chunk)
+  const retry = null
 
   if (text.length === 0) {
-    if (reasoning === clock.reasoning) return args.progress
-    return { ...args.progress, clock: { ...clock, reasoning } }
+    if (reasoning === clock.reasoning && clock.retry === null) return args.progress
+    return { ...args.progress, clock: { ...clock, reasoning, retry } }
   }
 
   const characters = args.progress.characters + text.length
-  return { characters, clock: { ...clock, outputTokens: tokensOf(characters), reasoning } }
+  return { characters, clock: { ...clock, outputTokens: tokensOf(characters), reasoning, retry } }
 }
 
 export function turnSettled(args: { progress: TurnProgress; now: number }): TurnProgress {
@@ -77,6 +122,7 @@ export function turnSettled(args: { progress: TurnProgress; now: number }): Turn
       outputTokens: 0,
       interrupting: false,
       reasoning: false,
+      retry: null,
       completed: { durationMs: Math.max(0, args.now - startedAt), outputTokens },
     },
   }

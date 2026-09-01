@@ -42,7 +42,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toEqual([
       { type: 'tool-denied', callId: toCallId('call-1'), name: 'read', reason: 'outside the workspace root' },
@@ -73,7 +73,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toEqual([{ type: 'approval-requested', callId: toCallId('call-1'), reason: 'a human should look' }])
     expect(invoked).toEqual([])
@@ -107,7 +107,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(seen).toEqual([
       { hook: 'first', input: { path: 'a.ts' }, effect: EToolEffect.Write },
@@ -141,7 +141,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toHaveLength(1)
     expect(drafts[0]?.type).toBe('tool-denied')
@@ -171,7 +171,7 @@ describe('the after-tool observers', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result', 'nudge', 'nudge'])
     expect(seen).toEqual(['first:read:true', 'second:read:true'])
@@ -190,7 +190,7 @@ describe('the after-tool observers', () => {
       hooks: new HookChain({ afterTool: [observer({ name: 'audit', nudge: 0, seen })] }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(seen).toEqual(['audit:read:false'])
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result', 'nudge'])
@@ -214,7 +214,7 @@ describe('the after-tool observers', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result', 'nudge'])
     expect(seen).toEqual(['later:read:true'])
@@ -236,7 +236,7 @@ describe('the after-tool observers', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-denied'])
     expect(seen).toEqual([])
@@ -278,7 +278,7 @@ describe('the thread a call belongs to', () => {
     await dispatcher.dispatch({
       call: readCall,
       signal: new AbortController().signal,
-      sessionDirectory: SESSION_DIRECTORY,
+      projectDirectory: SESSION_DIRECTORY,
     })
 
     expect(guarded.map((call) => call.threadId)).toEqual([readCall.threadId])
@@ -310,7 +310,7 @@ describe('the thread a call belongs to', () => {
       await dispatcher.dispatch({
         call: { ...readCall, threadId },
         signal: new AbortController().signal,
-        sessionDirectory: SESSION_DIRECTORY,
+        projectDirectory: SESSION_DIRECTORY,
       })
     }
 

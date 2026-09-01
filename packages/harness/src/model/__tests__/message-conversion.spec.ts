@@ -5,6 +5,8 @@ import type { AssistantMessage, Message, ToolMessage, UserMessage } from '@dltec
 
 import { fromModelMessage, fromModelMessages, toModelMessage, toModelMessages } from '../message-conversion'
 
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+
 const userSaid: UserMessage = {
   role: 'user',
   content: [{ type: 'text', text: 'what changed?', providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } } }],
@@ -91,7 +93,7 @@ describe('fromModelMessage', () => {
     expect(() => fromModelMessage({ role: 'system', content: 'be brief' })).toThrow(/system/i)
   })
 
-  it('refuses a part the core message type cannot hold', () => {
+  it('refuses a remote image, which the event log cannot hold', () => {
     const withImage: ModelMessage = {
       role: 'user',
       content: [{ type: 'image', image: 'https://example.test/a.png' }],
@@ -100,7 +102,25 @@ describe('fromModelMessage', () => {
     expect(() => fromModelMessage(withImage)).toThrow(/image/i)
   })
 
-  it('refuses a tool result output shape the core message type cannot hold', () => {
+  it('carries an inline image back into a core user message', () => {
+    const withImage: ModelMessage = {
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is broken here?' },
+        { type: 'image', image: PIXEL, mediaType: 'image/png' },
+      ],
+    }
+
+    expect(fromModelMessage(withImage)).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is broken here?' },
+        { type: 'image', data: PIXEL, mediaType: 'image/png' },
+      ],
+    })
+  })
+
+  it('carries a mixed tool result back into a core tool message', () => {
     const withContentOutput: ModelMessage = {
       role: 'tool',
       content: [
@@ -108,11 +128,74 @@ describe('fromModelMessage', () => {
           type: 'tool-result',
           toolCallId: 'call-1',
           toolName: 'read_file',
-          output: { type: 'content', value: [{ type: 'text', text: 'a' }] },
+          output: {
+            type: 'content',
+            value: [
+              { type: 'text', text: 'Read image file [image/png] 1x1' },
+              { type: 'file', data: { type: 'data', data: PIXEL }, mediaType: 'image/png' },
+            ],
+          },
         },
       ],
     }
 
-    expect(() => fromModelMessage(withContentOutput)).toThrow(/content/i)
+    expect(fromModelMessage(withContentOutput)).toEqual({
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'call-1',
+          toolName: 'read_file',
+          output: {
+            type: 'content',
+            value: [
+              { type: 'text', text: 'Read image file [image/png] 1x1' },
+              { type: 'image', data: PIXEL, mediaType: 'image/png' },
+            ],
+          },
+        },
+      ],
+    })
+  })
+
+  it('sends an image part out to the provider in the shape the SDK expects', () => {
+    const sent = toModelMessage({
+      role: 'user',
+      content: [{ type: 'image', data: PIXEL, mediaType: 'image/png' }],
+    })
+
+    expect(sent).toEqual({
+      role: 'user',
+      content: [{ type: 'image', image: PIXEL, mediaType: 'image/png' }],
+    })
+  })
+
+  it('sends a tool result image as an inline file, which is the SDK spelling', () => {
+    const sent = toModelMessage({
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'call-1',
+          toolName: 'read',
+          output: { type: 'content', value: [{ type: 'image', data: PIXEL, mediaType: 'image/png' }] },
+        },
+      ],
+    })
+
+    expect(sent).toEqual({
+      role: 'tool',
+      content: [
+        {
+          type: 'tool-result',
+          toolCallId: 'call-1',
+          toolName: 'read',
+          output: {
+            type: 'content',
+            value: [{ type: 'file', data: { type: 'data', data: PIXEL }, mediaType: 'image/png' }],
+          },
+        },
+      ],
+    })
   })
 })

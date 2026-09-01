@@ -83,7 +83,9 @@ export function deriveTranscript(args: {
   const streaming = live.some((step) => step.end === null)
   const failure = failureOf(live)
 
-  if (entries.length === 0 && !streaming && failure === null) return EMPTY_TRANSCRIPT
+  if (entries.length === 0 && !streaming && failure === null) {
+    return EMPTY_TRANSCRIPT
+  }
 
   return { entries, isEmpty: entries.length === 0, streaming, failure }
 }

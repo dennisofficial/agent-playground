@@ -1,20 +1,24 @@
-import type { Event } from '@dltech/atlas-core'
+import type { Event, SaidImage } from '@dltech/atlas-core'
 
-export type PendingMessage = { id: string; text: string; taken: boolean }
+export type PendingSaid = { text: string; images: readonly SaidImage[] }
+
+export type PendingMessage = PendingSaid & { id: string; taken: boolean }
 
 export type PendingQueue = {
   subscribe(listener: () => void): () => void
   getSnapshot(): readonly PendingMessage[]
-  enqueue(args: { text: string }): void
+  enqueue(args: { text: string; images?: readonly SaidImage[] }): void
   takeBackLast(): PendingMessage | null
-  drain(): readonly string[]
+  drain(): readonly PendingSaid[]
   settleTaken(args: { landed: readonly string[] }): void
   clear(): void
 }
 
 const NOTHING_PENDING: readonly PendingMessage[] = Object.freeze([])
 
-const NOTHING_TAKEN: readonly string[] = Object.freeze([])
+const NOTHING_TAKEN: readonly PendingSaid[] = Object.freeze([])
+
+const NO_IMAGES: readonly SaidImage[] = Object.freeze([])
 
 export const trailingSaid = (events: readonly Event[]): readonly string[] => {
   const said: string[] = []
@@ -61,9 +65,14 @@ export function createPendingQueue(): PendingQueue {
 
     getSnapshot: () => snapshot,
 
-    enqueue({ text }) {
+    enqueue({ text, images }) {
       stamped += 1
-      settle({ waiting: [...waiting, { id: `pending-${stamped}`, text, taken: false }] })
+      settle({
+        waiting: [
+          ...waiting,
+          { id: `pending-${stamped}`, text, images: images ?? NO_IMAGES, taken: false },
+        ],
+      })
     },
 
     takeBackLast() {
@@ -79,7 +88,7 @@ export function createPendingQueue(): PendingQueue {
 
       const handed = waiting.map((message) => ({ ...message, taken: true }))
       settle({ taken: [...taken, ...handed], waiting: NOTHING_PENDING })
-      return handed.map((message) => message.text)
+      return handed.map((message) => ({ text: message.text, images: message.images }))
     },
 
     settleTaken({ landed }) {

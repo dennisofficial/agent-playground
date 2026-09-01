@@ -247,20 +247,366 @@ turn that dies before its first drain from spinning there.
 
 **Teardown records what it kills.** Closing the session kills every background shell, and those endings
 are worth keeping — reopening the conversation should say where the dev server went. Nothing is left
-running to drain them, so `close()` runs `closeAll()`, drains, and appends to the thread the session was
-last on before the database goes. This is the one place the registry's thread-blindness shows: endings
-carry no thread, so opening a new conversation forgets what is queued rather than landing it in a
-conversation that did not start the shell.
+running to drain them, so `close()` runs `closeAll()`, then drains and appends per owner before the
+database goes.
+
+**A shell belongs to the thread that started it.** The registry is one object for the process, but every
+read is scoped to an owner: `start` records the thread, and `list`, `read`, `peek`, `kill`,
+`pendingNotices` and `drainNotifications` all take one. A conversation is therefore never told about,
+and cannot kill, a shell another conversation is running — the model asking `shell_list` in B does not
+learn about a `bash_3` it never started. Endings route to the owning thread's log rather than to
+whichever turn drains first, which is why switching conversations keeps a queued ending instead of
+discarding it. Two reads stay deliberately global: `listEverywhere`, because the exit guard must name
+every shell that quitting would kill whoever started it, and `closeAll`, because the process dying takes
+them all.
 
 **Reaping is by spawner, not by process tree.** A backgrounded shell is meant to outlive its turn, so
 only the session that started it knows when nobody is left to read it: container teardown kills the
 whole group. Shells do not survive the process — the registry is memory — which is the one
 place this deliberately stops short of Claude Code, whose tasks survive a session and a `/clear`.
 
-**A sub-agent is this function called recursively** with different arguments — tools, policy, budget,
-thread. Nothing per-run belongs in the DI container; wanting a child container is a smell that
-run-varying config got injected instead of passed. Every event carries `runId`, `parentRunId`, and
-`depth` so nesting is never foreclosed.
+## Sub-agents
+
+**A sub-agent is a first-class Atlas thread that Atlas spawned**, not `runTurn` called recursively
+with different arguments. It has its own thread row, its own event log, its own loop and its own context window;
+it runs in the background; it stands in the sidebar while it runs; and the operator can open it,
+read it and type into it exactly as they read the main conversation. Every one of those properties
+is already true of a background shell, which is why `harness/src/agents/registry/` reads as a
+sibling of `harness/src/shells/` — the notice queue, the wake path, the ownership scoping and the
+exit guard are the same machinery over a thread instead of a process. When a question here has no
+answer, the answer is almost always whatever `ShellRegistryPort` does.
+
+**Two things distinguish a child from the main agent, and there are no others.** Its tool group:
+`toolRegistryFor` narrows the registry to the agent type's own allow/deny lists, and
+`withoutAgentTools` then denies all five of `AGENT_TOOL_NAMES` on top. Its system prompt:
+`subAgentPrompt` compiles the fragment registry with `EPromptAgent.Sub` and prepends the agent
+type's own prose, which stands in place of the identity fragment — `AtlasIdentityFragment` is the
+only fragment that reads the axis, and it is Main-only, so a child never reads "You are Atlas" and
+never reads instructions about a tool it does not have. Everything else — the loop, the hooks, the
+workspace, the write access — is identical.
+
+**There are no read-only agent types, and that is a decision rather than an omission.** `explore`
+and `reviewer` are briefed by `REPORT_ONLY_CONTRACT` not to change anything, and nothing enforces
+it: `maxEffect` is plumbed all the way through `filteredToolRegistry` and deliberately left unset on
+every built-in. The read-only guarantee is a **briefing, not a mechanism** — say so out loud,
+because the plumbing's existence otherwise reads as enforcement. What it buys is that a reviewer
+which finds a one-line fix can simply be told to make it, instead of reporting a fix somebody else
+has to apply.
+
+**What the model has seen of a file is per thread, and delegation is what forced it.**
+`ToolCall` carries a required `threadId` and `FileReadStatePort` keys its views on
+`{ threadId, path }`, so a child reading a file no longer vouches for its parent's write. Sharing
+one map meant a sub-agent's read satisfied the read-before-write guard on a thread that had never
+seen the file — the guard reporting a fact about a conversation that did not hold it.
+
+**The guard is three separate properties, and one verb does not cover them.**
+
+*Exclusion, which eliminates the agent-versus-agent race.* `withPathLock` is a per-path in-process
+async mutex, and `FileWriteGuardPort.underLock` takes the lock, re-verifies against **that thread's**
+recorded view, and only then writes — the whole read-modify-write inside the lock, rather than a
+decision in the hook and a write in the tool with nothing holding the file between. Because every
+sub-agent runs in this one process, that closes the race outright rather than shrinking it. It is
+proven concurrently and not sequentially: two writes raced through `Promise.all` yield exactly one
+success and one refusal.
+
+*Detection, which closes the content-blind predicate.* `FileView` carries a `digest`, and
+`movedSince` consults it only when `mtimeMs` and `size` both agree — precisely the coarse-filesystem
+case the old predicate missed, where a same-size edit inside one timestamp tick read as unchanged.
+Unconditional rather than size-thresholded, deliberately: a threshold would put a silent hole on
+exactly the large generated files a formatter is most likely to rewrite. Measured at 0.8 ms on a
+10 MB file, against tool calls in the tens of milliseconds.
+
+*Neither, for a concurrent external editor.* That one is only **narrowed**. No in-process lock can
+see another OS process, and a pre-rename re-stat was deliberately not added — it would shrink the
+window to a syscall gap and never to zero, which is a worse trade than saying plainly that the
+window exists. `writeFileAtomically` is a fourth thing again, solving neither: it guarantees no
+reader sees a half-written file and that a throwing write leaves the original intact.
+
+**`movedSince` is the single definition of "this file moved"**, shared by the hook and the
+write-time re-verification so the two cannot drift into disagreeing about staleness — which would
+be the worst outcome, a guard that refuses one path and permits the other. One residue is
+accepted: a blind `edit` of a file nothing has read has no recorded view to judge, so the guard
+must allow it. The lock still applies, so two concurrent blind edits both land rather than one
+being silently lost.
+
+The rest follows structurally from being a thread: a thread row carrying
+`agent: { spawnedBy, type }`, a fresh log whose first row is its own `user-said` carrying the brief,
+supervisor-driven stepping that nobody awaits, its own `AbortController` replaced at the top of each
+step, a per-child steering queue drained as `user-said` at the loop's own drain boundary, and an
+ending that lands on the **parent's** log carrying the child's final prose.
+
+**Depth is capped at one by construction, not by a counter.** Denying the agent tools is the whole
+mechanism: `filteredToolRegistry.find()` returns `undefined` for a denied name, so a child that
+emits `agent_spawn` anyway takes the dispatcher's unknown-tool path and is told, truthfully, which
+tools it actually has. Nothing counts hops and nothing needs to. The envelope still carries
+`runId`, `parentRunId` and `depth` — they are load-bearing for run provenance — but "nesting is
+never foreclosed" is no longer the design. Recursion was foreclosed on purpose.
+
+**Nothing per-run belongs in the DI container; wanting a child container is a smell that
+run-varying config got injected instead of passed.** A child's `LoopTurnRunner` is constructed at
+spawn time with its own registry, dispatcher, model and assembly, exactly as
+`PublishingTurnRunner.runnerFor` already does per call. The supervisor holds a *thunk* for those
+deps rather than the deps themselves, because `agent_spawn` is a `ToolDefinition` the registry
+constructs and resolving a child's tools eagerly would close the cycle.
+
+### A delegate's work is counted, never quoted
+
+This is the one rule inherited from legacy Atlas, and it was learned the hard way. The old harness
+let a child's prose persist as the parent's own, because frames arrived interleaved on one stream
+and transport was mistaken for authorship — a thread that delegated a fifteen-file sweep *in order
+not to read fifteen files* ended up with all fifteen reads in its scrollback, and
+`deprecated/tui/scripts/backfill-delegate-prose.ts` exists to delete what that bug wrote.
+
+**Never append a child's events to the parent's log.** New Atlas is structurally immune — a child's
+rows carry the child's `threadId` — and it must stay that way. What the parent gets is one
+`agent-spawned` row, live counts on it, and one `agent-ended` carrying the child's final prose.
+
+**The same rule has a second door, and `agentEndingsBlock` is what shuts it.** Twenty children
+finishing is twenty `agent-ended` rows each carrying prose, and rendering all of them verbatim is
+the context blowup arriving from the other side. So the rule groups *contiguous* endings into a
+wave and renders one `<agents-ended>` block per wave, spending **one shared prose budget** across
+it: endings are allotted shortest-first, each taking at most an equal share of what is left, so a
+short report is never clipped and the remainder concentrates on the long ones. A clipped report
+says how many characters went and why. The headline states the count and then says the quiet part
+out loud — none of the children's own steps are in the parent's history and none are coming, so
+what is quoted here is all of it. Two endings carry an extra sentence of advice, because the status
+alone invites the wrong response: one the user stopped, and one that was lost.
+
+**A wave is spliced in at its anchor, not appended after the conversation.** `mergeBySeq` places
+each block at the seq of the last ending it collapses, so the report sits where it happened,
+between the turns either side of it. There was never a trade-off between conversational placement
+and wave collapsing — a per-event rule would have had the first and structurally could not have had
+the second.
+
+**Its slot in `defaultRules` is load-bearing in both directions.** It runs *after*
+`messagesFromEvents`, because it merges into `input.messages` and there is nothing to merge into
+before that. It runs *before* `compactedHistory`, because the block carries the anchor ending's
+seq: placed after, an ending that compaction had already replaced would be spliced back in on top
+of the summary that replaced it, and the same report would return forever. Both were verified by
+perturbation, not by reading.
+
+**`agent-spawned` renders as nothing, deliberately.** It is not in `TURN_TAKING` and no rule emits
+it. The `agent_spawn` tool result already told the model what it started, and a second telling is
+noise in the one place noise is most expensive.
+
+**What it has out is stated once per step, rather than left to be asked for.** `agent-spawned`
+renders as nothing and an ending has not arrived yet, so between the two the parent held no standing
+statement that six children were still running — and an agent without one builds it by polling
+`agent_list`. Observed, with six audits out: it announced that it would stop polling and let the
+agents wake it four times, each announcement in the same step as another `agent_list` call, because
+a step carrying any tool call continues the loop and only a text-only step ends the turn. So
+`runningAgentsBlock` appends a tail reminder naming the running children — the sibling of
+`runningShellsBlock`, sharing `appendedAtTail` with it — and it states the mechanism rather than only
+forbidding the poll: ending the turn *is* the wait, because an ending that lands while nothing is
+running opens the turn that delivers it.
+
+**The roster carries nothing that moves.** agentId, type and intent, and no turn count, no tool-call
+count, no last tool; `agent_list` drops those same counters for a child that is still running and
+keeps them for one that has ended, where the count is part of the report. So two looks at a working
+child return identical bytes. That is the point: a status line that changes on every read is a
+status line that earns another read, which is the loop the reminder exists to end.
+
+### Two lineage axes, deliberately not one
+
+`parentThreadId` / `forkSeq` / `forkMode` record a **fork**. `spawnerThreadId` / `agentType` record
+**supervision**. They are different relations with different meanings and they are stored as
+different columns with different self-relations (`ThreadFork` and `ThreadSupervision`, both
+`onDelete: Restrict`).
+
+Overloading one column for both was the tempting version and it is wrong in both directions. A
+spawned child is not a fork: it inherits no rows, so `inheritedPrefixOf` must not walk to it — and
+it does not, because it terminates on anything but `forkMode === EForkMode.Reference`. And a fork
+is not a delegation: `/resume` lists the conversations the operator started, so `threads-model`
+hides any thread carrying an `agent` while showing every fork, which one overloaded column could
+not express. `ThreadStorePort.fork` accordingly nulls the agent fields on the thread it returns — a
+fork of a child is a conversation, not a second child.
+
+### Agent types
+
+An agent type is a name, the `whenToUse` prose that teaches `agent_spawn` when to choose it, the
+system prompt the child runs under, and optional `tools` / `disallowedTools` / `model` /
+`maxEffect` narrowings. Four ship embedded — `general-purpose`, `explore`, `builder`, `reviewer` —
+and `agent_spawn`'s description is generated from the registered set rather than written, because a
+type the model cannot see is a type that does not exist.
+
+Discovery is the shape `harness/src/skills/` already uses, sharing `splitFrontmatter` and
+`resolveShadowing` with it: embedded built-ins, then `~/.atlas/agents/*.md`, then
+`<project>/.atlas/agents/*.md`, project over user over built-in on a name collision.
+
+**A definition that will not load is refused, not dropped.** A malformed file must not stop Atlas
+booting, but silence is the wrong other extreme: the operator writes an agent type, it never
+appears, and nothing anywhere says why. So `parseAgentType` returns an `EAgentTypeRefusal` —
+empty, bad name, no description, no prompt, bad `max-effect`, unusable model, unreadable — and
+`AgentTypeSource.load` returns `{ types, refusals }` rather than a bare list. `AgentTypeCatalog`
+also reports what was `shadowed`, because a project type silently overriding a user type is the
+other way to be confused about which prose is running. A *missing* directory stays silent, since
+not having written any agent types is not a mistake; an unreadable one is a refusal.
+
+**`model:` is honoured and validated**, which reverses an earlier deferral. The reasoning that
+deferred it — `modelIsReachable` hard-codes Anthropic, so pinning is pointless — confused two
+things: `compose.ts` already pins the titler and the summariser, so pinning works and the
+constraint is only which vendor answers. A pin that cannot resolve takes the whole agent type as a
+refusal, the same as a bad `max-effect`, rather than silently falling back to the parent's model.
+
+`loadAgentTypes` maps `withoutSelfSpawn` over the result, which strips `agent_spawn` from a type's
+allow-list and unions it into the deny-list. That is belt to `withoutAgentTools`' braces: the
+resolver refuses it so no definition can grant it, and the child's registry refuses it so no
+resolver bug can leak it.
+
+### The supervisor
+
+`AgentRegistryPort` mirrors `ShellRegistryPort` member for member, so the TUI's wake path, notice
+draining and exit guard understood it before it existed. Five facts about the implementation are
+worth knowing because they are decisions rather than mechanics:
+
+**A step is never awaited.** `spawn`, `say` and `resume` return the moment the child exists or the
+step is scheduled; `ChildSteps` tracks the promise only so it cannot reject unobserved. `spawn`
+awaits exactly one thing — the child's thread and its seeded brief — because the id it returns must
+be real.
+
+**Every read is scoped to the spawner**, exactly as a shell is scoped to its owner. A thread cannot
+see, steer or stop a child it did not spawn, and an ending routes to the owning thread's log rather
+than to whichever turn drains first.
+
+**Steering is a mailbox, not an interrupt.** `agent_say` to a running child pushes onto that
+child's queue and returns; the child's own `drainPending` splices the queue into `user-said` drafts
+at the top of its next loop pass, which is already a tool-round boundary. To a *stopped* child it
+appends `user-said` and starts a turn. The operator typing into an open child takes the identical
+path, which is what makes "a child is just a thread" true rather than aspirational.
+
+**Ordering at spawn is the invariant, and the transaction covers the child but not the parent.**
+`createWithFirstEvents` writes the thread row and the brief together, so a child never exists
+without its own first `user-said` — without it `awaitsReply` reads the child as nobody's turn and
+its first `runTurn` returns `Idle` without a model call. The parent's `agent-spawned` is a separate
+append, on purpose; why the transaction stops where it does is under attribution below.
+
+**Recovery is lazy and read-triggered, not a boot pass.** `list()` hydrates a thread's roster from
+its own log the first time anyone asks, because hydrating at construction would make a container
+resolve block on the database. `agentRoster` rewrites exactly one status on the way through:
+`Running` becomes `Stopped`, because `Running` is a claim about a process that no longer exists.
+`Blocked` survives recovery unchanged, and the asymmetry is the point — the approval a blocked child
+is waiting on is a row in the child's own log, and it is still there after a restart.
+
+**There is no cap on how many children may be stepping at once.** A spawned child starts
+immediately however many are already running, which is parity with background shells — Atlas caps
+nothing else, and a queue is a second piece of state to reason about at exactly the moment the
+operator wants to know why nothing is happening. The counter-argument was the measured one:
+`bun:sqlite` appends are synchronous and block the render thread, so a wide enough fan-out can stall
+the UI. That risk is accepted rather than denied, and the mitigation if it bites is the event-log
+read path, not a pool.
+
+### The five tools
+
+`agent_spawn` starts one child or a whole wave and returns ids at once, never blocking; it declares
+itself concurrency-safe, so a model that emits five spawn calls in one step genuinely fans out
+through `Promise.all`. `agent_say` steers. `agent_resume` re-runs a child that died on a provider
+error, appending nothing. `agent_list` reports the caller's own children. `agent_stop` aborts one,
+which still delivers an ending. A child gets none of the five.
+
+**`agent_stop` reports two different facts under two different names, and they must not be
+unified.** A child still stepping returns `stopRequestedBy` — a request whose outcome is
+undetermined, because the abort lands after the current step. A child already settled returns
+`killedBy` — a recorded outcome. `attributedStop` is what gates the second on the child having
+actually settled. They can legitimately **disagree**, and that disagreement is the feature: it is
+how a model learns the operator stopped an agent before it got there. Collapsing them into one
+field reads like a tidy-up and destroys the only signal that distinguishes "I asked" from "it
+happened, and not because of me".
+
+### Who stopped it, and how the parent finds out
+
+**A model reading "was stopped" with no attribution assumes it stopped the child itself**, or that
+something failed, and re-spawns it to finish the job — which is exactly the wrong response to a
+human pressing stop. Shells solved this first and the vocabulary is shared rather than duplicated:
+`EKilledBy` carries `User | Model | SessionEnd | Unrecorded`, and both `shellEnding` and
+`agentEnding` phrase every case.
+
+The chain runs end to end. `ctrl+k` while reading a child stops it as `EKilledBy.User`, `agent_stop`
+passes `Model`, teardown stamps `SessionEnd` on anything still stepping. The supervisor records it
+on the child, `agent-ended` carries it, and `attributedStop` drops it on any status but `Stopped`,
+so a child that failed or finished is never described as stopped by anyone. `agentEndingsBlock`
+then adds the sentence the status cannot carry: that the user stopped this one deliberately,
+nothing went wrong, and not to re-spawn it unless asked.
+
+**`Unrecorded` is the fourth member and it is named for what is provable.** Not `Crash`, not
+`ProcessLoss` — Atlas does not observe a process dying, it observes that no ending was ever
+written. It reads as *"was lost before anything recorded how it ended"*: never the word "stopped",
+never an actor, because inventing either would be the same lie in the other direction. The status
+stays `Stopped`, and the advice note tells the parent the work may be half-applied and to check
+before redoing it. The name generalises to any reconstructed ending, not only a crash.
+
+**Reconstruction is explicit, awaited, and separate from reading.** `ChildRecovery` splits the two:
+read-only roster rebuilding stays lazy behind `hydrate`, while `recordLostAgents` — which *writes*
+the missing `agent-ended` — is called once per conversation from `openConversation`, never from a
+render or a `getSnapshot`. Nothing auto-resumes a recovered child. That is the operator's call,
+because one that died mid-`bash` may have left the tree changed.
+
+**A settled loss needs no second surface, and did not get one.** `settleLostChildren` writes a real
+`agent-ended` carrying `Unrecorded`, `openConversation` does that *before* reading events, and the
+transcript renders it like any other ending — so reopening a conversation already says a sub-agent
+"was lost before anything recorded how it ended, after N turns and M tool calls". A notice would
+have carried less than that row does and would not have persisted in scrollback.
+
+**The unlogged case is different, and gets a veil panel on open.** A child thread that exists in
+the store while the parent's log holds no `agent-spawned` cannot be rendered as a transcript row,
+because the conversation holds no record to render. So `unloggedChildren` names and times them in
+a report-only panel with no affordance — deliberately no affordance, since `agent_say` and
+`agent_resume` would both answer `unknownAgent` for a child the parent never recorded.
+
+**Healing one by forging the missing row was considered and rejected.** `@@unique([threadId, seq])`
+means a reconstructed `agent-spawned` can only land at `head + 1`, and `rewindTarget` refuses on
+`spawn.seq > toSeq` — so a spawn forged at the head would make the thread **permanently
+un-rewindable**. Fabricating history to paper over a gap in history costs more than the gap. Store-only
+orphans are therefore reported, never invented.
+
+**The window that produces them is a live trade, not residue.**
+`ThreadStorePort.createWithFirstEvents` makes the thread row and its opening events atomic, so a
+child never exists without its brief — but the parent's `agent-spawned` is deliberately left
+outside that transaction, and it stays outside. `retryOnWriteConflict` re-runs the closure on
+`SQLITE_BUSY`, so a transaction widened across both threads would lose the race against the
+parent's live turn: retrying forever against a `P2002` it cannot clear, or minting a fresh child on
+every attempt. Widening it would convert a crash-sized window into a contention-sized one, which is
+the worse of the two. This is a standing decision to re-argue on its merits, not a gap someone
+forgot to close.
+
+### Not built yet, and the shape each will take
+
+**A child's approval has nowhere to go.** No hook returns `Ask` today, so nothing is broken in
+practice, but the design is settled and worth recording where the approval effort will find it: a
+child's request routes to the **parent agent**, as something the parent answers with a tool call,
+and never to a human overlay. There is no human in a child's loop.
+
+`EAgentStatus.Blocked` is the visible edge of that decision rather than a cosmetic status.
+`ETurnStatus.Paused` used to map to `Stopped`, which told the parent "was stopped after N turns" —
+the same sentence a deliberate stop produces, and the same wrong inference the attribution work
+above exists to prevent. It maps to `Blocked` now, and `agentEnding` renders it as blocked on an
+approval it cannot answer. The sidebar shows it as `blocked` with the amber attention glyph and
+deliberately not with `APPROVAL_MARK`: `?` is the vocabulary for approvals the *operator* answers,
+so spending it on a child would build exactly the second human-facing approval surface this
+decision forbids.
+
+What is still missing: the ending carries no `callId`, and `agent_resume` on a blocked child
+re-enters the turn and pauses again immediately. Resuming must answer the approval rather than
+retry it, which belongs with the approval effort.
+
+**A message's origin is written but never read.** `user-said` carries an optional
+`via: EMessageOrigin`, resolved through the single `saidBy` reader that defaults it to `Operator`,
+and the spawn brief and every `agent_say` stamp `ParentAgent`. Nothing in production consults it
+yet — it is groundwork for the sub-agent prompt and a transcript label, not a behaviour change.
+Two members and not three: the brief is the parent's voice like any other steer, and its separate
+role as the standing objective is an axis already carried by its position at the head of the log.
+
+**Delegated spend is one conversation-level line, not a per-turn column.** A child's turns carry no
+parent `runId`, so attaching their cost to whichever parent turn happened to be open would be an
+invented attribution — and one that double-counts as soon as two children overlap. So
+`forThreadTree` surfaces at the foot of the transcript, for the conversation as a whole.
+
+**It is a tri-state rather than a number.** `ESpendReading` is `Counted` with totals or
+`Unavailable`, and a failed read renders "could not be totalled" rather than zero, because zero is
+a claim and it is the wrong one — it reads as "the sub-agents were free". `readThreadSpend` falls
+back to `forThread` so the conversation still opens carrying its own turns, and raises a warn
+notice naming the cause. `SupervisionTreeTooDeep` is unreachable while depth is capped at one; the
+catch exists so that the day the cap moves, the failure is a missing cost line rather than a
+conversation that will not open. The catch is insurance, not evidence that the throw is routine.
 
 ## Compaction
 
@@ -270,12 +616,21 @@ decided by one question: does it destroy the rows it compacts?
 
 **One thread, one log.** The log *is* the thread, so every operation that adjusts context acts on the
 current log rather than producing a second conversation. Rewind truncates it. Compaction replaces a range of it with a summary.
-A sub-agent may inherit its parent's prefix **by reference**, which is safe precisely because that child
-is read-only over the inherited rows and its depth is bounded by agent nesting rather than by how many
-times a human pressed undo. **Inheritance is the spawning agent's decision, not a property of sub-agents**
-— a sub-agent sent to read one file wants an empty log, while one continuing the parent's line of work
-wants the context already in it, and only the caller knows which. So the mode is an argument at the spawn
-site, and `EForkMode` is the vocabulary for it.
+A sub-agent may one day inherit its parent's prefix **by reference**, which would be safe precisely
+because that child is read-only over the inherited rows and its depth is bounded by agent nesting
+rather than by how many times a human pressed undo. **Inheritance would be the spawning agent's
+decision, not a property of sub-agents** — a sub-agent sent to read one file wants an empty log,
+while one continuing the parent's line of work wants the context already in it, and only the caller
+knows which. `EForkMode` is the vocabulary for it and the substrate is built.
+
+**None of that is reachable today.** `EAgentStart` ships one member, `Fresh`, and every child starts
+with an empty log holding only its brief. The reason is not caution about the invariants below —
+it is that the spawn site cannot fork at all: a child forked from inside `agent_spawn`'s own tool
+call is refused by `forkTarget`'s `UnsettledToolCall` guard, and bypassing that guard puts the
+parent's dangling `tool_use` in the child's assembled prefix, where `exchangeFaults` fails the turn
+before the model is called. Choosing a fork seq *before* the call does not help, because a parallel
+batch leaves siblings unsettled at any seq. Reference forking is therefore its own effort, and it
+needs an assembly answer first rather than a store one.
 
 **Forking is the only operation that copies**, because it is the only one whose output is a second
 conversation the user can reach and keep. Copying anywhere else buys storage nobody can navigate to:
@@ -286,32 +641,41 @@ one transaction, which is the same reason `rewind` lives there. `EventLogPort.fo
 threw — is gone, and `readOwn` takes its place beside `read`: `read` returns the composed view a reference
 fork implies, `readOwn` returns only the rows the thread itself holds.
 
-**A reference fork is not safe to hand a sub-agent yet, and this is the list.** The substrate works and
-is tested, but two invariants the rest of the harness relies on stop holding the moment a child inherits
-rows it does not own: `seq` no longer starts at 1, and `read({ threadId })` can return events whose
-`threadId` is a different thread. An audit of every consumer found these, and the first two are the ones
-that corrupt rather than merely mislead:
+**Six invariants stop holding the moment a child inherits rows it does not own**, because two things
+that were true everywhere stop being true: `seq` no longer starts at 1, and `read({ threadId })` can
+return events whose `threadId` is a different thread. An audit of every consumer found these. Five are
+now closed — four of them by the fresh-only sub-agent work, which needed the same guarantees for a
+different reason — and the list is kept because it is the acceptance criteria reference forking will
+be held to:
 
-1. **The loop must read `readOwn` for control flow.** `pendingCalls` and `outstandingApproval` over a
-   composed read see the *parent's* state. A sub-agent is forked from inside a tool call, so the spawning
-   `tool-called` is unsettled at the fork point by construction: the child either pauses forever awaiting a
-   tool it never called, or re-dispatches the spawning tool and forks again, bounded only by the 8-hop cap.
-   Choosing a fork seq before the call does not help — a parallel batch leaves siblings unsettled at any
-   seq. An inherited unanswered approval wedges the child the same way, because the answer can only be
-   written on the parent above the fork point, where the child can never see it.
-2. **A child must be seeded with its own `user-said` in the fork transaction.** `awaitsReply` reads the
-   last turn-taking event of the composed list, so a child forked after the parent's `assistant-said`
-   returns `Idle` without taking a single model step.
-3. **Rewinding a parent below a live child's fork point punches a hole in that child.** Nothing refuses it
-   and nothing queries `@@index([parentThreadId])`. Either refuse the rewind or materialise the child's
-   prefix first.
-4. **`Thread.parentThreadId` is a bare column with no self-relation.** There is no thread-delete path
-   today; when one lands, a cascade would strip the parent's rows and the child would silently read as
-   though it never had a parent. `onDelete: Restrict` costs nothing while there is no data.
-5. **The TUI's fake event log cannot represent a fork**, so no composition test can catch any of this — it
-   derives `seq` from array length and returns one thread's own rows.
-6. Cosmetics, worth knowing: an untitled child's sidebar title, turn count and live tool calls all describe
-   the parent, because `deriveSidebar` reads the composed list.
+1. **Closed. The loop reads `readOwn` for control flow.** `pendingCalls`, `outstandingApproval` and
+   `awaitsReply` all read `rowsOwnedBy` rather than the composed list. Over a composed read they saw the
+   *parent's* state, and a child forked from inside a tool call inherits an unsettled `tool-called` by
+   construction: it would either pause forever awaiting a tool it never called, or re-dispatch the
+   spawning tool and fork again. An inherited unanswered approval wedges a child the same way, because
+   the answer can only be written on the parent above the fork point, where the child can never see it.
+2. **Closed. A child is seeded with its own `user-said` in the same transaction that creates it.**
+   `createWithFirstEvents` writes the thread row and the brief atomically, and only then does
+   `openChildThread` append `agent-spawned` to the parent; without the brief, `awaitsReply` reads the
+   child as nobody's turn and its first `runTurn` returns `Idle`. The parent's row is outside the
+   transaction deliberately, which leaves one narrow window: a crash between the two makes a child the
+   parent's log never mentions. That is reported, never fabricated — see the sub-agent section.
+3. **Closed. `ERewindRefusal.UnendedSubAgent` refuses a rewind that would cut below a live child.**
+   `unendedSpawns` finds any `agent-spawned` above the target with no `agent-ended` behind it, and the
+   refusal names the child. An **ended** child does not block: its rows are a finished record, and
+   refusing there would make every thread that ever delegated un-rewindable below its first delegation.
+   The residue is the crash case named under sub-agents — an orphaned spawn is unended forever.
+4. **Closed. Both self-relations are declared `onDelete: Restrict`.** `ThreadFork` on `parentThreadId`
+   and `ThreadSupervision` on `spawnerThreadId`. There is still no thread-delete path; when one lands, a
+   cascade would have stripped the parent's rows and left the child silently reading as though it never
+   had a parent.
+5. **Closed. The TUI's fake event log holds many threads.** It keeps rows and heads per thread, reserves
+   sequences per thread, and implements `readOwn`, so a composition test can drive a parent and a child
+   at once. It previously derived `seq` from array length and returned one thread's rows, which meant no
+   composition test could express a sub-agent at all.
+6. **Open, and moot until a child inherits.** An untitled child's sidebar title, turn count and live tool
+   calls would all describe the parent, because `deriveSidebar` reads the composed list. A fresh child
+   owns every row it holds, so there is nothing to confuse today.
 
 Rewind is already guarded: `rewindTarget` takes a `floorSeq` and refuses `BelowInheritedPrefix`, which
 `rewindThread` derives from the thread's own first sequence — not from `forkSeq`, because a **copy** fork
@@ -403,38 +767,49 @@ Snapshots cannot undo non-filesystem effects, so tool dispatch takes
 
 There are two directories, and they answer different questions.
 
-The **project directory** is fixed for the life of the process. It anchors `.atlas/settings.json`,
-project skills, the instruction-file descent, and — the load-bearing part — every relative path a
-tool is given. The **session directory** is where a bash command starts, and `cd` moves it.
+The **launch directory** is fixed for the life of the process: it is what `--cwd` named, and it is
+the only one held in the container, as `WorkspaceRoot`. The **project directory** is where the
+session is working — the launch directory, or the worktree it has entered. It is the single anchor:
+it anchors `.atlas/settings.json`, project skills, the instruction-file descent, every relative path
+a tool is given, and the directory every bash command starts in.
 
-Tool paths resolve against the *project* directory, not the session directory. This is a deliberate
-departure from Claude Code, which resolves them against the session cwd. Rewind is the reason: a path
-resolved against a cursor the conversation can move means a different file when the same log replays
-from a different point, and the log is supposed to be the one record. `ResolveProjectPathsHook` makes
-every declared `EPathForm.Absolute` field absolute at `EStage.Guard, nudge -1` — before anything
-downstream keys on a path, so read-before-write cannot see the same file under two spellings.
+There is deliberately no second, movable directory. A shell that can `cd` its way somewhere the file
+tools do not follow gives the model two roots to keep straight, and the only way to make that
+survivable is to keep telling it which is which. opencode and pi both refuse the split — one
+anchor, and the shell is told where to run rather than allowed to wander. Atlas follows them.
+Claude Code takes the other branch, letting one cwd move and paying for it in validation: seven
+read-back rejections, forced approval for compound `cd`, per-subagent cwd pinning.
 
-The session directory is not held anywhere. It is `sessionDirectoryOf(events)` — the last
-`cwd-changed` in the log, or the project directory when there is none. That places it in the
-Conversation row, which is the only reason rewind, fork and resume agree about it without a second
-record to keep in step. A mutable holder in the container would have been the checkpointer the two
-rules exist to refuse.
+`bash` therefore takes a **`workdir`** parameter instead of tracking `cd`. It is a declared
+`EPathForm.Absolute` path field, so `ResolveProjectPathsHook` resolves it against the project
+directory like every other path, and a command runs where it is told without anything being
+remembered afterwards. A `cd` inside a command still works, and still moves only the process that
+ran it — which ends with the call.
+
+The project directory is not held anywhere: it is
+`projectDirectoryOf({ events, launchDirectory })`, the path of the last unclosed `worktree-entered`
+in the log. That fold sits in the Conversation row so that rewind, fork and resume agree about it
+without a second record to keep in step; a mutable holder in the container would have been the
+checkpointer the two rules exist to refuse. `enter_worktree` moves it the only way anything moves
+here — tool output an `AfterTool` hook turns into an event, never a setter.
+
+Resolving tool paths against the project directory is also what makes rewind honest. A path resolved
+against a cursor the conversation can move means a different file when the same log replays from a
+different point, and the log is supposed to be the one record. `ResolveProjectPathsHook` makes every
+declared `EPathForm.Absolute` field absolute at `EStage.Guard, nudge -1` — before anything downstream
+keys on a path, so read-before-write cannot see the same file under two spellings.
 
 Shells are spawned fresh per call, so nothing in the process survives it — an exported variable, a
-shell function, a background job. The directory survives because the harness tracks it out of band:
-the tool spawns into the session directory, recovers `pwd -P` through a probe file, and reports the
-move as tool output that an `AfterTool` hook turns into the event. A command that calls `exit`, or
-dies under `set -e`, never reaches the probe, and the session simply stays where it was.
+shell function, a background job, a `cd`. Nothing is tracked out of band to make the directory an
+exception.
 
-Both sides of the comparison go through `realpath`, for the reason path handling always does here:
-`/var` and `/private/var` name one directory, and a string compare reports a move on every command
-run under a temporary directory.
-
-**The prompt is split along a static/live seam.** The system prompt names only the project directory,
-because `cacheBreakpoints` puts a 1h breakpoint on the last system block and a directory that changed
-inside it would cold-start the whole prefix on every `cd`. The live session directory rides the
-Conversation instead: `sessionDirectoryBlock` appends a reminder at the *tail* of the messages, where
-invalidation is cheap, and only while the session sits somewhere other than the project directory.
+**The prompt names one directory.** `cacheBreakpoints` puts a 1h breakpoint on the last system block,
+and a directory that changed inside it would cold-start the whole prefix; with nothing moving between
+calls there is nothing to invalidate it. Entering a worktree does cold-start that prefix, and is
+allowed to: `systemPrompt` folds the log and hands the compiled prompt the effective project
+directory, so the system block follows the move — one cache miss, paid once, for a deliberate act
+that reshapes the whole session. `worktreeBlock` rides the message tail for what is genuinely live
+about a worktree — the branch, and the checkout it was cut from.
 
 It is a rule over the log rather than a `context-loaded` event on purpose. An event renders at its own
 seq, so a move at seq 13 of a 133-event thread scrolls away and the model is left inferring its own
@@ -519,6 +894,23 @@ hangs must still be abandonable.
 `ui/startup-model.ts` owns the choreography as pure data — ink, hold, lift, gone — so the timing is
 tested without a terminal, and `Startup` only draws whatever frame it is handed.
 
+**The curtain lifts onto a conversation that does not exist yet.** A launch with no `--resume` and
+no `--continue` gets an `unstartedConversation`: a `ThreadId` handed out by `IdPort` and nothing
+written. `openConversation` no longer calls `threads.create`, and neither does `/new`. The first
+drafts open the thread and land in the same transaction, through
+`ThreadStorePort.createWithFirstEvents` carrying the id already in play — the same primitive a
+sub-agent's thread is opened with. So a session someone opened, looked at and closed leaves nothing
+behind, and `/resume` lists conversations rather than the empty rooms of every launch since.
+
+That makes the welcome screen a state rather than a block in an empty transcript. `ui/welcome-state.ts`
+decides it from what is on screen — nothing said, nothing streaming, no failure, not addressing a
+child — because a resumed thread rewound to zero is as unstarted to look at as one never written.
+While it holds, the sidebar is not merely empty but absent, the transcript is not mounted, and the
+wordmark and composer are centred with the whole terminal to themselves, picking up where the boot
+curtain's own centred wordmark left off. The title of a conversation is asked for the moment the
+first message is sent but written only once the thread that carries it exists, since that thread is
+opened by the very turn the title was taken from.
+
 ## Credentials and accounts
 
 Atlas holds **accounts**, not a credential. One per login, several per provider, each with a status
@@ -587,6 +979,8 @@ dependency rule: `core` has no I/O, `harness` is importable without a terminal. 
 packages/core/src/
   events/        Event union, EventDraft, envelope, branded ids
   events/        projections: pendingCalls, outstandingApproval, answeredApproval
+  agents/        EAgentStatus, EAgentStart, the ending's prose, the roster fold
+  prompt/        EPromptAgent — the main/sub axis the fragment registry selects on
   assembly/      Assembled, Rule, Annotator, RuleContext, assemble, trace, AssemblyPipeline
   assembly/      exchange-shape: the faults a provider would reject, reported not thrown
   assembly/rules/        content policy — compacted history, thinking tail, loaded context, images
@@ -609,8 +1003,11 @@ packages/harness/src/
   credentials/   the account vault, the refreshing CredentialPort, OAuth clients, and the
                  sources a login can be imported from and written back to
   files/         what the model has seen of each file on disk, for the read-before-write guard
-  store/         Prisma event log, thread heads, workspace snapshots
+  store/         Prisma event log, thread heads, workspace snapshots; migrations read from
+                 prisma/ at dev time, generated manifest for --compile
   tools/         registry, dispatcher, builtin tools
+  agents/types/     the agent-type definition, frontmatter parsing, built-ins, directory sources
+  agents/registry/  AgentRegistryPort, the supervisor, the roster, notices, the child runner
   shells/        background shell registry, process-group lifecycle, delta output buffers
   hooks/         hook implementations — claude-md injection, read-before-write,
                  file-state recording, approval policy
@@ -644,8 +1041,10 @@ Max 300 lines per file. Tests in a sibling `__tests__/` as `*.spec.ts`.
 | Model layer | AI SDK, `streamText` one step, as normalization only |
 | Provider interface | `LanguageModelV4` |
 | Context operations | Ours, model-agnostic |
+| Sub-agents | A spawned thread, not a recursive call. Depth capped at one by the child's tool registry |
 | DI | **tsyringe.** Class tokens, `@injectAll` for the hook and tool sets — see `.scratch/tsyringe-di/spec.md` |
 | Hook discovery | Glob at dev time, generated manifest for `--compile` |
+| Migrations | Read from `prisma/migrations` at dev time, generated manifest for `--compile`; an empty set is a startup failure |
 | Packages | `core`, `harness`, `apps/tui` — raw TS source, no build step |
 | Runtime | Bun — runtime, package manager and test runner |
 | Task runner | **Turborepo.** `turbo run typecheck \| test \| build`; per-package scripts stay `tsc` / `bun test` |
@@ -721,7 +1120,7 @@ has no async provider. The graph has exactly one await — `openAtlasDatabase` i
 
 ## Deferred, deliberately
 
-Phases and phase briefs, thread delegation, session rotation across accounts, MCP server lifecycle,
+Phases and phase briefs, reference-forked sub-agents, session rotation across accounts, MCP server lifecycle,
 skills precedence against `CLAUDE.md`, container/sandbox isolation, PR shipping. Each is an assembly
 rule, a hook, or a port implementation — none requires reopening a decision above.
 

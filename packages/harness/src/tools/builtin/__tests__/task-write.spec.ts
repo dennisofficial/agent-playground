@@ -13,7 +13,7 @@ const write = async (input: unknown) =>
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'plan-1',
-    sessionDirectory: SESSION_DIRECTORY,
+    projectDirectory: SESSION_DIRECTORY,
     threadId: toThreadId('thread-1'),
   })
 

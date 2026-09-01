@@ -97,7 +97,7 @@ const overwriting = (path: string, threadId?: ThreadId): ToolCall =>
   })
 
 const decisionOf = async (call: ToolCall): Promise<EBeforeToolDecision> =>
-  (await gate().run({ call })).decision
+  (await gate().run({ call, projectDirectory: '/w' })).decision
 
 const readTool = new ReadTool()
 
@@ -113,7 +113,7 @@ const havingRead = async (
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'wiring-read',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId,
   })
   if (!result.ok) throw new Error(result.reason)
@@ -134,7 +134,7 @@ const havingSearched = async (
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'wiring-grep',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId,
   })
   if (!result.ok) throw new Error(result.reason)
@@ -155,7 +155,7 @@ const havingWritten = async (
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'wiring-write',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId,
   })
   if (!result.ok) throw new Error(result.reason)
@@ -271,7 +271,7 @@ describe('the file-state hooks resolved from one container', () => {
 
     expect(await decisionOf(overwriting(path, child))).toBe(EBeforeToolDecision.Allow)
 
-    const outcome = await gate().run({ call: overwriting(path, parent) })
+    const outcome = await gate().run({ call: overwriting(path, parent), projectDirectory: '/w' })
     expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
     expect('reason' in outcome ? outcome.reason : '').toContain('read it again')
   })
@@ -303,7 +303,7 @@ describe('the file-state hooks resolved from one container', () => {
       input: { path, content: 'too late\n' },
       signal: new AbortController().signal,
       idempotencyKey: 'container-guard',
-      sessionDirectory: root,
+      projectDirectory: root,
       threadId: parent,
     })
 

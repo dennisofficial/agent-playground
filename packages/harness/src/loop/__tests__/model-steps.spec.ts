@@ -75,7 +75,7 @@ async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }), recordStep], annotators: defaultAnnotators() },
+      assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }), recordStep], annotators: defaultAnnotators() },
       tools: registry.declarations(),
       dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     }),
@@ -136,7 +136,7 @@ describe('the shape of the prompt the loop is about to send', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }), speakOutOfTurn], annotators: defaultAnnotators() },
+      assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }), speakOutOfTurn], annotators: defaultAnnotators() },
     })
     const thread = await harness.threads.create({})
 
@@ -216,7 +216,7 @@ describe('a dispatch that settles nothing', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       dispatch: {
         dispatch: async () => {

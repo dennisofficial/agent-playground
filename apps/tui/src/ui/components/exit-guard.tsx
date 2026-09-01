@@ -28,8 +28,6 @@ export const HEADING = 'Background work is running'
 
 export const SUBTITLE = 'The following will stop when you exit:'
 
-const SHELL_TAG = 'shell'
-
 const TAG_SEPARATOR = ' · '
 
 const GUTTER = ' '.repeat(GUTTER_CELLS)
@@ -57,7 +55,7 @@ function Line(props: {
 
 const Gap = (): React.ReactNode => <box height={1} flexShrink={0} />
 
-function Shells(props: { running: readonly ExitGuardRow[]; cells: number }): React.ReactNode {
+function Running(props: { running: readonly ExitGuardRow[]; cells: number }): React.ReactNode {
   if (props.running.length === 0) return null
 
   return (
@@ -65,8 +63,8 @@ function Shells(props: { running: readonly ExitGuardRow[]; cells: number }): Rea
       <Gap />
       {props.running.map((row) => (
         <Line
-          key={row.shellId}
-          spans={shellSpans({ row, cells: props.cells })}
+          key={row.id}
+          spans={runningSpans({ row, cells: props.cells })}
           cells={props.cells}
         />
       ))}
@@ -74,9 +72,9 @@ function Shells(props: { running: readonly ExitGuardRow[]; cells: number }): Rea
   )
 }
 
-function shellSpans(args: { row: ExitGuardRow; cells: number }): Span[] {
+function runningSpans(args: { row: ExitGuardRow; cells: number }): Span[] {
   const tag: Span[] = [
-    { text: SHELL_TAG, fg: theme.meta },
+    { text: args.row.tag, fg: theme.meta },
     { text: TAG_SEPARATOR, fg: theme.rule },
   ]
 
@@ -149,7 +147,7 @@ export function ExitGuard(props: {
     >
       <Line spans={[{ text: HEADING, fg: theme.accent }]} cells={cells} />
       <Line spans={[{ text: SUBTITLE, fg: theme.hint }]} cells={cells} />
-      <Shells running={props.running} cells={cells} />
+      <Running running={props.running} cells={cells} />
       <Gap />
       {EXIT_GUARD_OPTIONS.map((option, index) => (
         <Line

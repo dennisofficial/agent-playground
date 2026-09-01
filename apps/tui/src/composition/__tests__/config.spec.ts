@@ -100,6 +100,52 @@ describe('the launch configuration', () => {
     expect(resolve({}).cwd).toBe('/work')
   })
 
+  it('works in the directory named on the command line, so a source launch can open another project', () => {
+    expect(resolve({ argv: ['--cwd', '/Users/ada/dev/comp'] }).cwd).toBe('/Users/ada/dev/comp')
+  })
+
+  it('reads a relative directory against the directory it was launched from', () => {
+    expect(resolve({ argv: ['--cwd', '../comp'] }).cwd).toBe('/comp')
+    expect(resolve({ argv: ['--cwd', '.'] }).cwd).toBe('/work')
+  })
+
+  it('expands a leading ~ itself, because a quoted argument reaches it unexpanded', () => {
+    expect(resolve({ argv: ['--cwd', '~/dev/comp'], env: { HOME: '/Users/ada' } }).cwd).toBe(
+      '/Users/ada/dev/comp',
+    )
+    expect(resolve({ argv: ['--cwd', '~'], env: { HOME: '/Users/ada' } }).cwd).toBe('/Users/ada')
+  })
+
+  it('drops a trailing separator, because the workspace root anchors path comparisons', () => {
+    expect(resolve({ argv: ['--cwd', '/Users/ada/dev/comp/'] }).cwd).toBe('/Users/ada/dev/comp')
+  })
+
+  it('stays where it was launched when --cwd names no directory', () => {
+    expect(resolve({ argv: ['--cwd'] }).cwd).toBe('/work')
+    expect(resolve({ argv: ['--cwd', '--continue'] }).cwd).toBe('/work')
+  })
+
+  it('lets every child inherit the parent model unless a subagent model is named', () => {
+    expect(resolve({}).subagentModelId).toBeUndefined()
+    expect(resolve({ env: { ATLAS_SUBAGENT_MODEL: '' } }).subagentModelId).toBeUndefined()
+  })
+
+  it('takes the model every child runs on from the environment', () => {
+    expect(resolve({ env: { ATLAS_SUBAGENT_MODEL: 'claude-haiku-4-5' } }).subagentModelId).toBe(
+      'claude-haiku-4-5',
+    )
+  })
+
+  it('keeps the subagent model apart from the model the parent runs on', () => {
+    const config = resolve({
+      argv: ['--model', 'claude-opus-5'],
+      env: { ATLAS_SUBAGENT_MODEL: 'claude-haiku-4-5' },
+    })
+
+    expect(config.modelId).toBe('claude-opus-5')
+    expect(config.subagentModelId).toBe('claude-haiku-4-5')
+  })
+
   it('leaves the keychain service to the backend unless one is named', () => {
     expect(resolve({}).keychainService).toBeUndefined()
     expect(resolve({ env: { ATLAS_KEYCHAIN_SERVICE: 'Atlas-test' } }).keychainService).toBe(

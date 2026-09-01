@@ -139,7 +139,9 @@ export function Composer(props: {
   maxRows?: number
   focused?: boolean
   title?: string
+  titleFg?: string
   highlights?: readonly HighlightSpan[]
+  onCursorMoved?: (() => void) | undefined
 }): React.ReactNode {
   const tone = props.tone ?? EComposerTone.Idle
   const edge = composerEdge()
@@ -209,6 +211,13 @@ export function Composer(props: {
     }
   }, [drafted, editor, highlightKey])
 
+  const handleCursorMoved = props.onCursorMoved
+
+  const handleCursorChange = useCallback(() => {
+    measure()
+    handleCursorMoved?.()
+  }, [handleCursorMoved, measure])
+
   const handleChange = useCallback(() => {
     const target = editor.current
     if (!target) return
@@ -239,7 +248,7 @@ export function Composer(props: {
       {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
       placeholderColor={theme.hint}
       onContentChange={handleChange}
-      onCursorChange={measure}
+      onCursorChange={handleCursorChange}
     />
   )
 
@@ -264,7 +273,11 @@ export function Composer(props: {
           : { badge: <text fg={theme.hint} bg={theme.appBg}>{` ${badge} `}</text> })}
         {...(title === null
           ? {}
-          : { title: <text fg={theme.caretFg} bg={railColour(tone)}>{` ${title} `}</text> })}
+          : {
+              title: (
+                <text fg={props.titleFg ?? theme.caretFg} bg={railColour(tone)}>{` ${title} `}</text>
+              ),
+            })}
       >
         {draft}
       </Frame>

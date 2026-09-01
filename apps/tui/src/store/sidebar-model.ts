@@ -7,9 +7,10 @@ import {
   type Event,
 } from '@dltech/atlas-core'
 
-import { sidebarCells, truncateCells } from '../ui/components/sidebar/cells'
+import { truncateCells } from '../ui/components/sidebar/cells'
 import type { TurnClock } from '../ui/components/transcript'
-import { SIDEBAR_WIDTH } from '../ui/theme'
+import { TITLE_CELLS, oneLineOf } from './sidebar-text'
+import type { SidebarCrewFold, SidebarSubagent } from './subagent-row'
 
 export type SidebarApproval = { callId: CallId; reason: string }
 
@@ -32,13 +33,6 @@ export type SidebarTask = {
   activeForm?: string | undefined
 }
 
-export type SidebarSubagent = {
-  id: string
-  name: string
-  calls: number
-  awaitingApproval: boolean
-}
-
 export type SidebarTeammate = { id: string; name: string; activity: string | null }
 
 export type SidebarModel = {
@@ -54,6 +48,7 @@ export type SidebarModel = {
   ci?: SidebarChecks
   todo?: readonly SidebarTask[]
   subagents?: readonly SidebarSubagent[]
+  crewFold?: SidebarCrewFold
   teammates?: readonly SidebarTeammate[]
 }
 
@@ -67,8 +62,6 @@ export const IDLE_SIDEBAR: SidebarModel = {
   lastTurnOutputTokens: null,
 }
 
-const TITLE_CELLS = sidebarCells({ width: SIDEBAR_WIDTH })
-
 const approvalNames = (events: readonly Event[]): SidebarApproval[] => {
   const outstanding = outstandingApproval(events)
   if (outstanding === undefined) return []
@@ -79,11 +72,6 @@ const approvalNames = (events: readonly Event[]): SidebarApproval[] => {
   if (requested === undefined) return []
 
   return [{ callId: outstanding, reason: requested.reason }]
-}
-
-const oneLineOf = (text: string): string | null => {
-  const oneLine = text.replace(/\s+/g, ' ').trim()
-  return oneLine.length === 0 ? null : oneLine
 }
 
 const nameOrOpening = (args: { events: readonly Event[]; name: string | null }): string | null => {
@@ -137,4 +125,23 @@ export function deriveSidebar(args: {
     lastTurnOutputTokens,
     ...(todo.length === 0 ? {} : { todo }),
   }
+}
+
+/**
+ * A crew with nothing left to show takes its heading with it rather than leaving a tally behind:
+ * the whole point of retiring a row is the cells it gives back, and `/agents` is where a settled
+ * child is read from once the panel has let it go.
+ */
+export function withCrew(args: {
+  model: SidebarModel
+  subagents: readonly SidebarSubagent[]
+  fold?: SidebarCrewFold
+}): SidebarModel {
+  const { model, subagents } = args
+  if (subagents.length === 0) return model
+
+  const fold = args.fold
+  if (fold === undefined || fold.hidden === 0) return { ...model, subagents }
+
+  return { ...model, subagents, crewFold: fold }
 }

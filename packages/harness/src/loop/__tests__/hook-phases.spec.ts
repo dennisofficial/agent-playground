@@ -170,7 +170,7 @@ describe('OnChunk against the delta channel', () => {
 
     const runner = new PublishingTurnRunner({
       channel,
-      deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }), hooks },
+      deps: { log: harness.log, model: harness.model, ids: harness.ids, assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }), hooks },
     })
 
     const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })

@@ -1,14 +1,15 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { ECommandGroup, ECommandKind } from '@dltech/atlas-core'
+import { ECommandGroup, ECommandKind, ESkillWarning } from '@dltech/atlas-core'
 import { beforeEach, describe, expect, it } from 'bun:test'
 
 import { FilesystemSkillSource } from '../filesystem-source'
 import { ESkillOrigin, type DiscoveredSkill } from '../skill'
 
 let directory: string
+let elsewhere: string
 
 const write = ({ at, content }: { at: string; content: string }): void => {
   const path = join(directory, at)
@@ -30,8 +31,12 @@ const only = async (): Promise<DiscoveredSkill> => {
   return first
 }
 
+const codesOf = (skill: DiscoveredSkill): readonly ESkillWarning[] =>
+  skill.warnings.map((warning) => warning.code)
+
 beforeEach(() => {
   directory = mkdtempSync(join(tmpdir(), 'atlas-skills-'))
+  elsewhere = mkdtempSync(join(tmpdir(), 'atlas-skills-away-'))
 })
 
 describe('FilesystemSkillSource', () => {
@@ -69,6 +74,21 @@ describe('FilesystemSkillSource', () => {
     expect(skill.body).toBe('look closely')
   })
 
+  it('accepts the entry file whatever its casing', async () => {
+    write({ at: 'review/skill.md', content: 'lowercase entry' })
+
+    const skill = await only()
+
+    expect(skill.spec.name).toBe('review')
+    expect(skill.entryPath).toBe(join(directory, 'review', 'skill.md'))
+  })
+
+  it('accepts a mixed-case entry file', async () => {
+    write({ at: 'review/Skill.MD', content: 'mixed entry' })
+
+    expect((await only()).body).toBe('mixed entry')
+  })
+
   it('reads both file shapes from the one directory', async () => {
     write({ at: 'commit.md', content: 'commit body' })
     write({ at: 'review/SKILL.md', content: 'review body' })
@@ -78,10 +98,60 @@ describe('FilesystemSkillSource', () => {
     expect(loaded.map((skill) => skill.spec.name).sort()).toEqual(['commit', 'review'])
   })
 
+  it('keeps the folder a nested skill was found in so its bundle stays reachable', async () => {
+    write({ at: 'review/SKILL.md', content: 'body' })
+    write({ at: 'review/references/rubric.md', content: 'rubric' })
+    write({ at: 'review/scripts/run.sh', content: 'echo' })
+
+    const skill = await only()
+
+    expect(skill.directory).toBe(join(directory, 'review'))
+    expect(skill.entryPath).toBe(join(directory, 'review', 'SKILL.md'))
+  })
+
+  it('gives a flat skill the folder that contains it', async () => {
+    write({ at: 'review.md', content: 'body' })
+
+    const skill = await only()
+
+    expect(skill.directory).toBe(directory)
+    expect(skill.entryPath).toBe(join(directory, 'review.md'))
+  })
+
+  it('follows a symlinked skill directory', async () => {
+    const target = join(elsewhere, 'review')
+    mkdirSync(target, { recursive: true })
+    writeFileSync(join(target, 'SKILL.md'), 'linked body')
+    symlinkSync(target, join(directory, 'review'), 'dir')
+
+    const skill = await only()
+
+    expect(skill.spec.name).toBe('review')
+    expect(skill.body).toBe('linked body')
+    expect(skill.directory).toBe(join(directory, 'review'))
+  })
+
+  it('follows a symlinked flat markdown file', async () => {
+    const target = join(elsewhere, 'review.md')
+    writeFileSync(target, 'linked body')
+    symlinkSync(target, join(directory, 'review.md'))
+
+    expect((await only()).body).toBe('linked body')
+  })
+
+  it('skips a symlink whose target is gone', async () => {
+    symlinkSync(join(elsewhere, 'nowhere'), join(directory, 'review'), 'dir')
+    write({ at: 'commit.md', content: 'body' })
+
+    expect((await load()).map((skill) => skill.spec.name)).toEqual(['commit'])
+  })
+
   it('carries description and argument-hint into the spec', async () => {
     write({
       at: 'review.md',
-      content: ['---', 'description: Review a file', 'argument-hint: <path>', '---', 'body'].join('\n'),
+      content: ['---', 'description: Review a file', 'argument-hint: <path>', '---', 'body'].join(
+        '\n',
+      ),
     })
 
     const skill = await only()
@@ -104,6 +174,8 @@ describe('FilesystemSkillSource', () => {
 
     expect(skill.userInvocable).toBe(true)
     expect(skill.modelInvocable).toBe(true)
+    expect(skill.frontmatter.userInvocable).toBe(true)
+    expect(skill.frontmatter.modelInvocable).toBe(true)
   })
 
   it('honours user-invocable: false', async () => {
@@ -118,7 +190,7 @@ describe('FilesystemSkillSource', () => {
   it('honours disable-model-invocation: true', async () => {
     write({
       at: 'review.md',
-      content: ['---', 'disable-model-invocation: TRUE', '---', 'body'].join('\n'),
+      content: ['---', 'disable-model-invocation: true', '---', 'body'].join('\n'),
     })
 
     const skill = await only()
@@ -127,24 +199,34 @@ describe('FilesystemSkillSource', () => {
     expect(skill.modelInvocable).toBe(false)
   })
 
-  it('falls back to the defaults when a flag is not a boolean literal', async () => {
-    write({
-      at: 'review.md',
-      content: ['---', 'user-invocable: maybe', 'disable-model-invocation: sometimes', '---', 'b'].join(
-        '\n',
-      ),
-    })
+  it('keeps a skill whose frontmatter is unusable, warning instead of dropping it', async () => {
+    write({ at: 'review.md', content: ['---', 'description:', '---', 'body'].join('\n') })
 
     const skill = await only()
 
-    expect(skill.userInvocable).toBe(true)
-    expect(skill.modelInvocable).toBe(true)
+    expect(skill.spec.name).toBe('review')
+    expect(codesOf(skill)).toContain(ESkillWarning.MissingDescription)
+  })
+
+  it('warns when a nested skill names itself something other than its folder', async () => {
+    write({ at: 'review/SKILL.md', content: ['---', 'name: audit', '---', 'body'].join('\n') })
+
+    expect(codesOf(await only())).toContain(ESkillWarning.NameDirectoryMismatch)
+  })
+
+  it('does not hold a flat skill to a directory name', async () => {
+    write({ at: 'review.md', content: ['---', 'name: audit', '---', 'body'].join('\n') })
+
+    const skill = await only()
+
+    expect(skill.spec.name).toBe('audit')
+    expect(codesOf(skill)).not.toContain(ESkillWarning.NameDirectoryMismatch)
   })
 
   it('tolerates frontmatter keys it does not know', async () => {
     write({
       at: 'review.md',
-      content: ['---', 'allowed-tools: Read, Grep', 'model: opus', '---', 'body'].join('\n'),
+      content: ['---', 'allowed-tools: Read, Grep', 'sprocket: yes', '---', 'body'].join('\n'),
     })
 
     expect((await only()).body).toBe('body')

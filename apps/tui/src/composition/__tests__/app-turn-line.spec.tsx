@@ -115,6 +115,7 @@ const reopened: OpenedConversation = {
   events: spoken,
   turns: [spent],
   name: null,
+  started: true,
 }
 
 describe('the line a turn left behind before the app was closed', () => {

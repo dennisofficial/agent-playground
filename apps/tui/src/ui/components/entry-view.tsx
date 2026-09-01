@@ -4,11 +4,19 @@ import { EEntryKind, type TranscriptEntry } from '../../store'
 import type { EMark } from '../tool-marks'
 import { AssistantBlock } from './blocks/assistant-block'
 import { CompactedBlock } from './blocks/compacted-block'
-import { ShellEndedBlock } from './blocks/shell-ended-block'
+import { NoticeBlock } from './blocks/notice-block'
 import { ThinkingBlock } from './blocks/thinking-block'
 import { ToolRunBlock } from './blocks/tool-run-block'
 import { TurnEndedBlock } from './blocks/turn-ended-block'
 import { EUserMark, UserBlock } from './blocks/user-block'
+
+const SHELL_OUTPUT_HINT = '↵ output'
+
+const PRINTED_NOTHING = 'printed nothing'
+
+const AGENT_REPORT_HINT = '↵ report'
+
+const REPORTED_NOTHING = 'reported nothing'
 
 export function EntryView(props: {
   entry: TranscriptEntry
@@ -38,6 +46,7 @@ export function EntryView(props: {
           mark={entry.steer ? EUserMark.MidTurn : EUserMark.Plain}
           skills={entry.skills}
           files={entry.files}
+        images={entry.images}
         />
       )
 
@@ -88,13 +97,43 @@ export function EntryView(props: {
         />
       )
 
+    case EEntryKind.BackgroundShellAwaitingInput:
+      return (
+        <NoticeBlock
+          text={entry.text}
+          body={entry.output}
+          failed
+          width={props.width}
+          openHint={SHELL_OUTPUT_HINT}
+          silentNote={PRINTED_NOTHING}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
     case EEntryKind.BackgroundShellEnded:
       return (
-        <ShellEndedBlock
+        <NoticeBlock
           text={entry.text}
-          output={entry.output}
+          body={entry.output}
           failed={entry.failed}
           width={props.width}
+          openHint={SHELL_OUTPUT_HINT}
+          silentNote={PRINTED_NOTHING}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
+    case EEntryKind.AgentEnded:
+      return (
+        <NoticeBlock
+          text={entry.text}
+          body={entry.report}
+          failed={entry.failed}
+          width={props.width}
+          openHint={AGENT_REPORT_HINT}
+          silentNote={REPORTED_NOTHING}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
         />

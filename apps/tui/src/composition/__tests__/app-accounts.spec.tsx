@@ -79,7 +79,7 @@ async function opened(args: { app: FakeApp; notice?: string }): Promise<Mounted>
   const setup = await testRender(
     <App
       app={args.app}
-      opened={{ threadId: THREAD, events: [], turns: [], name: null }}
+      opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }}
       credentialNotice={args.notice ?? null}
     />,
     WIDE,

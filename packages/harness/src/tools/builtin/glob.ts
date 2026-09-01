@@ -72,10 +72,10 @@ export class GlobTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     signal,
-    sessionDirectory,
+    projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path } = input
-    const from = path ?? sessionDirectory
+    const from = path ?? projectDirectory
 
     const found: DatedPath[] = []
     try {

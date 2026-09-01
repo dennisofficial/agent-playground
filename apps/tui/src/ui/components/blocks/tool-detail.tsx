@@ -26,8 +26,10 @@ import { tailOfPath } from '../../paths'
 import { wrapWords } from '../../text-flow'
 import { theme } from '../../theme'
 import { InlineDiff } from '../diff/inline-diff'
+import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
 import { CodeLines, codeLinesOf } from './tool-code-lines'
 import { ToolCreatedFile } from './tool-created-file'
+import { ToolImage } from './tool-image'
 
 const DIFF_CONTEXT = 2
 
@@ -47,14 +49,15 @@ function Line(props: { text: string; inner: number; fg: string }): React.ReactNo
   )
 }
 
-function More(props: { hidden: number; inner: number }): React.ReactNode {
-  if (props.hidden <= 0) return null
-  return <Line text={`… +${props.hidden} more`} inner={props.inner} fg={theme.rule} />
+function More(props: { hidden: number; inner: number; expand: Expander }): React.ReactNode {
+  return (
+    <MoreToggle hidden={props.hidden} indent={INDENT} width={props.inner} expand={props.expand} />
+  )
 }
 
-function Output(props: { call: ToolCall; inner: number }): React.ReactNode {
+function Output(props: { call: ToolCall; inner: number; expand: Expander }): React.ReactNode {
   const body = detailOf(props.call)
-  const shown = body.slice(0, MAX_ROWS)
+  const shown = shownOf({ body, cap: MAX_ROWS, expand: props.expand })
 
   return (
     <>
@@ -64,7 +67,7 @@ function Output(props: { call: ToolCall; inner: number }): React.ReactNode {
       {shown.map((line, index) => (
         <Line key={`d${index}`} text={line} inner={props.inner} fg={theme.hint} />
       ))}
-      <More hidden={body.length - shown.length} inner={props.inner} />
+      <More hidden={body.length - MAX_ROWS} inner={props.inner} expand={props.expand} />
     </>
   )
 }
@@ -75,10 +78,10 @@ function Output(props: { call: ToolCall; inner: number }): React.ReactNode {
  * Wrapped rather than shortened: this is the sentence the MODEL was handed, and a reason clipped to
  * the width of a path column is a transcript that still cannot say what went wrong.
  */
-function Reason(props: { call: ToolCall; inner: number }): React.ReactNode {
+function Reason(props: { call: ToolCall; inner: number; expand: Expander }): React.ReactNode {
   const width = Math.max(8, props.inner - INDENT.length)
   const rows = wrapWords({ text: reasonOf(props.call), width })
-  const shown = rows.slice(0, MAX_ROWS)
+  const shown = shownOf({ body: rows, cap: MAX_ROWS, expand: props.expand })
 
   return (
     <>
@@ -87,28 +90,33 @@ function Reason(props: { call: ToolCall; inner: number }): React.ReactNode {
           <span fg={theme.error}>{`${INDENT}${line}`}</span>
         </text>
       ))}
-      <More hidden={rows.length - shown.length} inner={props.inner} />
+      <More hidden={rows.length - MAX_ROWS} inner={props.inner} expand={props.expand} />
     </>
   )
 }
 
-function FileRead(props: { call: ToolCall; inner: number; cwd: string }): React.ReactNode {
+function FileRead(props: {
+  call: ToolCall
+  inner: number
+  cwd: string
+  expand: Expander
+}): React.ReactNode {
   const body = detailOf(props.call)
-  const shown = body.slice(0, MAX_ROWS)
+  const shown = shownOf({ body, cap: MAX_ROWS, expand: props.expand })
   const named = outputOf(props.call).path
   const path = typeof named === 'string' ? named : (targetOf({ call: props.call, cwd: props.cwd }) ?? '')
 
   return (
     <>
       <CodeLines lines={codeLinesOf(shown)} path={path} inner={props.inner} indent={INDENT} />
-      <More hidden={body.length - shown.length} inner={props.inner} />
+      <More hidden={body.length - MAX_ROWS} inner={props.inner} expand={props.expand} />
     </>
   )
 }
 
-function Matches(props: { call: ToolCall; inner: number }): React.ReactNode {
+function Matches(props: { call: ToolCall; inner: number; expand: Expander }): React.ReactNode {
   const found = strings(outputOf(props.call).matches)
-  const shown = found.slice(0, MAX_ROWS)
+  const shown = shownOf({ body: found, cap: MAX_ROWS, expand: props.expand })
 
   return (
     <>
@@ -124,21 +132,26 @@ function Matches(props: { call: ToolCall; inner: number }): React.ReactNode {
           </text>
         )
       })}
-      <More hidden={found.length - shown.length} inner={props.inner} />
+      <More hidden={found.length - MAX_ROWS} inner={props.inner} expand={props.expand} />
     </>
   )
 }
 
-function Paths(props: { call: ToolCall; inner: number; cwd: string }): React.ReactNode {
+function Paths(props: {
+  call: ToolCall
+  inner: number
+  cwd: string
+  expand: Expander
+}): React.ReactNode {
   const found = strings(outputOf(props.call).paths)
-  const shown = found.slice(0, MAX_ROWS)
+  const shown = shownOf({ body: found, cap: MAX_ROWS, expand: props.expand })
 
   return (
     <>
       {shown.map((path, index) => (
         <Line key={index} text={relativise(path, props.cwd)} inner={props.inner} fg={theme.meta} />
       ))}
-      <More hidden={found.length - shown.length} inner={props.inner} />
+      <More hidden={found.length - MAX_ROWS} inner={props.inner} expand={props.expand} />
     </>
   )
 }
@@ -172,12 +185,14 @@ const TALLY = /^\s*\d+\s+(pass|fail|skip|error)/
 
 const FAILING = '(fail)'
 
-function Tests(props: { call: ToolCall; inner: number }): React.ReactNode {
+function Tests(props: { call: ToolCall; inner: number; expand: Expander }): React.ReactNode {
   const body = detailOf(props.call)
   const tally = body.filter((line) => TALLY.test(line))
   const failures = body.filter((line) => line.startsWith(FAILING)).slice(0, MAX_ROWS)
 
-  if (tally.length === 0) return <Output call={props.call} inner={props.inner} />
+  if (tally.length === 0) {
+    return <Output call={props.call} inner={props.inner} expand={props.expand} />
+  }
 
   return (
     <>
@@ -216,23 +231,34 @@ export function ToolDetail(props: {
   call: ToolCall
   inner: number
   cwd: string
+  expand?: Expander
 }): React.ReactNode {
+  const expand = props.expand ?? NOT_EXPANDABLE
   if (props.detail === EDetail.None) return null
   if (props.detail === EDetail.Diff) {
     return <Diff call={props.call} inner={props.inner} cwd={props.cwd} />
   }
   if (props.detail === EDetail.Created) {
-    return <ToolCreatedFile call={props.call} inner={props.inner} cwd={props.cwd} />
+    return <ToolCreatedFile call={props.call} inner={props.inner} cwd={props.cwd} expand={expand} />
   }
-  if (props.detail === EDetail.Reason) return <Reason call={props.call} inner={props.inner} />
+  if (props.detail === EDetail.Reason) {
+    return <Reason call={props.call} inner={props.inner} expand={expand} />
+  }
+  if (props.detail === EDetail.Image) {
+    return <ToolImage call={props.call} inner={props.inner} cwd={props.cwd} />
+  }
   if (props.detail === EDetail.File) {
-    return <FileRead call={props.call} inner={props.inner} cwd={props.cwd} />
+    return <FileRead call={props.call} inner={props.inner} cwd={props.cwd} expand={expand} />
   }
-  if (props.detail === EDetail.Matches) return <Matches call={props.call} inner={props.inner} />
+  if (props.detail === EDetail.Matches) {
+    return <Matches call={props.call} inner={props.inner} expand={expand} />
+  }
   if (props.detail === EDetail.Paths) {
-    return <Paths call={props.call} inner={props.inner} cwd={props.cwd} />
+    return <Paths call={props.call} inner={props.inner} cwd={props.cwd} expand={expand} />
   }
   if (props.detail === EDetail.Plan) return <Plan call={props.call} inner={props.inner} />
-  if (props.detail === EDetail.Tests) return <Tests call={props.call} inner={props.inner} />
-  return <Output call={props.call} inner={props.inner} />
+  if (props.detail === EDetail.Tests) {
+    return <Tests call={props.call} inner={props.inner} expand={expand} />
+  }
+  return <Output call={props.call} inner={props.inner} expand={expand} />
 }

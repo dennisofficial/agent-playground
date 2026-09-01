@@ -37,7 +37,7 @@ const shell = (over: {
   status?: EShellStatus
 }): ShellSnapshot => ({
   command: over.command,
-  description: over.description,
+  description: over.description ?? over.command,
   status: over.status ?? EShellStatus.Running,
   pid: 4242,
   startedAt: '2026-08-27T12:00:00.000Z',
@@ -65,6 +65,7 @@ type Mounted = Awaited<ReturnType<typeof testRender>>
 function endingShell(args: { app: FakeApp; running: ShellSnapshot }): () => void {
   let listed: readonly ShellSnapshot[] = [args.running]
   args.app.shells.list = () => listed
+  args.app.shells.listEverywhere = () => listed
 
   return () => {
     listed = [{ ...args.running, status: EShellStatus.Exited }]
@@ -73,7 +74,7 @@ function endingShell(args: { app: FakeApp; running: ShellSnapshot }): () => void
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
-    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />,
     WIDE,
   )
   await setup.flush()

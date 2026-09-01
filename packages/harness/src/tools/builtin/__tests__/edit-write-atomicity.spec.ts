@@ -18,7 +18,7 @@ const invoke = (tool: EditTool | WriteTool, input: unknown): Promise<ToolOutcome
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'atomicity',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId: toThreadId('thread-1'),
   })
 

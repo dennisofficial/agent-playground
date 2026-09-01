@@ -49,7 +49,7 @@ async function readingsOf({ script }: { script: readonly ScriptedStep[] }): Prom
     log: harness.log,
     model: harness.model,
     ids: harness.ids,
-    assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+    assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
     tools: registry.declarations(),
     dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
     onContext: (reading) => readings.push(reading),

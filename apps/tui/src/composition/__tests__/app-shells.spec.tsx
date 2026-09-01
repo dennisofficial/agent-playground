@@ -6,6 +6,7 @@ import React from 'react'
 
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { App } from '../app'
+import { spokenIn } from './app-fixture'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
@@ -16,8 +17,13 @@ const WIDE = { width: 150, height: 40 }
 
 const READ_MS = 60
 
-const running = (over: { shellId: string; command: string }): ShellSnapshot => ({
+const running = (over: {
+  shellId: string
+  command: string
+  description?: string
+}): ShellSnapshot => ({
   command: over.command,
+  description: over.description ?? over.command,
   status: EShellStatus.Running,
   pid: 4242,
   startedAt: '2026-08-27T12:00:00.000Z',
@@ -38,10 +44,7 @@ const appWith = (shells: readonly ShellSnapshot[]): FakeApp => {
 type Mounted = Awaited<ReturnType<typeof testRender>>
 
 async function opened(app: FakeApp): Promise<Mounted> {
-  const setup = await testRender(
-    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
-    WIDE,
-  )
+  const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, WIDE)
   await setup.flush()
   await settle(250)
   await setup.flush()

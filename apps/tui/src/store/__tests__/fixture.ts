@@ -1,5 +1,6 @@
 import {
   stampDrafts,
+  toCallId,
   toThreadId,
   toEventId,
   toRunId,
@@ -48,6 +49,35 @@ export const reasoningDelta = (args: { stepId: StepId; blockId: string; text: st
   chunk: { type: 'reasoning-delta', id: args.blockId, text: args.text },
 })
 
+export const toolInputStart = (args: { stepId: StepId; callId: string; name: string }): StepSignal => ({
+  type: 'chunk',
+  stepId: args.stepId,
+  chunk: { type: 'tool-input-start', callId: toCallId(args.callId), name: args.name },
+})
+
+export const toolInputDelta = (args: { stepId: StepId; callId: string; text: string }): StepSignal => ({
+  type: 'chunk',
+  stepId: args.stepId,
+  chunk: { type: 'tool-input-delta', callId: toCallId(args.callId), text: args.text },
+})
+
+export const toolInputEnd = (args: { stepId: StepId; callId: string }): StepSignal => ({
+  type: 'chunk',
+  stepId: args.stepId,
+  chunk: { type: 'tool-input-end', callId: toCallId(args.callId) },
+})
+
+export const toolCall = (args: {
+  stepId: StepId
+  callId: string
+  name: string
+  input: unknown
+}): StepSignal => ({
+  type: 'chunk',
+  stepId: args.stepId,
+  chunk: { type: 'tool-call', callId: toCallId(args.callId), name: args.name, input: args.input },
+})
+
 export const ended = (args: {
   stepId: StepId
   end: EStepEnd
@@ -68,11 +98,15 @@ export const fromTheModel = (model: TranscriptModel) =>
       | { kind: EEntryKind.OperatorSaid }
       | { kind: EEntryKind.HistoryCompacted }
       | { kind: EEntryKind.BackgroundShellEnded }
+      | { kind: EEntryKind.BackgroundShellAwaitingInput }
+      | { kind: EEntryKind.AgentEnded }
       | { kind: EEntryKind.TurnEnded }
     > =>
       entry.kind !== EEntryKind.OperatorSaid &&
       entry.kind !== EEntryKind.HistoryCompacted &&
       entry.kind !== EEntryKind.BackgroundShellEnded &&
+      entry.kind !== EEntryKind.BackgroundShellAwaitingInput &&
+      entry.kind !== EEntryKind.AgentEnded &&
       entry.kind !== EEntryKind.TurnEnded,
   )
 

@@ -2,7 +2,7 @@ import { EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harne
 import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
-import { open, until } from './app-fixture'
+import { open, until, spokenIn, type Mounted } from './app-fixture'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
@@ -27,9 +27,12 @@ const ended = (over: Partial<ShellSnapshot> = {}): ShellSnapshot =>
 const appNow = (): FakeApp =>
   fakeApp({ model: scriptedModelPort({ script: { thinking: 'reading it', reply: 'all green' } }) })
 
+const openSpoken = async (app: FakeApp): Promise<Mounted> =>
+  open({ app, opened: await spokenIn(app) })
+
 describe('a background shell that ends while nothing is running', () => {
   it('starts a turn on its own rather than waiting for the next message', async () => {
-    const mounted = await open({ app: appNow() })
+    const mounted = await openSpoken(appNow())
 
     try {
       expect(mounted.app.turnsDriven).toBe(0)
@@ -48,7 +51,7 @@ describe('a background shell that ends while nothing is running', () => {
   })
 
   it('reaches the transcript as an event rather than as something the operator said', async () => {
-    const mounted = await open({ app: appNow() })
+    const mounted = await openSpoken(appNow())
 
     try {
       mounted.app.shells.announce(ended())
@@ -68,7 +71,7 @@ describe('a background shell that ends while nothing is running', () => {
   })
 
   it('wakes for a shell somebody killed just as readily as one that finished', async () => {
-    const mounted = await open({ app: appNow() })
+    const mounted = await openSpoken(appNow())
 
     try {
       mounted.app.shells.announce(ended({ status: EShellStatus.Killed, exitCode: undefined }))
@@ -86,7 +89,7 @@ describe('a background shell that ends while nothing is running', () => {
   })
 
   it('drives one turn for one ending, however many times it re-renders', async () => {
-    const mounted = await open({ app: appNow() })
+    const mounted = await openSpoken(appNow())
 
     try {
       mounted.app.shells.announce(ended())

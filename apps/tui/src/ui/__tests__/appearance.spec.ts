@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 
 import { accentHex } from '../accents'
 import { appearanceOf, applyAppearance, SHIPPED_ACCENT } from '../appearance'
+import { imageRows, SHIPPED_IMAGE_ROWS } from '../image-rows-store'
 import {
   applyComposerEdge,
   composerEdge,
@@ -37,6 +38,7 @@ describe('appearanceOf', () => {
       accent: SHIPPED_ACCENT,
       density: SHIPPED_DENSITY,
       composer: SHIPPED_COMPOSER_EDGE,
+      imageRows: SHIPPED_IMAGE_ROWS,
     })
   })
 
@@ -45,19 +47,21 @@ describe('appearanceOf', () => {
       [ESettingId.Accent]: 'moss',
       [ESettingId.BlockPadding]: 'compact',
       [ESettingId.ComposerEdge]: 'bordered',
+      [ESettingId.ImageRows]: 48,
     })
 
     expect(appearanceOf({ resolution })).toEqual({
       accent: 'moss',
       density: EBlockDensity.Compact,
       composer: EComposerEdge.Bordered,
+      imageRows: 48,
     })
   })
 })
 
 describe('applyAppearance', () => {
   it('moves the whole palette onto the chosen accent', () => {
-    applyAppearance({ accent: 'moss', density: SHIPPED_DENSITY, composer: SHIPPED_COMPOSER_EDGE })
+    applyAppearance({ accent: 'moss', density: SHIPPED_DENSITY, composer: SHIPPED_COMPOSER_EDGE, imageRows: SHIPPED_IMAGE_ROWS })
 
     expect(theme.accent).toBe(accentHex('moss'))
     expect(theme.codeInline).toBe(accentHex('moss'))
@@ -68,8 +72,7 @@ describe('applyAppearance', () => {
     applyAppearance({
       accent: SHIPPED_ACCENT,
       density: SHIPPED_DENSITY,
-      composer: EComposerEdge.Bordered,
-    })
+      composer: EComposerEdge.Bordered, imageRows: SHIPPED_IMAGE_ROWS })
     expect(composerEdge()).toBe(EComposerEdge.Bordered)
   })
 
@@ -77,13 +80,12 @@ describe('applyAppearance', () => {
     applyAppearance({
       accent: SHIPPED_ACCENT,
       density: EBlockDensity.Compact,
-      composer: SHIPPED_COMPOSER_EDGE,
-    })
+      composer: SHIPPED_COMPOSER_EDGE, imageRows: SHIPPED_IMAGE_ROWS })
     expect(blockDensity()).toBe(EBlockDensity.Compact)
   })
 
   it('repaints nothing when the look is already the one asked for', () => {
-    applyAppearance({ accent: 'moss', density: EBlockDensity.Compact, composer: SHIPPED_COMPOSER_EDGE })
+    applyAppearance({ accent: 'moss', density: EBlockDensity.Compact, composer: SHIPPED_COMPOSER_EDGE, imageRows: SHIPPED_IMAGE_ROWS })
 
     const before = paletteVersion()
     let repaints = 0
@@ -91,10 +93,23 @@ describe('applyAppearance', () => {
       repaints += 1
     })
 
-    applyAppearance({ accent: 'moss', density: EBlockDensity.Compact, composer: SHIPPED_COMPOSER_EDGE })
+    applyAppearance({ accent: 'moss', density: EBlockDensity.Compact, composer: SHIPPED_COMPOSER_EDGE, imageRows: SHIPPED_IMAGE_ROWS })
     unsubscribe()
 
     expect(paletteVersion()).toBe(before)
     expect(repaints).toBe(0)
+  })
+})
+
+describe('applyImageRows', () => {
+  it('carries the chosen height to the transcript, since a taller box is a sharper picture', () => {
+    applyAppearance({
+      accent: SHIPPED_ACCENT,
+      density: SHIPPED_DENSITY,
+      composer: SHIPPED_COMPOSER_EDGE,
+      imageRows: 64,
+    })
+
+    expect(imageRows()).toBe(64)
   })
 })

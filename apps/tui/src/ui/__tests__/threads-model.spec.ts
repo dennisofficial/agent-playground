@@ -26,6 +26,8 @@ const listing = (args: { id: string; title?: string; minutesAgo?: number }): Thr
   ...(args.title === undefined ? {} : { title: args.title }),
 })
 
+const SPAWNED = { spawnedBy: 'thread-a', type: 'explore' }
+
 const THREE: readonly ThreadListing[] = [
   listing({ id: 'thread-a', title: 'the auth overlay', minutesAgo: 2 }),
   listing({ id: 'thread-b', minutesAgo: 90 }),
@@ -62,6 +64,24 @@ describe('the rows a listing becomes', () => {
 
     expect(rows[0]?.label).toBe('bare')
     expect(rows[0]?.titled).toBe(false)
+  })
+
+  it('leaves out a thread Atlas spawned, because the operator did not start it', () => {
+    const rows = threadRows({
+      threads: [...THREE, { ...listing({ id: 'child', title: 'vault audit' }), agent: SPAWNED }],
+      activeThreadId: 'thread-a',
+    })
+
+    expect(rows.map((row) => row.threadId)).toEqual(['thread-a', 'thread-b', 'thread-c'])
+  })
+
+  it('still lists a child the operator has open, so the picker names where they are', () => {
+    const rows = threadRows({
+      threads: [...THREE, { ...listing({ id: 'child', title: 'vault audit' }), agent: SPAWNED }],
+      activeThreadId: 'child',
+    })
+
+    expect(rows.map((row) => row.threadId)).toContain('child')
   })
 })
 

@@ -26,7 +26,10 @@ export type ConversationStore = {
   subscribe(listener: () => void): Unsubscribe
   getSnapshot(): TranscriptModel
   getSidebar(): SidebarModel
-  setEvents(args: { events: readonly Event[]; turns?: readonly TurnSpend[] | undefined }): void
+  setEvents(args: {
+    events: readonly Event[]
+    turns?: readonly TurnSpend[] | undefined
+  }): void
   setTurn(turn: TurnClock): void
   supersedeFailure(): void
   setThinking(thinking: EThinkingVisibility): void
@@ -81,7 +84,13 @@ export function createConversationStore(args: {
   }
 
   const handleSignal = (signal: ChannelSignal) => {
-    if (signal.type === 'events-appended') return
+    if (
+      signal.type === 'events-appended' ||
+      signal.type === 'retry-waiting' ||
+      signal.type === 'retry-cleared'
+    ) {
+      return
+    }
 
     signals = [...signals, signal]
 

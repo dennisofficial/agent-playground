@@ -172,7 +172,7 @@ describe('a dispatcher built over a narrowed registry', () => {
     const drafts = await dispatcher.dispatch({
       call,
       signal: new AbortController().signal,
-      sessionDirectory: '/workspace',
+      projectDirectory: '/workspace',
     })
 
     expect(spawned).toBe(false)

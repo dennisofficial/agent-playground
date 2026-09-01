@@ -23,7 +23,7 @@ const description = [
   'stdout and stderr are interleaved in arrival order, and the shell is not disturbed by being read.',
   'A shell that has ended already handed you its ending and its output, so there is nothing left to read unless that notice said characters were still waiting.',
   'Reach for it only when you need what a still-running shell has printed - the startup log of a dev server, the first failures of a watch.',
-  'Never call it to find out whether a shell has finished: the ending comes to you on its own, so asking is always wasted.',
+  'Never call it to find out whether a shell has finished, nor whether one is stuck on a prompt: both come to you on their own, so asking is always wasted.',
 ].join(' ')
 
 const stillRunning = (status: EShellStatus): boolean => status === EShellStatus.Running
@@ -80,8 +80,11 @@ export class ShellOutputTool extends SchemaTool<typeof inputSchema> {
     super()
   }
 
-  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const read = this.shells.read({ shellId: input.shellId })
+  protected override async run({
+    input,
+    threadId,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const read = this.shells.read({ shellId: input.shellId, threadId })
     if (!read.ok) return read
 
     return {

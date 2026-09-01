@@ -8,14 +8,18 @@ import { AgentSpawnTool } from './builtin/agent-spawn'
 import { AgentStopTool } from './builtin/agent-stop'
 import { BashTool } from './builtin/bash'
 import { EditTool } from './builtin/edit'
+import { EnterWorktreeTool } from './builtin/enter-worktree'
+import { ExitWorktreeTool } from './builtin/exit-worktree'
 import { GlobTool } from './builtin/glob'
 import { GrepTool } from './builtin/grep'
 import { ReadTool } from './builtin/read'
 import { ShellKillTool } from './builtin/shell-kill'
 import { ShellListTool } from './builtin/shell-list'
 import { ShellOutputTool } from './builtin/shell-output'
+import { SkillTool } from './builtin/skill'
 import { TaskWriteTool } from './builtin/task-write'
 import { WriteTool } from './builtin/write'
+import { WorktreeListTool } from './builtin/worktree-list'
 import { InMemoryToolRegistry, ToolRegistry } from './registry'
 
 export function registerBuiltinTools({ container }: { container: DependencyContainer }): void {
@@ -29,11 +33,15 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
   container.register(portToken(ToolDefinition), { useClass: ShellOutputTool })
   container.register(portToken(ToolDefinition), { useClass: ShellKillTool })
   container.register(portToken(ToolDefinition), { useClass: TaskWriteTool })
+  container.register(portToken(ToolDefinition), { useClass: SkillTool })
   container.register(portToken(ToolDefinition), { useClass: AgentSpawnTool })
   container.register(portToken(ToolDefinition), { useClass: AgentSayTool })
   container.register(portToken(ToolDefinition), { useClass: AgentResumeTool })
   container.register(portToken(ToolDefinition), { useClass: AgentListTool })
   container.register(portToken(ToolDefinition), { useClass: AgentStopTool })
+  container.register(portToken(ToolDefinition), { useClass: EnterWorktreeTool })
+  container.register(portToken(ToolDefinition), { useClass: ExitWorktreeTool })
+  container.register(portToken(ToolDefinition), { useClass: WorktreeListTool })
 
   container.register(portToken(ToolRegistry), { useClass: InMemoryToolRegistry })
 }

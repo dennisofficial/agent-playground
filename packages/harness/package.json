@@ -10,7 +10,7 @@
     "typecheck": "bun run db:ensure && tsc --noEmit",
     "test": "bun run db:ensure && bun test",
     "db:generate": "prisma generate",
-    "db:ensure": "bun prisma/ensure-client.ts",
+    "db:ensure": "bun prisma/ensure-client.ts && bun prisma/embed-migrations.ts",
     "db:migrate": "prisma migrate dev"
   },
   "dependencies": {

@@ -1,4 +1,11 @@
-import { EBlockKind, type Chunk, type Event, type EventRef } from '@dltech/atlas-core'
+import {
+  EBlockKind,
+  readPartialJson,
+  type CallId,
+  type Chunk,
+  type Event,
+  type EventRef,
+} from '@dltech/atlas-core'
 import { EStepEnd, type StepId, type StepSignal } from '@dltech/atlas-harness'
 
 import type { LiveToolCall } from './tool-runs'
@@ -7,6 +14,10 @@ export type StepBlock = { id: string; kind: EBlockKind; text: string }
 
 export const runKey = (args: { stepId: StepId; kind: EBlockKind; id: string }): string =>
   `${args.stepId}:${args.kind}:${args.id}`
+
+type ArrivingCall = LiveToolCall & { arriving: string | null }
+
+type ArrivingStep = Omit<InFlightStep, 'calls'> & { calls: ArrivingCall[] }
 
 export type InFlightStep = {
   stepId: StepId
@@ -17,7 +28,7 @@ export type InFlightStep = {
   errorMessage: string | null
 }
 
-const emptyStep = (stepId: StepId): InFlightStep => ({
+const emptyStep = (stepId: StepId): ArrivingStep => ({
   stepId,
   blocks: [],
   calls: [],
@@ -26,7 +37,7 @@ const emptyStep = (stepId: StepId): InFlightStep => ({
   errorMessage: null,
 })
 
-function blockFor(args: { step: InFlightStep; kind: EBlockKind; id: string }): StepBlock {
+function blockFor(args: { step: ArrivingStep; kind: EBlockKind; id: string }): StepBlock {
   const existing = args.step.blocks.find((block) => block.kind === args.kind && block.id === args.id)
   if (existing !== undefined) return existing
 
@@ -35,7 +46,22 @@ function blockFor(args: { step: InFlightStep; kind: EBlockKind; id: string }): S
   return created
 }
 
-function absorbChunk(args: { step: InFlightStep; chunk: Chunk }) {
+function openedCall(args: { step: ArrivingStep; callId: CallId; name: string }): ArrivingCall {
+  const existing = args.step.calls.find((call) => call.callId === args.callId)
+  if (existing !== undefined) return existing
+
+  const opened: ArrivingCall = {
+    callId: args.callId,
+    name: args.name,
+    input: undefined,
+    precededByBlocks: args.step.blocks.length,
+    arriving: null,
+  }
+  args.step.calls.push(opened)
+  return opened
+}
+
+function absorbChunk(args: { step: ArrivingStep; chunk: Chunk }) {
   const { step, chunk } = args
 
   switch (chunk.type) {
@@ -56,19 +82,37 @@ function absorbChunk(args: { step: InFlightStep; chunk: Chunk }) {
     case 'reasoning-delta':
       blockFor({ step, kind: EBlockKind.Reasoning, id: chunk.id }).text += chunk.text
       return
-    case 'tool-call':
-      if (step.calls.some((call) => call.callId === chunk.callId)) return
-      step.calls.push({
-        callId: chunk.callId,
-        name: chunk.name,
-        input: chunk.input,
-        precededByBlocks: step.blocks.length,
-      })
+    case 'tool-input-start':
+      openedCall({ step, callId: chunk.callId, name: chunk.name })
       return
+    case 'tool-input-delta': {
+      const call = step.calls.find((open) => open.callId === chunk.callId)
+      if (call === undefined) return
+      call.arriving = (call.arriving ?? '') + chunk.text
+      return
+    }
+    case 'tool-call': {
+      const call = openedCall({ step, callId: chunk.callId, name: chunk.name })
+      call.input = chunk.input
+      call.arriving = null
+      return
+    }
     default:
       return
   }
 }
+
+const settledCall = (call: ArrivingCall): LiveToolCall => ({
+  callId: call.callId,
+  name: call.name,
+  input: call.arriving === null ? call.input : readPartialJson(call.arriving),
+  precededByBlocks: call.precededByBlocks,
+})
+
+const settledStep = (step: ArrivingStep): InFlightStep => ({
+  ...step,
+  calls: step.calls.map(settledCall),
+})
 
 function isSuperseded(args: {
   step: InFlightStep
@@ -116,10 +160,10 @@ export function prunedSignals(args: {
 }
 
 export function stepsOfSignals(signals: readonly StepSignal[]): InFlightStep[] {
-  const ordered: InFlightStep[] = []
-  const byId = new Map<StepId, InFlightStep>()
+  const ordered: ArrivingStep[] = []
+  const byId = new Map<StepId, ArrivingStep>()
 
-  const stepFor = (stepId: StepId): InFlightStep => {
+  const stepFor = (stepId: StepId): ArrivingStep => {
     const existing = byId.get(stepId)
     if (existing !== undefined) return existing
 
@@ -140,5 +184,5 @@ export function stepsOfSignals(signals: readonly StepSignal[]): InFlightStep[] {
     }
   }
 
-  return ordered
+  return ordered.map(settledStep)
 }

@@ -5,6 +5,13 @@ export function collapseHome(args: { cwd: string; home: string }): string {
   return args.cwd
 }
 
+export function expandHome(args: { path: string; home: string }): string {
+  if (args.home.length === 0) return args.path
+  if (args.path === '~') return args.home
+  if (args.path.startsWith('~/')) return `${args.home}${args.path.slice(1)}`
+  return args.path
+}
+
 const ELLIPSIS = '…'
 
 export function tailOfPath(args: { path: string; cells: number }): string {
@@ -15,22 +22,4 @@ export function tailOfPath(args: { path: string; cells: number }): string {
   const kept = glyphs.slice(glyphs.length - (args.cells - 1)).join('')
   const boundary = kept.indexOf('/')
   return boundary === -1 ? `${ELLIPSIS}${kept}` : `${ELLIPSIS}${kept.slice(boundary)}`
-}
-
-export type WhereLabel = { path: string; moved: boolean }
-
-export function sessionLabel(args: {
-  projectDirectory: string
-  sessionDirectory: string
-  home: string
-}): WhereLabel {
-  const project = collapseHome({ cwd: args.projectDirectory, home: args.home })
-  if (args.sessionDirectory === args.projectDirectory) return { path: project, moved: false }
-
-  const inside = `${args.projectDirectory}/`
-  if (args.sessionDirectory.startsWith(inside)) {
-    return { path: args.sessionDirectory.slice(inside.length), moved: true }
-  }
-
-  return { path: collapseHome({ cwd: args.sessionDirectory, home: args.home }), moved: true }
 }

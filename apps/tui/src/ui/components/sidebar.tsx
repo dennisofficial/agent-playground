@@ -1,13 +1,15 @@
 import { homedir } from 'node:os'
 
+import { RGBA } from '@opentui/core'
 import React from 'react'
 
-import { sessionLabel, tailOfPath } from '../paths'
+import { collapseHome, tailOfPath } from '../paths'
 import { theme } from '../theme'
 import type { ShellSnapshot } from '@dltech/atlas-harness'
 
 import type { SidebarModel } from '../../store'
-import { sidebarCells } from './sidebar/cells'
+import type { SidebarCrewFold } from '../../store/subagent-row'
+import { SIDEBAR_GUTTER, SIDEBAR_PADDING, sidebarCells } from './sidebar/cells'
 import { SubagentsSection, TeammatesSection } from './sidebar/crew'
 import { FactsSection, HeadSection } from './sidebar/head'
 import { ShellsSection } from './sidebar/shells'
@@ -15,25 +17,37 @@ import { TodoSection } from './sidebar/todo'
 import { ApprovalsSection, TurnSection } from './sidebar/turn'
 import type { TurnClock } from './transcript'
 
-function SidebarFooter(props: {
-  cwd: string
-  sessionDirectory?: string | undefined
-  cells: number
-}): React.ReactNode {
-  const where = sessionLabel({
-    projectDirectory: props.cwd,
-    sessionDirectory: props.sessionDirectory ?? props.cwd,
-    home: homedir(),
-  })
+function SidebarFooter(props: { cwd: string; cells: number }): React.ReactNode {
+  const where = collapseHome({ cwd: props.cwd, home: homedir() })
 
   return (
-    <box flexDirection="column" flexShrink={0} paddingTop={1}>
-      <text fg={theme.dim}>{tailOfPath({ path: where.path, cells: props.cells })}</text>
+    <box flexDirection="column" flexShrink={0} paddingTop={1} paddingRight={SIDEBAR_GUTTER}>
+      <text fg={theme.dim}>{tailOfPath({ path: where, cells: props.cells })}</text>
       <text>
         <span fg={theme.accent}>● </span>
         <span fg={theme.hover}>atlas</span>
       </text>
     </box>
+  )
+}
+
+const SCRIM = RGBA.fromInts(0, 0, 0, 70)
+
+/**
+ * The scrim is the floating sidebar's sibling rather than its parent so that folding and unfolding
+ * never re-parents the panel, which would remount the scrollbox and lose where it was scrolled to.
+ */
+function Scrim(): React.ReactNode {
+  return (
+    <box
+      position="absolute"
+      zIndex={19}
+      top={0}
+      bottom={0}
+      left={0}
+      right={0}
+      backgroundColor={SCRIM}
+    />
   )
 }
 
@@ -49,48 +63,62 @@ export function Sidebar(props: {
   turn: TurnClock
   now: number
   cwd: string
-  sessionDirectory?: string | undefined
   overlay?: boolean
   shells?: readonly ShellSnapshot[]
+  shellFold?: SidebarCrewFold
   onOpenShell?: (shellId: string) => void
+  onSelectSubagent?: (agentId: string) => void
 }): React.ReactNode {
   const { model } = props
   const cells = sidebarCells({ width: props.width })
   const floating = props.overlay === true
 
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
-      width={props.width}
-      backgroundColor={theme.panelBg}
-      paddingTop={1}
-      paddingBottom={1}
-      paddingLeft={2}
-      paddingRight={2}
-      position={floating ? 'absolute' : 'relative'}
-      zIndex={floating ? 20 : 0}
-      top={0}
-      bottom={0}
-      right={0}
-    >
-      <scrollbox flexGrow={1} flexShrink={1} flexBasis={0}>
-        <box flexDirection="column" flexShrink={0} gap={1}>
-          <HeadSection model={model} cells={cells} />
-          <FactsSection model={model} cells={cells} />
-          <TurnSection turn={props.turn} now={props.now} cells={cells} />
-          <ApprovalsSection model={model} cells={cells} />
-          <ShellsSection
-            shells={props.shells ?? []}
-            cells={cells}
-            {...(props.onOpenShell === undefined ? {} : { onOpen: props.onOpenShell })}
-          />
-          <TodoSection tasks={model.todo ?? []} cells={cells} />
-          <SubagentsSection subagents={model.subagents ?? []} cells={cells} />
-          <TeammatesSection teammates={model.teammates ?? []} cells={cells} />
-        </box>
-      </scrollbox>
-      <SidebarFooter cwd={props.cwd} sessionDirectory={props.sessionDirectory} cells={cells} />
-    </box>
+    <>
+      {floating ? <Scrim /> : null}
+      <box
+        flexDirection="column"
+        flexShrink={0}
+        width={props.width}
+        backgroundColor={theme.panelBg}
+        paddingTop={1}
+        paddingBottom={1}
+        paddingLeft={SIDEBAR_PADDING}
+        position={floating ? 'absolute' : 'relative'}
+        zIndex={floating ? 20 : 0}
+        top={0}
+        bottom={0}
+        right={0}
+      >
+        <scrollbox
+          flexGrow={1}
+          flexShrink={1}
+          flexBasis={0}
+          contentOptions={{ paddingRight: SIDEBAR_PADDING }}
+        >
+          <box flexDirection="column" flexShrink={0} gap={1}>
+            <HeadSection model={model} cells={cells} />
+            <FactsSection model={model} cells={cells} />
+            <TurnSection turn={props.turn} now={props.now} cells={cells} />
+            <ApprovalsSection model={model} cells={cells} />
+            <ShellsSection
+              shells={props.shells ?? []}
+              cells={cells}
+              fold={props.shellFold}
+              {...(props.onOpenShell === undefined ? {} : { onOpen: props.onOpenShell })}
+            />
+            <TodoSection tasks={model.todo ?? []} cells={cells} />
+            <SubagentsSection
+              subagents={model.subagents ?? []}
+              cells={cells}
+              fold={model.crewFold}
+              {...(props.onSelectSubagent === undefined ? {} : { onOpen: props.onSelectSubagent })}
+            />
+            <TeammatesSection teammates={model.teammates ?? []} cells={cells} />
+          </box>
+        </scrollbox>
+        <SidebarFooter cwd={props.cwd} cells={cells} />
+      </box>
+    </>
   )
 }

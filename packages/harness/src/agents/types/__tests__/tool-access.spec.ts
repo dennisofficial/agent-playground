@@ -60,7 +60,7 @@ const dispatchTo = async (args: { agentType: AgentType; name: string }): Promise
   const drafts = await dispatcher.dispatch({
     call: callOf(args.name),
     signal: new AbortController().signal,
-    sessionDirectory: '/workspace',
+    projectDirectory: '/workspace',
   })
 
   const draft = drafts[0]

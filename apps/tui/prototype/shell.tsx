@@ -25,7 +25,7 @@ import {
   type TranscriptModel,
 } from '../src/store'
 import { glyph, theme, SIDEBAR_WIDTH } from '../src/ui/theme'
-import { CWD, HOME, MODEL, MODEL_ID, WHERE } from './session'
+import { CWD, MODEL, WHERE } from './session'
 import { QuietSidebar, RailedSidebar, StripSidebar } from './sidebars'
 
 const said = (key: string, text: string): TranscriptEntry => ({
@@ -37,6 +37,7 @@ const said = (key: string, text: string): TranscriptEntry => ({
   steer: false,
     skills: [],
     files: [],
+      images: [],
 })
 
 const replied = (key: string, text: string): TranscriptEntry => ({
@@ -263,8 +264,6 @@ export function Shell(): React.ReactNode {
             width={contentWidth}
             now={0}
             cwd={CWD}
-            home={HOME}
-            modelId={MODEL_ID}
           />
           <Composer
             draft={draft}

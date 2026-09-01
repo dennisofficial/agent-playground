@@ -55,6 +55,7 @@ const operatorSaid = (
   steer: flags.steer ?? false,
   skills: [],
   files: [],
+    images: [],
 })
 
 type ModelFlags = { streaming?: boolean; interrupted?: boolean }
@@ -182,6 +183,7 @@ export const RUNNING: TurnClock = {
   interrupting: false,
   reasoning: false,
   completed: null,
+  retry: null,
 }
 
 export const REASONING: TurnClock = { ...RUNNING, reasoning: true }
@@ -194,6 +196,7 @@ export const FINISHED: TurnClock = {
   interrupting: false,
   reasoning: false,
   completed: { durationMs: 92_000, outputTokens: 4_210 },
+  retry: null,
 }
 
 export const NOW = 95_000
@@ -213,8 +216,6 @@ export function transcript(args: {
       width={args.width}
       now={NOW}
       cwd={CWD}
-      home={HOME}
-      modelId={MODEL_ID}
       {...(args.turn ? { turn: args.turn } : {})}
       {...(args.anchorKey ? { anchorKey: args.anchorKey } : {})}
       {...(args.sends === undefined ? {} : { sends: args.sends })}

@@ -28,3 +28,7 @@ export const UserSettingsStoreToken: InjectionToken<SettingsStorePort> = Symbol(
 export const ProjectSettingsStoreToken: InjectionToken<SettingsStorePort> = Symbol(
   'atlas.ProjectSettingsStore',
 )
+
+export const WorktreeDirectoryToken: InjectionToken<() => string> = Symbol(
+  'atlas.WorktreeDirectory',
+)

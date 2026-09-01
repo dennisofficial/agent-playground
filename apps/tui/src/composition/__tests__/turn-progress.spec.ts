@@ -1,4 +1,4 @@
-import type { Chunk } from '@dltech/atlas-core'
+import { ERetryReason, type Chunk } from '@dltech/atlas-core'
 import { ETurnStatus, toStepId, EStepEnd, type ChannelSignal } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
@@ -28,7 +28,10 @@ const chunk = (held: Chunk): ChannelSignal => ({ type: 'chunk', stepId: STEP, ch
 const started = () => turnStarted({ now: 1_000 })
 
 const absorbing = (signals: readonly ChannelSignal[]): TurnProgress =>
-  signals.reduce<TurnProgress>((progress, signal) => turnAdvanced({ progress, signal }), started())
+  signals.reduce<TurnProgress>(
+    (progress, signal) => turnAdvanced({ progress, signal, now: 0 }),
+    started(),
+  )
 
 describe('the clock the working line reads', () => {
   it('is idle until a turn is asked for, so the working line stays away', () => {
@@ -51,6 +54,26 @@ describe('the clock the working line reads', () => {
 
     expect(progress.characters).toBe(80)
     expect(progress.clock.outputTokens).toBe(20)
+  })
+
+  it('counts the arguments of a tool call, so a long write does not read as a stall', () => {
+    const progress = absorbing([
+      chunk({ type: 'tool-input-start', callId: toCallId('call-1'), name: 'write_file' }),
+      chunk({ type: 'tool-input-delta', callId: toCallId('call-1'), text: 'a'.repeat(400) }),
+    ])
+
+    expect(progress.characters).toBe(400)
+    expect(progress.clock.outputTokens).toBe(100)
+  })
+
+  it('stops calling the turn thinking once the model starts dictating a tool call', () => {
+    const progress = absorbing([
+      chunk({ type: 'reasoning-start', id: 'r' }),
+      chunk({ type: 'reasoning-delta', id: 'r', text: 'mulling' }),
+      chunk({ type: 'tool-input-start', callId: toCallId('call-1'), name: 'write_file' }),
+    ])
+
+    expect(progress.clock.reasoning).toBe(false)
   })
 
   it('counts by total characters rather than accumulating a rounded estimate', () => {
@@ -81,7 +104,11 @@ describe('the clock the working line reads', () => {
     const opened = absorbing([chunk({ type: 'reasoning-start', id: 'r' })])
     expect(opened.clock.reasoning).toBe(true)
 
-    const closed = turnAdvanced({ progress: opened, signal: chunk({ type: 'reasoning-end', id: 'r' }) })
+    const closed = turnAdvanced({
+      progress: opened,
+      signal: chunk({ type: 'reasoning-end', id: 'r' }),
+      now: 0,
+    })
     expect(closed.clock.reasoning).toBe(false)
   })
 
@@ -118,7 +145,9 @@ describe('the clock the working line reads', () => {
   it('leaves the progress untouched when a signal changes neither count nor thinking', () => {
     const progress = absorbing([chunk({ type: 'text-delta', id: 't', text: 'hi' })])
 
-    expect(turnAdvanced({ progress, signal: chunk({ type: 'text-end', id: 't' }) })).toBe(progress)
+    expect(turnAdvanced({ progress, signal: chunk({ type: 'text-end', id: 't' }), now: 0 })).toBe(
+      progress,
+    )
   })
 
   it('is no longer thinking once the turn settles', () => {
@@ -296,5 +325,88 @@ describe('a clock that does not count the time the machine was asleep', () => {
     const suspension = ticking([60_000, TICK, 60_000])
 
     expect(suspension.suspendedMs).toBe(2 * (60_000 - TICK))
+  })
+})
+
+describe('the clock while a failed step is being retried', () => {
+  const retryWaiting = (over: Partial<Extract<ChannelSignal, { type: 'retry-waiting' }>> = {}) =>
+    ({
+      type: 'retry-waiting',
+      attempt: 1,
+      maxAttempts: 10,
+      delayMs: 4_000,
+      reason: ERetryReason.Overloaded,
+      ...over,
+    }) as ChannelSignal
+
+  it('keeps what went wrong, so the wait can say why it is waiting', () => {
+    const progress = turnAdvanced({
+      progress: started(),
+      signal: retryWaiting({ reason: ERetryReason.RateLimited }),
+      now: 5_000,
+    })
+
+    expect(progress.clock.retry?.reason).toBe(ERetryReason.RateLimited)
+  })
+
+  it('starts a wait the working line can count down', () => {
+    const progress = turnAdvanced({ progress: started(), signal: retryWaiting(), now: 5_000 })
+
+    expect(progress.clock.retry).toEqual({
+      attempt: 1,
+      maxAttempts: 10,
+      delayMs: 4_000,
+      reason: ERetryReason.Overloaded,
+      startedAt: 5_000,
+    })
+  })
+
+  /**
+   * The attempt that failed is thrown away, so its characters must be too — otherwise the token
+   * count keeps a stream nobody will ever see.
+   */
+  it('forgets what the abandoned attempt streamed', () => {
+    const streamed = absorbing([chunk({ type: 'text-delta', id: 't', text: 'half an answer' })])
+
+    const progress = turnAdvanced({ progress: streamed, signal: retryWaiting(), now: 5_000 })
+
+    expect(progress.characters).toBe(0)
+    expect(progress.clock.outputTokens).toBe(0)
+  })
+
+  it('clears the wait once the next attempt opens a step', () => {
+    const waiting = turnAdvanced({ progress: started(), signal: retryWaiting(), now: 5_000 })
+
+    const restarted = turnAdvanced({
+      progress: waiting,
+      signal: { type: 'step-started', stepId: STEP },
+      now: 9_000,
+    })
+
+    expect(restarted.clock.retry).toBeNull()
+  })
+
+  it('clears the wait as soon as the retried attempt streams anything', () => {
+    const waiting = turnAdvanced({ progress: started(), signal: retryWaiting(), now: 5_000 })
+
+    const streaming = turnAdvanced({
+      progress: waiting,
+      signal: chunk({ type: 'text-delta', id: 't', text: 'hello' }),
+      now: 9_000,
+    })
+
+    expect(streaming.clock.retry).toBeNull()
+  })
+
+  it('drops the wait when the operator interrupts', () => {
+    const waiting = turnAdvanced({ progress: started(), signal: retryWaiting(), now: 5_000 })
+
+    expect(turnInterrupting(waiting).clock.retry).toBeNull()
+  })
+
+  it('leaves no wait behind once the turn settles', () => {
+    const waiting = turnAdvanced({ progress: started(), signal: retryWaiting(), now: 5_000 })
+
+    expect(turnSettled({ progress: waiting, now: 9_000 }).clock.retry).toBeNull()
   })
 })

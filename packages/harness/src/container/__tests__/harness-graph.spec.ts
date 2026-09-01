@@ -47,6 +47,7 @@ describe('the harness container graph', () => {
       'shell_kill',
       'shell_list',
       'shell_output',
+      'skill',
       'task_write',
       'write',
     ])
@@ -86,7 +87,7 @@ describe('the harness container graph', () => {
         threadId: toThreadId('thread-1'),
       },
       signal: AbortSignal.timeout(5_000),
-      sessionDirectory: SESSION_DIRECTORY,
+      projectDirectory: SESSION_DIRECTORY,
     })
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result'])

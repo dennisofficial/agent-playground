@@ -1,9 +1,13 @@
 import { cacheBreakpoints } from './annotators/cache-breakpoints'
 import type { Annotator, Rule } from './rule'
+import { agentEndingsBlock } from './rules/agent-endings-block'
 import { compactedHistory } from './rules/compacted-history'
+import { imagesInContext, type ImagesKeptSource } from './rules/images'
 import { messagesFromEvents } from './rules/messages-from-events'
-import { sessionDirectoryBlock } from './rules/session-directory-block'
+import { runningAgentsBlock, type RunningAgentsSource } from './rules/running-agents-block'
+import { runningShellsBlock, type RunningShellsSource } from './rules/running-shells-block'
 import { systemPrompt, type PromptSource } from './rules/system-prompt'
+import { worktreeBlock } from './rules/worktree-block'
 
 export type AssemblyPipeline = {
   rules: readonly Rule[]
@@ -12,16 +16,26 @@ export type AssemblyPipeline = {
 
 export function defaultRules({
   prompt,
-  projectDirectory,
+  launchDirectory,
+  runningShells,
+  runningAgents,
+  imagesKept,
 }: {
   prompt: PromptSource
-  projectDirectory: string
+  launchDirectory: string
+  runningShells?: RunningShellsSource | undefined
+  runningAgents?: RunningAgentsSource | undefined
+  imagesKept?: ImagesKeptSource | undefined
 }): readonly Rule[] {
   return [
-    systemPrompt({ prompt }),
+    systemPrompt({ prompt, launchDirectory }),
     messagesFromEvents(),
+    agentEndingsBlock(),
     compactedHistory(),
-    sessionDirectoryBlock({ projectDirectory }),
+    imagesInContext({ keep: imagesKept }),
+    worktreeBlock({ launchDirectory }),
+    ...(runningShells === undefined ? [] : [runningShellsBlock({ runningShells })]),
+    ...(runningAgents === undefined ? [] : [runningAgentsBlock({ runningAgents })]),
   ]
 }
 
@@ -31,10 +45,19 @@ export function defaultAnnotators(): readonly Annotator[] {
 
 export function defaultPipeline({
   prompt,
-  projectDirectory,
+  launchDirectory,
+  runningShells,
+  runningAgents,
+  imagesKept,
 }: {
   prompt: PromptSource
-  projectDirectory: string
+  launchDirectory: string
+  runningShells?: RunningShellsSource | undefined
+  runningAgents?: RunningAgentsSource | undefined
+  imagesKept?: ImagesKeptSource | undefined
 }): AssemblyPipeline {
-  return { rules: defaultRules({ prompt, projectDirectory }), annotators: defaultAnnotators() }
+  return {
+    rules: defaultRules({ prompt, launchDirectory, runningShells, runningAgents, imagesKept }),
+    annotators: defaultAnnotators(),
+  }
 }

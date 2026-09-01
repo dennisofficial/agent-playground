@@ -5,7 +5,13 @@ const ELLIPSIS = '…'
 
 const GAP_CELLS = 1
 
-export const SIDEBAR_INSET = 5
+export const SIDEBAR_PADDING = 2
+
+const SCROLLBAR_CELLS = 1
+
+export const SIDEBAR_GUTTER = SIDEBAR_PADDING + SCROLLBAR_CELLS
+
+export const SIDEBAR_INSET = SIDEBAR_PADDING + SIDEBAR_GUTTER
 
 export const sidebarCells = (args: { width: number }): number =>
   Math.max(0, args.width - SIDEBAR_INSET)

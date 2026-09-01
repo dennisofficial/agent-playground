@@ -1,6 +1,8 @@
 import { z, type ZodType } from 'zod'
 
+import { EWorktreeExit } from '../events/body'
 import type { CallId, ThreadId } from '../events/ids'
+import type { ImagePart, TextPart } from '../message/parts'
 
 export enum EToolEffect {
   Read = 'read',
@@ -42,9 +44,48 @@ export type ToolCall = {
   threadId: ThreadId
 }
 
+export type ModelPart = TextPart | ImagePart
+
 export type ToolOutcome =
-  | { ok: true; output: unknown; modelText: string }
+  | {
+      ok: true
+      output: unknown
+      modelText: string
+      modelParts?: readonly ModelPart[] | undefined
+    }
   | { ok: false; reason: string }
+
+export type WorktreeEntry = { path: string; branch: string; base: string }
+
+export type WorktreeEntered = { enteredWorktree: WorktreeEntry }
+
+export type WorktreeExited = { exitedWorktree: { path: string; action: EWorktreeExit } }
+
+export function enteredWorktreeOf(output: unknown): WorktreeEntry | undefined {
+  if (typeof output !== 'object' || output === null) return undefined
+
+  const entered = (output as Partial<WorktreeEntered>).enteredWorktree
+  if (entered === undefined) return undefined
+
+  const { path, branch, base } = entered
+  if (typeof path !== 'string' || path.length === 0) return undefined
+  if (typeof branch !== 'string' || typeof base !== 'string') return undefined
+
+  return { path, branch, base }
+}
+
+export function exitedWorktreeOf(output: unknown): WorktreeExited['exitedWorktree'] | undefined {
+  if (typeof output !== 'object' || output === null) return undefined
+
+  const exited = (output as Partial<WorktreeExited>).exitedWorktree
+  if (exited === undefined) return undefined
+
+  const { path, action } = exited
+  if (typeof path !== 'string' || path.length === 0) return undefined
+  if (action !== EWorktreeExit.Keep && action !== EWorktreeExit.Remove) return undefined
+
+  return { path, action }
+}
 
 export type WholeFileClaim<TInput> = { input: TInput; output: unknown }
 
@@ -65,23 +106,15 @@ export type ToolInvocation = {
   input: unknown
   signal: AbortSignal
   idempotencyKey: string
-  sessionDirectory: string
+  projectDirectory: string
   threadId: ThreadId
-}
-
-export type SessionDirectoryMove = { sessionDirectory: string }
-
-export function movedSessionDirectoryOf(output: unknown): string | undefined {
-  if (typeof output !== 'object' || output === null) return undefined
-  const moved = (output as Partial<SessionDirectoryMove>).sessionDirectory
-  return typeof moved === 'string' && moved.length > 0 ? moved : undefined
 }
 
 export type ToolRun<TSchema extends ZodType> = {
   input: z.output<TSchema>
   signal: AbortSignal
   idempotencyKey: string
-  sessionDirectory: string
+  projectDirectory: string
   threadId: ThreadId
 }
 
@@ -107,7 +140,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
     input,
     signal,
     idempotencyKey,
-    sessionDirectory,
+    projectDirectory,
     threadId,
   }: ToolInvocation): Promise<ToolOutcome> {
     const parsed = this.inputSchema.safeParse(input)
@@ -115,6 +148,12 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
       return { ok: false, reason: `${this.name} was called with invalid input: ${z.prettifyError(parsed.error)}` }
     }
 
-    return await this.run({ input: parsed.data, signal, idempotencyKey, sessionDirectory, threadId })
+    return await this.run({
+      input: parsed.data,
+      signal,
+      idempotencyKey,
+      projectDirectory,
+      threadId,
+    })
   }
 }

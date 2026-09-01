@@ -17,6 +17,7 @@ import {
 
 const shell = (over: Omit<Partial<ShellSnapshot>, 'shellId'> & { shellId: string }): ShellSnapshot => ({
   command: 'bun test',
+  description: 'Run the tests',
   status: EShellStatus.Running,
   pid: 4242,
   startedAt: '2026-08-27T12:00:00.000Z',

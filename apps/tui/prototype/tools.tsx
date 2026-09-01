@@ -177,7 +177,7 @@ function argOf(argv: readonly string[], flag: string): string | undefined {
 }
 
 const cwdOf = (events: readonly Event[]): string => {
-  for (const event of events) if (event.type === 'cwd-changed') return event.path
+  for (const event of events) if (event.type === 'worktree-entered') return event.path
   return process.cwd()
 }
 

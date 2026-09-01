@@ -11,8 +11,7 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { inject, injectAll, injectable, portToken } from '../container/injection'
-import { WorkspaceRoot } from '../container/tokens'
+import { injectAll, injectable, portToken } from '../container/injection'
 import {
   ABSENT,
   createDeclaredPaths,
@@ -28,15 +27,12 @@ export class ResolveProjectPathsHook extends BeforeToolHook {
 
   private readonly declaredPaths: DeclaredPaths
 
-  constructor(
-    @inject(WorkspaceRoot) private readonly root: string,
-    @injectAll(portToken(ToolDefinition)) tools: readonly ToolDeclaration[],
-  ) {
+  constructor(@injectAll(portToken(ToolDefinition)) tools: readonly ToolDeclaration[]) {
     super()
     this.declaredPaths = createDeclaredPaths({ tools })
   }
 
-  readonly run: BeforeTool = async ({ call }) => {
+  readonly run: BeforeTool = async ({ call, projectDirectory }) => {
     const declaration = this.declaredPaths.forTool(call.name)
     if (declaration.kind !== EPathDeclaration.Declared) {
       return { decision: EBeforeToolDecision.Allow, input: call.input }
@@ -51,7 +47,7 @@ export class ResolveProjectPathsHook extends BeforeToolHook {
       if (value === ABSENT || typeof value !== 'string' || value.length === 0) continue
       if (isAbsolute(value)) continue
 
-      input = { ...(input as Record<string, unknown>), [field.field]: resolve(this.root, value) }
+      input = { ...(input as Record<string, unknown>), [field.field]: resolve(projectDirectory, value) }
     }
 
     return { decision: EBeforeToolDecision.Allow, input }

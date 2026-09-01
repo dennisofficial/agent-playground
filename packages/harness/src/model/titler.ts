@@ -2,7 +2,8 @@ import { generateText, type LanguageModel } from 'ai'
 
 const TITLE_INSTRUCTION = [
   'You name coding sessions.',
-  "Read the developer's opening message and reply with a name for the session.",
+  "You are given the developer's opening message, or an excerpt of the session so far.",
+  'Reply with a name for the session, drawn from the work it is actually about.',
   'Two to five words. Name the task, never the developer.',
   'Reply with the name alone — no quotes, no trailing punctuation, no preamble.',
 ].join(' ')

@@ -295,6 +295,7 @@ export class PrismaThreadStore implements ThreadStorePort {
   }
 
   private createWithFirstEventsOnce({
+    threadId: given,
     drafts,
     runId,
     title,
@@ -307,6 +308,7 @@ export class PrismaThreadStore implements ThreadStorePort {
         tx,
         ids: this.ids,
         clock: this.clock,
+        threadId: given,
         drafts,
         runId,
         title,

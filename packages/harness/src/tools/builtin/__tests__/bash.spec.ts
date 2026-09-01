@@ -1,5 +1,5 @@
 import { toThreadId } from '@dltech/atlas-core'
-import { mkdtemp, readdir, realpath, stat } from 'node:fs/promises'
+import { mkdtemp, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
@@ -21,7 +21,7 @@ const submit = (input: unknown): Promise<ToolOutcome> =>
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'bash-1',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId: toThreadId('thread-1'),
   })
 
@@ -145,7 +145,7 @@ describe('BashTool', () => {
       input: { command: 'sleep 30', description: 'Idle for a while' },
       signal: controller.signal,
       idempotencyKey: 'bash-2',
-      sessionDirectory: root,
+      projectDirectory: root,
       threadId: toThreadId('thread-1'),
     })
     setTimeout(() => controller.abort(), 100)
@@ -157,22 +157,30 @@ describe('BashTool', () => {
   }, 15_000)
 })
 
-describe('following the session directory', () => {
-  it('reports where a cd left the shell', async () => {
+describe('choosing where the command runs', () => {
+  it('runs in the directory workdir names', async () => {
     const nested = join(root, 'nested')
     await invoke({ command: `mkdir -p ${nested}` })
 
-    const outcome = await invoke({ command: 'cd nested && pwd' })
+    const outcome = await invoke({ command: 'pwd', workdir: nested })
 
-    expect(await realpath(outputOf(outcome).sessionDirectory as string)).toBe(await realpath(nested))
-    expect(outcome.ok && outcome.modelText).toContain('You are now in')
+    expect(await realpath((outputOf(outcome).stdout as string).trim())).toBe(await realpath(nested))
   })
 
-  it('reports no move when the command stays put', async () => {
-    const outcome = await invoke({ command: 'echo staying' })
+  it('starts at the project directory when workdir is left out', async () => {
+    const outcome = await invoke({ command: 'pwd' })
 
-    expect(outputOf(outcome).sessionDirectory).toBeUndefined()
-    expect(outcome.ok && outcome.modelText).not.toContain('You are now in')
+    expect(await realpath((outputOf(outcome).stdout as string).trim())).toBe(await realpath(root))
+  })
+
+  it('lets a cd move only the command that ran it, never the call that follows', async () => {
+    const nested = join(root, 'nested')
+    await invoke({ command: `mkdir -p ${nested}` })
+    await invoke({ command: 'cd nested && pwd' })
+
+    const outcome = await invoke({ command: 'pwd' })
+
+    expect(await realpath((outputOf(outcome).stdout as string).trim())).toBe(await realpath(root))
   })
 
   it('starts where it is told rather than at the project root', async () => {
@@ -182,26 +190,34 @@ describe('following the session directory', () => {
       input: { command: 'pwd', description: 'Print the working directory' },
       signal: new AbortController().signal,
       idempotencyKey: 'bash-elsewhere',
-      sessionDirectory: elsewhere,
+      projectDirectory: elsewhere,
       threadId: toThreadId('thread-1'),
     })
 
     expect(await realpath((outputOf(outcome).stdout as string).trim())).toBe(await realpath(elsewhere))
   })
 
+  it('names the missing directory rather than blaming the shell', async () => {
+    const outcome = await invoke({ command: 'pwd', workdir: join(root, 'nowhere') })
+
+    expect(outcome).toEqual({
+      ok: false,
+      reason: `workdir ${join(root, 'nowhere')} does not exist, so there is nowhere to run the command`,
+    })
+  })
+
+  it('refuses a workdir that names a file rather than a directory', async () => {
+    const file = join(root, 'not-a-directory.txt')
+    await invoke({ command: `echo hi > ${file}` })
+
+    const outcome = await invoke({ command: 'pwd', workdir: file })
+
+    expect(outcome).toEqual({ ok: false, reason: `workdir ${file} is a file, not a directory` })
+  })
+
   it('keeps the exit code of a command that also moved', async () => {
     const outcome = await invoke({ command: 'cd nested && exit 3' })
 
     expect(outputOf(outcome).exitCode).toBe(3)
-    expect(outputOf(outcome).sessionDirectory).toBeUndefined()
-  })
-
-  it('leaves no probe file behind', async () => {
-    const before = await readdir(tmpdir())
-    await invoke({ command: 'pwd' })
-    const after = await readdir(tmpdir())
-
-    const leaked = after.filter((name) => name.startsWith('atlas-cwd-') && !before.includes(name))
-    expect(leaked).toEqual([])
   })
 })

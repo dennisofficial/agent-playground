@@ -1,12 +1,15 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
+import { ERetryReason } from '@dltech/atlas-core'
+
 import { EMPTY_TRANSCRIPT, EPendingKind, type TranscriptModel } from '../../store'
 import { RAIL, RAIL_HEAD, RAIL_TAIL } from '../borders'
 import { Composer } from '../components/composer'
 import { JumpToBottom, NewDivider } from '../components/new-divider'
 import type { TurnClock } from '../components/transcript'
 import { WorkingLine } from '../components/working-line'
+import type { RetryWait } from '../retry-countdown'
 import { useDraft } from '../hooks/use-draft'
 import { grammarsReady } from '../markdown/__tests__/harness'
 import { deriveTranscript } from '../../store'
@@ -20,7 +23,6 @@ import {
   INTERRUPTED,
   INTERRUPTING,
   LAST_WORDS,
-  MODEL_ID,
   mount,
   PARTIAL_REPLY,
   REASONING,
@@ -386,15 +388,15 @@ describe('what the transcript actually says', () => {
     const frame = await frameOf(transcript({ model: SETTLED, width: 80, anchorKey: 'u2' }), 80)
     expect(frame).toContain(' new ')
   })
-
-  it('names itself, where it is and what answers when there is nothing there yet', async () => {
-    const frame = await frameOf(transcript({ model: EMPTY_TRANSCRIPT, width: 80 }), 80)
-    expect(frame).toContain('atlas')
-    expect(frame).toContain('~/Developer/atlas')
-    expect(frame).toContain(MODEL_ID)
-    expect(frame).toContain('Describe the work')
-  })
 })
+
+const WAITING: RetryWait = {
+  attempt: 2,
+  maxAttempts: 10,
+  delayMs: 8_000,
+  reason: ERetryReason.Overloaded,
+  startedAt: RUNNING.startedAt ?? 0,
+}
 
 describe('the pieces around the transcript mount', () => {
   it('renders the working line in each of its states', async () => {
@@ -402,10 +404,22 @@ describe('the pieces around the transcript mount', () => {
       { elapsedMs: 4_000, outputTokens: 0, interrupting: false },
       { elapsedMs: 94_000, outputTokens: 12_400, interrupting: false },
       { elapsedMs: 94_000, outputTokens: 12_400, interrupting: true },
+      { elapsedMs: 4_000, outputTokens: 0, interrupting: false, retry: WAITING },
     ]) {
       await expect(mount(<WorkingLine {...state} />, 60)).resolves.toBeUndefined()
     }
   }, 60_000)
+
+  it('says what went wrong instead of claiming to be working', async () => {
+    const frame = await frameOf(
+      transcript({ model: STREAMING, width: 80, turn: { ...RUNNING, retry: WAITING } }),
+      80,
+    )
+
+    expect(frame).toContain('API overloaded')
+    expect(frame).toContain('attempt 2/10')
+    expect(frame).not.toContain('Working for')
+  })
 
   it('renders the new divider and the jump pill', async () => {
     for (const width of WIDTHS) {

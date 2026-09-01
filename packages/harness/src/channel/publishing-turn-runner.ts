@@ -61,6 +61,17 @@ export class PublishingTurnRunner extends TurnRunner {
 
   private runnerFor(threadId: ThreadId): { publisher: ThreadPublisher; runner: TurnRunner } {
     const publisher = this.channel.publisherFor({ threadId, filter: this.deps.onChunk })
-    return { publisher, runner: new LoopTurnRunner({ ...this.deps, onChunk: publisher.onChunk }) }
+    const runner = new LoopTurnRunner({
+      ...this.deps,
+      onChunk: publisher.onChunk,
+      retry: {
+        ...this.deps.retry,
+        onWaiting: (notice) => {
+          publisher.retrying(notice)
+          this.deps.retry?.onWaiting?.(notice)
+        },
+      },
+    })
+    return { publisher, runner }
   }
 }

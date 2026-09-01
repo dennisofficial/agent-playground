@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import type { LanguageModelV4StreamPart } from '@ai-sdk/provider'
+import { APICallError, type LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import { z } from 'zod'
 
@@ -88,6 +88,33 @@ const step = (args: {
     ...(args.onChunk ? { onChunk: args.onChunk } : {}),
   })
 }
+
+const overloadedOnce = (): { model: MockLanguageModelV4; calls: () => number } => {
+  let calls = 0
+  const model = new MockLanguageModelV4({
+    doStream: async () => {
+      calls += 1
+      throw new APICallError({
+        message: 'overloaded',
+        url: 'https://api.anthropic.com/v1/messages',
+        requestBodyValues: {},
+        statusCode: 529,
+        isRetryable: true,
+      })
+    },
+  })
+  return { model, calls: () => calls }
+}
+
+describe('who owns a retry', () => {
+  it('leaves a retryable failure to the policy above instead of swallowing attempts', async () => {
+    const overloaded = overloadedOnce()
+
+    await expect(step({ model: overloaded.model })).rejects.toThrow()
+
+    expect(overloaded.calls()).toBe(1)
+  })
+})
 
 describe('AiSdkModelPort', () => {
   it('exposes the provider identity it was built with', () => {

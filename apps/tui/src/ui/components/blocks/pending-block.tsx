@@ -4,9 +4,11 @@ import { EPendingKind, type PendingRow } from '../../../store'
 import { glyph, theme, TRANSCRIPT_INSET } from '../../theme'
 import { UserBlock } from './user-block'
 
+type NoticeKind = EPendingKind.BackgroundShell | EPendingKind.Agent
+
 type PendingRun =
   | { kind: EPendingKind.Operator; id: string; said: readonly string[]; takeBack: boolean }
-  | { kind: EPendingKind.BackgroundShell; id: string; text: string; failed: boolean }
+  | { kind: NoticeKind; id: string; text: string; failed: boolean }
 
 /**
  * Consecutive queued messages share one panel, the way the transcript gives one panel to
@@ -16,7 +18,7 @@ export function pendingRuns(rows: readonly PendingRow[]): readonly PendingRun[] 
   const runs: PendingRun[] = []
 
   for (const row of rows) {
-    if (row.kind === EPendingKind.BackgroundShell) {
+    if (row.kind !== EPendingKind.Operator) {
       runs.push({ kind: row.kind, id: row.id, text: row.text, failed: row.failed })
       continue
     }
@@ -43,15 +45,15 @@ export function PendingBlock(props: {
   return (
     <box flexDirection="column" flexShrink={0}>
       {pendingRuns(props.rows).map((run) =>
-        run.kind === EPendingKind.BackgroundShell ? (
-          <WaitingShellRow key={run.id} text={run.text} failed={run.failed} width={props.width} />
-        ) : (
+        run.kind === EPendingKind.Operator ? (
           <UserBlock
             key={run.id}
             said={run.said}
             width={props.width}
             {...(run.takeBack ? { takeBack: true } : {})}
           />
+        ) : (
+          <WaitingNoticeRow key={run.id} text={run.text} failed={run.failed} width={props.width} />
         ),
       )}
     </box>
@@ -62,7 +64,7 @@ export function PendingBlock(props: {
  * Nobody typed this, so it carries no take-back affordance: it is waiting to be handed to the model,
  * not waiting to be sent.
  */
-function WaitingShellRow(props: {
+function WaitingNoticeRow(props: {
   text: string
   failed: boolean
   width: number

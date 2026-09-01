@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test'
 
 import { beaconHeat, shimmerCrest, shimmerCycleMs, shimmerHeat, WORKING_SHIMMER } from '../shimmer'
 import { mixHex } from '../colour'
-import { shimmerSpans } from '../shimmer-style'
+import { theme } from '../theme'
+import { SHIMMER_CREST, shimmerColour, shimmerSpans } from '../shimmer-style'
 
 describe('the sweep arithmetic', () => {
   it('spends the quiet part of the cycle with the crest off the end of the line', () => {
@@ -36,6 +37,11 @@ describe('the sweep arithmetic', () => {
 })
 
 describe('the sweep, coloured', () => {
+  it('rests on the accent and swipes towards the lighter crest', () => {
+    expect(shimmerColour(0)).toBe(theme.accent)
+    expect(shimmerColour(1)).toBe(SHIMMER_CREST)
+  })
+
   it('clamps a blend rather than wrapping it', () => {
     expect(mixHex({ from: '#000000', to: '#ffffff', amount: -1 })).toBe('#000000')
     expect(mixHex({ from: '#000000', to: '#ffffff', amount: 2 })).toBe('#ffffff')

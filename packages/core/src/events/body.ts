@@ -1,6 +1,6 @@
 import type { EAgentStart } from '../agents/start'
 import type { EAgentStatus } from '../agents/status'
-import type { ReasoningPart, TextPart } from '../message/parts'
+import type { ImagePart, ReasoningPart, TextPart } from '../message/parts'
 import type { EKilledBy, EShellStatus } from '../shells/status'
 import type { CallId, ThreadId } from './ids'
 
@@ -14,6 +14,11 @@ export enum EDecision {
   Deny = 'deny',
 }
 
+export enum EWorktreeExit {
+  Keep = 'keep',
+  Remove = 'remove',
+}
+
 export enum EMessageOrigin {
   Operator = 'operator',
   ParentAgent = 'parent-agent',
@@ -24,8 +29,21 @@ export const saidBy = (said: { via?: EMessageOrigin | undefined }): EMessageOrig
 
 export type AssistantPart = TextPart | ReasoningPart
 
+export type SaidImage = {
+  path: string
+  mediaType: string
+  data: string
+  width?: number | undefined
+  height?: number | undefined
+}
+
 export type EventBody =
-  | { type: 'user-said'; text: string; via?: EMessageOrigin | undefined }
+  | {
+      type: 'user-said'
+      text: string
+      via?: EMessageOrigin | undefined
+      images?: readonly SaidImage[] | undefined
+    }
   | { type: 'assistant-said'; parts: readonly AssistantPart[]; interrupted?: boolean | undefined }
   | { type: 'tool-called'; callId: CallId; name: string; input?: unknown; ordinal: number }
   | {
@@ -34,6 +52,7 @@ export type EventBody =
       name: string
       output?: unknown
       modelText?: string | undefined
+      modelParts?: readonly (TextPart | ImagePart)[] | undefined
       error?: { message: string } | undefined
       interrupted?: boolean | undefined
     }
@@ -42,7 +61,8 @@ export type EventBody =
   | { type: 'approval-answered'; callId: CallId; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded'; slot: string; key: string; content: string; triggeredBy?: string | undefined }
   | { type: 'nudge'; text: string; lifetimeSteps: number }
-  | { type: 'cwd-changed'; path: string }
+  | { type: 'worktree-entered'; path: string; branch: string; base: string }
+  | { type: 'worktree-exited'; path: string; action: EWorktreeExit }
   | {
       type: 'background-shell-ended'
       shellId: string

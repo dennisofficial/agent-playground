@@ -29,6 +29,11 @@ export type { ChunkFilter }
 // the terminal renderer.
 const reportNothing = () => {}
 
+// streamText defaults to maxRetries: 2, and those attempts happen inside one call to it — so they
+// pass no notice to the retry policy above and the operator sees an idle spinner for as long as
+// they take. https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text
+const RETRIES_BELONG_TO_THE_POLICY = 0
+
 async function keptChunk(args: {
   chunk: Chunk
   hooks: HookChain | undefined
@@ -60,6 +65,7 @@ export async function runModelStream(args: {
     tools: toToolSet(args.tools),
     stopWhen: stepCountIs(1),
     abortSignal: args.signal,
+    maxRetries: RETRIES_BELONG_TO_THE_POLICY,
     onError: reportNothing,
   })
 

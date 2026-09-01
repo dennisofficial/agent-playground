@@ -63,6 +63,14 @@ export function toCoreChunk(part: TextStreamPart<ToolSet>): Chunk | null {
   }
   if (part.type === 'reasoning-end') return { type: 'reasoning-end', id: part.id, ...carriedMetadata(part) }
 
+  if (part.type === 'tool-input-start') {
+    return { type: 'tool-input-start', callId: toCallId(part.id), name: part.toolName }
+  }
+  if (part.type === 'tool-input-delta') {
+    return { type: 'tool-input-delta', callId: toCallId(part.id), text: part.delta }
+  }
+  if (part.type === 'tool-input-end') return { type: 'tool-input-end', callId: toCallId(part.id) }
+
   if (part.type === 'tool-call') {
     return { type: 'tool-call', callId: toCallId(part.toolCallId), name: part.toolName, input: part.input }
   }

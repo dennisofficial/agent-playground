@@ -25,7 +25,7 @@ const search = async (input: GrepInput): Promise<ToolOutcome> =>
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'grep-1',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId: toThreadId('thread-1'),
   })
 

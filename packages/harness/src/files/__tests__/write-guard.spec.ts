@@ -45,7 +45,7 @@ const invoke = (tool: EditTool | WriteTool, input: unknown, threadId: ThreadId):
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'write-guard',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId,
   })
 

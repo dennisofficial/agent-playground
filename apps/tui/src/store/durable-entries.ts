@@ -1,7 +1,9 @@
-import { EContextSlot, type AssistantPart, type CallId, type Event, type EventId, type EventOfType } from '@dltech/atlas-core'
+import { EContextSlot, type AssistantPart, type CallId, type Event, type EventId, type EventOfType, type SaidImage } from '@dltech/atlas-core'
 
+
+import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
 import { modelEntries } from './model-entries'
-import { shellEndedLine, shellEndingFailed } from './shell-ended-line'
+import { shellAwaitingInputLine, shellEndedLine, shellEndingFailed } from './shell-ended-line'
 import { toolRuns, type ToolRun } from './tool-runs'
 import type { TurnSpend } from '@dltech/atlas-harness'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from './transcript-model'
@@ -74,6 +76,8 @@ function contextLoadedWith(events: readonly Event[]): ReadonlyMap<EventId, Attac
   return attached
 }
 
+const NOTHING_PICTURED: readonly SaidImage[] = Object.freeze([])
+
 function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
   return entries.reduce<TranscriptEntry[]>((folded, entry) => {
     const open = folded.at(-1)
@@ -91,6 +95,7 @@ function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
       said: [...open.said, ...entry.said],
       skills: [...new Set([...open.skills, ...entry.skills])],
       files: [...new Set([...open.files, ...entry.files])],
+      images: [...open.images, ...entry.images],
     }
     return folded
   }, [])
@@ -118,6 +123,7 @@ export function durableEntries(args: {
           steer: steers.has(event.id),
           skills: (loaded.get(event.id) ?? NOTHING_ATTACHED).skills,
           files: (loaded.get(event.id) ?? NOTHING_ATTACHED).files,
+          images: event.images ?? NOTHING_PICTURED,
         },
       ]
     }
@@ -139,6 +145,33 @@ export function durableEntries(args: {
           shellId: event.shellId,
           output: event.output,
           failed: shellEndingFailed(event),
+        },
+      ]
+    }
+
+    if (event.type === 'background-shell-awaiting-input') {
+      return [
+        {
+          kind: EEntryKind.BackgroundShellAwaitingInput,
+          author: EAuthor.Model,
+          key: event.id,
+          text: shellAwaitingInputLine(event),
+          shellId: event.shellId,
+          output: event.output,
+        },
+      ]
+    }
+
+    if (event.type === 'agent-ended') {
+      return [
+        {
+          kind: EEntryKind.AgentEnded,
+          author: EAuthor.Model,
+          key: event.id,
+          text: agentEndedLine(event),
+          agentId: event.agentId,
+          report: event.prose,
+          failed: agentEndingFailed(event),
         },
       ]
     }

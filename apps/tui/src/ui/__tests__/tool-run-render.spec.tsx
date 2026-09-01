@@ -1,6 +1,6 @@
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
-import React from 'react'
+import React, { act, useCallback, useState } from 'react'
 
 import { toCallId } from '@dltech/atlas-core'
 
@@ -14,6 +14,8 @@ const BULLET = glyph.block
 const WIDTH = 100
 
 const HEIGHT = 24
+
+const TALL = 60
 
 const CWD = '/repo'
 
@@ -46,7 +48,11 @@ const runOf = (calls: readonly ToolCall[]): ToolRun => ({
   calls,
 })
 
-async function frameOf(run: ToolRun, opened?: ReadonlySet<string>): Promise<string> {
+async function frameOf(
+  run: ToolRun,
+  opened?: ReadonlySet<string>,
+  height: number = HEIGHT,
+): Promise<string> {
   const setup = await testRender(
     <ToolRunBlock
       run={run}
@@ -55,7 +61,7 @@ async function frameOf(run: ToolRun, opened?: ReadonlySet<string>): Promise<stri
       now={0}
       {...(opened === undefined ? {} : { opened })}
     />,
-    { width: WIDTH, height: HEIGHT },
+    { width: WIDTH, height },
   )
   await setup.flush()
   const frame = setup.captureCharFrame()
@@ -176,6 +182,21 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).not.toContain('+ export')
   })
 
+  it('shows the file as it is being dictated, before the write has run', async () => {
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'write',
+          state: ECallState.Pending,
+          input: { path: `${CWD}/src/new.ts`, content: 'export const two = 2\nexport const th' },
+        }),
+      ]),
+    )
+
+    expect(frame).toContain('Writing src/new.ts')
+    expect(frame).toContain('export const th')
+  })
+
   it('says nothing extra when a write reported no content to show', async () => {
     const frame = await frameOf(
       runOf([
@@ -190,29 +211,56 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).toContain('Created src/new.ts')
   })
 
-  it('opens a refused call onto the reason it was refused', async () => {
+  it('draws a failure as its own row, leaving the sentence to the work that succeeded', async () => {
+    const broken = call({
+      name: 'bash',
+      input: { command: 'nixify' },
+      output: { command: 'nixify', stdout: 'nixify: command not found', exitCode: 127 },
+    })
+    const frame = await frameOf(runOf([read('a.ts', 10), read('b.ts', 20), broken]))
+
+    expect(frame).toContain('Read 2 files')
+    expect(frame).toContain('nixify')
+    expect(frame).not.toContain('failed')
+  })
+
+  it('keeps a sentence whole when a later stage owns the exit code the clause does not', async () => {
+    const passing = call({
+      name: 'bash',
+      input: { command: 'grep -rn theme src | head -20; cat missing.json' },
+      output: {
+        command: 'grep -rn theme src | head -20; cat missing.json',
+        stdout: 'src/ui/theme.ts:4',
+        exitCode: 1,
+      },
+    })
+    const frame = await frameOf(runOf([read('a.ts', 10), passing]))
+
+    expect(frame).toContain('Read 1 file, searched 1 time')
+    expect(frame).not.toContain('failed')
+  })
+
+  it('shows a refused call its reason unasked, the way a change shows its diff', async () => {
     const refused = call({
       name: 'write',
       input: { path: `${CWD}/outside.ts` },
       state: ECallState.Denied,
       note: 'the path is outside the workspace root',
     })
-    const run = runOf([refused])
+    const frame = await frameOf(runOf([refused]))
 
-    expect(await frameOf(run)).toContain('Refused write outside.ts')
-    expect(await frameOf(run)).not.toContain('outside the workspace root')
-    expect(await frameOf(run, new Set([refused.callId]))).toContain('outside the workspace root')
+    expect(frame).toContain('Refused write outside.ts')
+    expect(frame).toContain('outside the workspace root')
   })
 
-  it('opens a call the tool could not complete onto the error the model was handed', async () => {
+  it('shows a call the tool could not complete the error the model was handed', async () => {
     const broken = call({
       name: 'read',
       input: { path: `${CWD}/gone.ts` },
       state: ECallState.Failed,
       note: 'no file at /repo/gone.ts',
     })
-    const run = runOf([broken])
-    const frame = await frameOf(run, new Set([broken.callId]))
+    const frame = await frameOf(runOf([broken]))
 
     expect(frame).toContain('Failed read gone.ts')
     expect(frame).toContain('no file at /repo/gone.ts')
@@ -226,4 +274,137 @@ describe('a run of tool calls in the transcript', () => {
       'paths.ts',
     )
   })
+
+  it('opens an image read onto what the picture is, not onto its bytes', async () => {
+    const shot = call({
+      name: 'read',
+      input: { path: `${CWD}/docs/shot.png` },
+      output: {
+        path: `${CWD}/docs/shot.png`,
+        mediaType: 'image/png',
+        byteLength: 412 * 1024,
+        width: 1024,
+        height: 768,
+        inlined: true,
+      },
+    })
+    const run = runOf([shot])
+
+    const shut = await frameOf(run)
+    expect(shut).toContain('Read docs/shot.png')
+    expect(shut).toContain('1024\u00d7768')
+
+    const open = await frameOf(run, new Set([shot.callId]))
+    expect(open).toContain('docs/shot.png \u00b7 1024\u00d7768 \u00b7 412 KB')
+  })
+
+  it('names the skill on its row and opens the skill body as a file block', async () => {
+    const loaded = call({
+      name: 'skill',
+      input: { name: 'handoff' },
+      output: {
+        name: 'handoff',
+        path: '/Users/dev/.agents/skills/handoff/SKILL.md',
+        text: '# Handoff\n\nCompact the conversation into a handoff document.',
+      },
+    })
+    const run = runOf([loaded])
+
+    const shut = await frameOf(run)
+    expect(shut).toContain('Loaded the handoff skill')
+    expect(shut).not.toContain('Called skill')
+    expect(shut).not.toContain('Compact the conversation')
+
+    const open = await frameOf(run, new Set([loaded.callId]))
+    expect(open).toContain('Compact the conversation')
+  })
+
+  it('holds the rest of a created file behind its count until the count is opened', async () => {
+    const numbered = Array.from({ length: 24 }, (_unused, index) => `line ${index + 1}`)
+    const wrote = call({
+      name: 'write',
+      input: { path: `${CWD}/spec.md`, content: numbered.join('\n') },
+      output: { path: `${CWD}/spec.md`, created: true },
+    })
+    const run = runOf([wrote])
+
+    const shut = await frameOf(run, undefined, TALL)
+    expect(shut).toContain('… +4 more')
+    expect(shut).not.toContain('line 24')
+
+    const open = await frameOf(run, new Set([`more:${wrote.callId}`]), TALL)
+    expect(open).toContain('line 24')
+    expect(open).toContain('… show less')
+  })
+
+  it('holds the rest of an opened call output behind its count', async () => {
+    const printed = Array.from({ length: 16 }, (_unused, index) => `out ${index + 1}`)
+    const ran = call({
+      name: 'bash',
+      input: { command: 'ls' },
+      output: { stdout: printed.join('\n') },
+    })
+    const run = runOf([ran])
+
+    const shut = await frameOf(run, new Set([ran.callId]), TALL)
+    expect(shut).toContain('… +4 more')
+    expect(shut).not.toContain('out 16')
+
+    const open = await frameOf(run, new Set([ran.callId, `more:${ran.callId}`]), TALL)
+    expect(open).toContain('out 16')
+    expect(open).toContain('… show less')
+  })
+
+  it('opens the rest of a created file when the count itself is clicked', async () => {
+    const numbered = Array.from({ length: 24 }, (_unused, index) => `line ${index + 1}`)
+    const wrote = call({
+      name: 'write',
+      input: { path: `${CWD}/spec.md`, content: numbered.join('\n') },
+      output: { path: `${CWD}/spec.md`, created: true },
+    })
+    const setup = await testRender(<Toggling run={runOf([wrote])} />, {
+      width: WIDTH,
+      height: TALL,
+    })
+    await setup.flush()
+
+    try {
+      const lines = setup.captureCharFrame().split('\n')
+      const row = lines.findIndex((line) => line.includes('+4 more'))
+      const column = lines[row]?.indexOf('…') ?? -1
+      expect(column).toBeGreaterThanOrEqual(0)
+      expect(setup.captureCharFrame()).not.toContain('line 24')
+
+      await act(async () => {
+        await setup.mockMouse.click(column, row)
+      })
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('line 24')
+    } finally {
+      await teardown(setup)
+    }
+  })
 })
+
+function Toggling(props: { run: ToolRun }): React.ReactNode {
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
+  const handleToggle = useCallback((key: string) => {
+    setOpened((current) => {
+      const next = new Set(current)
+      if (!next.delete(key)) next.add(key)
+      return next
+    })
+  }, [])
+
+  return (
+    <ToolRunBlock
+      run={props.run}
+      width={WIDTH}
+      cwd={CWD}
+      now={0}
+      opened={opened}
+      onToggle={handleToggle}
+    />
+  )
+}

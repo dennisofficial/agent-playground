@@ -27,14 +27,16 @@ const workspaceRootAbove = (directory: string): string | null => {
   }
 }
 
+export function isEmbeddedBuild(): boolean {
+  return import.meta.dir.startsWith(EMBEDDED_ROOT)
+}
+
 let resolvedSourceRoot: string | null | undefined
 
 const sourceRoot = (): string | null => {
   if (resolvedSourceRoot !== undefined) return resolvedSourceRoot
 
-  resolvedSourceRoot = import.meta.dir.startsWith(EMBEDDED_ROOT)
-    ? null
-    : workspaceRootAbove(import.meta.dir)
+  resolvedSourceRoot = isEmbeddedBuild() ? null : workspaceRootAbove(import.meta.dir)
 
   return resolvedSourceRoot
 }

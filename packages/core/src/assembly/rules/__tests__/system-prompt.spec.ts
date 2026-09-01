@@ -5,6 +5,8 @@ import type { Assembled } from '../../assembled'
 import { contextFor, log } from '../../__tests__/log-fixture'
 import { EMPTY_PROMPT, systemPrompt } from '../system-prompt'
 
+const LAUNCH = '/w'
+
 const ctx = contextFor({ events: log([]) })
 
 const compiled = (...texts: readonly string[]): CompiledPrompt => ({
@@ -13,7 +15,7 @@ const compiled = (...texts: readonly string[]): CompiledPrompt => ({
   skipped: [],
 })
 
-const fixed = (prompt: CompiledPrompt) => systemPrompt({ prompt: () => prompt })
+const fixed = (prompt: CompiledPrompt) => systemPrompt({ prompt: () => prompt, launchDirectory: LAUNCH })
 
 describe('systemPrompt', () => {
   it('pushes the compiled blocks onto the system it was handed', () => {
@@ -68,7 +70,8 @@ describe('what the rule compiles, and what it only reads', () => {
       prompt: () => {
         compiles += 1
         return compiled('doctrine')
-      }
+      },
+      launchDirectory: LAUNCH,
     })
 
     rule({ system: [], messages: [] }, ctx)
@@ -79,7 +82,7 @@ describe('what the rule compiles, and what it only reads', () => {
 
   it('reads the source at apply time, so a model switch reaches the very next step', () => {
     let held = compiled('doctrine for opus')
-    const rule = systemPrompt({ prompt: () => held })
+    const rule = systemPrompt({ prompt: () => held, launchDirectory: LAUNCH })
 
     const before = rule({ system: [], messages: [] }, ctx).system
 
@@ -89,17 +92,37 @@ describe('what the rule compiles, and what it only reads', () => {
     expect(rule({ system: [], messages: [] }, ctx).system).toEqual([{ text: 'doctrine for haiku' }])
   })
 
-  it('cannot vary with the conversation, because nothing about it reaches the source', () => {
-    const seen: unknown[] = []
+  it('hands the source the launch directory while no worktree has been entered', () => {
+    const seen: string[] = []
     const rule = systemPrompt({
-      prompt: (...args) => {
-        seen.push(args)
+      prompt: ({ projectDirectory }) => {
+        seen.push(projectDirectory)
         return compiled('doctrine')
       },
+      launchDirectory: LAUNCH,
     })
 
     rule({ system: [], messages: [] }, contextFor({ events: log([{ type: 'user-said', text: 'hi' }]) }))
 
-    expect(seen).toEqual([[]])
+    expect(seen).toEqual([LAUNCH])
+  })
+
+  it('hands the source the worktree once one is entered, so the prompt follows the move', () => {
+    const seen: string[] = []
+    const rule = systemPrompt({
+      prompt: ({ projectDirectory }) => {
+        seen.push(projectDirectory)
+        return compiled('doctrine')
+      },
+      launchDirectory: LAUNCH,
+    })
+
+    const events = log([
+      { type: 'worktree-entered', path: '/w/.atlas/worktrees/eng-327', branch: 'dennis/eng-327', base: 'origin/main' },
+    ])
+
+    rule({ system: [], messages: [] }, contextFor({ events }))
+
+    expect(seen).toEqual(['/w/.atlas/worktrees/eng-327'])
   })
 })

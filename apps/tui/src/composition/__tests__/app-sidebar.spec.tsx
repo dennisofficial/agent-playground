@@ -1,5 +1,5 @@
 import { parseColor, type CapturedFrame, type Renderable } from '@opentui/core'
-import { toThreadId } from '@dltech/atlas-core'
+import { ESettingId, toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -7,6 +7,7 @@ import React from 'react'
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { theme, SIDEBAR_GUTTER, SIDEBAR_WIDTH } from '../../ui/theme'
 import { App } from '../app'
+import { spokenIn } from './app-fixture'
 import { FAKE_CONFIG, fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
@@ -24,6 +25,7 @@ const PLACEHOLDER = 'Ask anything'
 
 const WIDE = 140
 
+
 const hexOf = (colour: { r: number; g: number; b: number }): string =>
   [colour.r, colour.g, colour.b]
     .map((channel) => Math.round(channel * 255).toString(16).padStart(2, '0'))
@@ -31,7 +33,10 @@ const hexOf = (colour: { r: number; g: number; b: number }): string =>
 
 function groundsAcross(args: { frame: CapturedFrame; needle: string }): string[] {
   const line = args.frame.lines.find((candidate) =>
-    candidate.spans.some((span) => span.text.includes(args.needle)),
+    candidate.spans
+      .map((span) => span.text)
+      .join('')
+      .includes(args.needle),
   )
   if (line === undefined) throw new Error(`no row carried ${args.needle}`)
 
@@ -51,9 +56,8 @@ function contentColumnWidth(setup: Awaited<ReturnType<typeof testRender>>): numb
   const beside = (node: Renderable): Renderable | null => {
     const children = node.getChildren()
     const column = children[0]
-    if (column !== undefined && children.length > 1 && children[1]?.width === SIDEBAR_WIDTH) {
-      return column
-    }
+    const panelled = children.slice(1).some((child) => child.width === SIDEBAR_WIDTH)
+    if (column !== undefined && panelled) return column
 
     for (const child of children) {
       const found = beside(child)
@@ -82,7 +86,7 @@ async function resizeTo(args: {
 describe('the sidebar', () => {
   it('docks beside the transcript on a wide terminal', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: 140,
       height: 40,
     })
@@ -101,7 +105,7 @@ describe('the sidebar', () => {
 
   it('stays hidden on a narrow terminal until ctrl+b opens it as an overlay', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: 90,
       height: 30,
     })
@@ -129,7 +133,7 @@ describe('the sidebar', () => {
 
   it('is reached across a gutter the composer alone gives up', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: WIDE,
       height: 40,
     })
@@ -154,9 +158,9 @@ describe('the sidebar', () => {
     }
   }, 60_000)
 
-  it('folds away on a wide terminal when ctrl+b hides it', async () => {
+  it('holds the sidebar docked on a wide terminal, where ctrl+b is not bound', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: 140,
       height: 40,
     })
@@ -168,7 +172,105 @@ describe('the sidebar', () => {
       await pressCtrlB(setup)
       await settle(250)
 
+      expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
+      expect(contentColumnWidth(setup)).toBe(140 - SIDEBAR_WIDTH)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('closes the overlay on escape', async () => {
+    const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: NARROW,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      await pressCtrlB(setup)
+      await settle(250)
+      expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
+
+      setup.mockInput.pressEscape()
+      await setup.flush()
+      await settle(250)
+
       expect(setup.captureCharFrame()).not.toContain(SIDEBAR_MARK)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('dims what it floats over, so the sidebar reads as covering the transcript', async () => {
+    const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: NARROW,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      const uncovered = groundsAcross({ frame: setup.captureSpans(), needle: PLACEHOLDER })
+
+      await pressCtrlB(setup)
+      await settle(250)
+
+      const covered = groundsAcross({ frame: setup.captureSpans(), needle: PLACEHOLDER })
+      expect(covered[4]).not.toBe(uncovered[4])
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('folds where the reader set it to rather than at the shipped width', async () => {
+    const app: FakeApp = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }),
+      settings: { values: { [ESettingId.SidebarFoldBelow]: 90 } },
+    })
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: 100,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
+      expect(contentColumnWidth(setup)).toBe(100 - SIDEBAR_WIDTH)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  /**
+   * An unclamped panel is laid out from `terminal - 42`, so its wordmark sits at a negative column
+   * and never reaches the screen. Reading it back is what tells the two apart.
+   */
+  it('keeps the floating sidebar inside a terminal narrower than the sidebar', async () => {
+    const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: 30,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      await pressCtrlB(setup)
+      await settle(250)
+
+      expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
     } finally {
       await teardown(setup)
     }
@@ -176,7 +278,7 @@ describe('the sidebar', () => {
 
   it('comes back on widening after a narrow peek was opened and closed', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: NARROW,
       height: 40,
     })
@@ -201,9 +303,9 @@ describe('the sidebar', () => {
     }
   }, 60_000)
 
-  it('auto-collapses on narrowing after it was opened again on a wide terminal', async () => {
+  it('folds away when the terminal narrows under a docked sidebar', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: WIDE,
       height: 40,
     })
@@ -212,11 +314,6 @@ describe('the sidebar', () => {
       await setup.flush()
       await settle(250)
       await setup.flush()
-
-      await pressCtrlB(setup)
-      await settle(250)
-      await pressCtrlB(setup)
-      await settle(250)
 
       expect(setup.captureCharFrame()).toContain(SIDEBAR_MARK)
 
@@ -230,7 +327,7 @@ describe('the sidebar', () => {
 
   it('lays the transcript out beside the sidebar once a narrow peek is widened', async () => {
     const app: FakeApp = fakeApp({ model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }) })
-    const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />, {
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
       width: NARROW,
       height: 40,
     })

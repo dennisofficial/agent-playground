@@ -1,3 +1,7 @@
+import { resolve } from 'node:path'
+
+import { expandHome } from '../ui/paths'
+
 export const DEFAULT_MODEL_ID = 'claude-haiku-4-5-20251001'
 
 export const TITLER_MODEL_ID = 'claude-haiku-4-5-20251001'
@@ -19,6 +23,7 @@ export type OpenRequest =
 
 export type AtlasConfig = {
   modelId: string | undefined
+  subagentModelId: string | undefined
   databaseUrl: string
   keychainService: string | undefined
   thinkingBudgetTokens: number | undefined
@@ -31,6 +36,8 @@ const CONTINUE_FLAGS: readonly string[] = ['--continue', '-c']
 const RESUME_FLAG = '--resume'
 
 const MODEL_FLAG = '--model'
+
+const DIRECTORY_FLAG = '--cwd'
 
 const positiveInteger = (value: string | undefined): number | undefined => {
   if (value === undefined) return undefined
@@ -67,6 +74,22 @@ const openFromArgv = (argv: readonly string[]): OpenRequest => {
   return asked ? { mode: EOpenMode.Continue } : { mode: EOpenMode.New }
 }
 
+/**
+ * Bun reads its tsconfig from the process working directory, so a source launch has to be started
+ * from inside this workspace or it loses `emitDecoratorMetadata` and every injected constructor
+ * with it. The directory Atlas works in is therefore a launch argument, not the directory bun ran in.
+ */
+const directoryFromArgv = (args: {
+  argv: readonly string[]
+  cwd: string
+  home: string | undefined
+}): string => {
+  const named = valueAfter({ argv: args.argv, flag: DIRECTORY_FLAG })
+  if (named === undefined) return args.cwd
+
+  return resolve(args.cwd, expandHome({ path: named, home: args.home ?? '' }))
+}
+
 const nonEmpty = (value: string | undefined): string | undefined =>
   value === undefined || value.length === 0 ? undefined : value
 
@@ -78,10 +101,11 @@ export function resolveConfig(args: {
 }): AtlasConfig {
   return {
     modelId: modelFromArgv(args.argv) ?? nonEmpty(args.env.ATLAS_MODEL),
+    subagentModelId: nonEmpty(args.env.ATLAS_SUBAGENT_MODEL),
     databaseUrl: nonEmpty(args.env.ATLAS_DATABASE_URL) ?? args.defaultDatabaseUrl,
     keychainService: nonEmpty(args.env.ATLAS_KEYCHAIN_SERVICE),
     thinkingBudgetTokens: positiveInteger(args.env.ATLAS_THINKING_BUDGET),
     open: openFromArgv(args.argv),
-    cwd: args.cwd,
+    cwd: directoryFromArgv({ argv: args.argv, cwd: args.cwd, home: args.env.HOME }),
   }
 }

@@ -36,7 +36,7 @@ const depsOf = (harness: AtlasHarness): TurnDeps => ({
   log: harness.log,
   model: harness.model,
   ids: harness.ids,
-  assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+  assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
 })
 
 const deltasOf = (signals: readonly ChannelSignal[], kind: 'text-delta' | 'reasoning-delta'): string =>

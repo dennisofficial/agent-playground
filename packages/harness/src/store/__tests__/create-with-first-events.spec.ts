@@ -51,6 +51,22 @@ describe('opening a thread together with its first events', () => {
     ])
   })
 
+  it('opens under an id it was handed, so a caller can hold one before there is a thread', async () => {
+    const { threads, log } = await openFixture()
+    const promised = toThreadId('handed-out-before-anything-was-said')
+
+    const { thread, events } = await threads.createWithFirstEvents({
+      threadId: promised,
+      drafts: [said('start here')],
+      runId,
+    })
+
+    expect(thread.id).toBe(promised)
+    expect(events[0]?.threadId).toBe(promised)
+    expect((await log.readOwn({ threadId: promised })).length).toBe(1)
+    expect(await threads.find({ threadId: promised })).toBeDefined()
+  })
+
   it('numbers several opening drafts the way an ordinary append would', async () => {
     const { threads, log } = await openFixture()
 

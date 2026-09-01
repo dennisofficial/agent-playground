@@ -1,6 +1,7 @@
 export {
   AGENT_SPAWN_TOOL_NAME,
   AGENT_TOOL_NAMES,
+  WORKTREE_TOOL_NAMES,
   AgentTypeSource,
   EAgentTypeRefusal,
   parseAgentType,

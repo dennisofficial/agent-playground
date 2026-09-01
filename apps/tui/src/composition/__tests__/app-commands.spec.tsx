@@ -1,5 +1,4 @@
-import { ECommandGroup, ECommandKind, toThreadId } from '@dltech/atlas-core'
-import { ESkillOrigin } from '@dltech/atlas-harness'
+import { toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -7,20 +6,13 @@ import React from 'react'
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { EKeyGroup } from '../../ui/keys'
 import { App } from '../app'
-import { FAKE_CONFIG, fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
+import { FAKE_CONFIG, fakeApp, fakeSkill, scriptedModelPort, type FakeApp } from './fake-app'
 
-const PIRATE = {
-  spec: {
-    name: 'pirate',
-    kind: ECommandKind.Skill,
-    summary: 'answer entirely in pirate dialect',
-    group: ECommandGroup.Workspace,
-  },
+const PIRATE = fakeSkill({
+  name: 'pirate',
+  summary: 'answer entirely in pirate dialect',
   body: 'Answer entirely in pirate dialect.',
-  origin: ESkillOrigin.User,
-  userInvocable: true,
-  modelInvocable: true,
-} as const
+})
 
 await grammarsReady()
 
@@ -42,7 +34,10 @@ async function landed(setup: Mounted): Promise<void> {
 
 async function opened(app: FakeApp): Promise<Mounted> {
   const setup = await testRender(
-    <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+    <App
+      app={app}
+      opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }}
+    />,
     WIDE,
   )
   await setup.flush()
@@ -250,7 +245,7 @@ describe('the command menu', () => {
 })
 
 describe('a fresh conversation started from inside the app', () => {
-  it('is filed under the workspace, so tomorrow can resume it', async () => {
+  it('writes nothing until it is spoken in, so it never shows up as a blank to resume', async () => {
     const app = appWith()
     const setup = await opened(app)
 
@@ -258,6 +253,26 @@ describe('a fresh conversation started from inside the app', () => {
       await setup.mockInput.typeText('/new')
       setup.mockInput.pressEnter()
       await landed(setup)
+
+      expect(app.threads.createdWith).toEqual([])
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('is filed under the workspace by its first message, so tomorrow can resume it', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await setup.mockInput.typeText('/new')
+      setup.mockInput.pressEnter()
+      await landed(setup)
+
+      await setup.mockInput.typeText('the first thing said in it')
+      setup.mockInput.pressEnter()
+      await settle(2_000)
+      await setup.flush()
 
       expect(app.threads.createdWith).toEqual([{ workspace: FAKE_CONFIG.cwd, repo: null }])
     } finally {

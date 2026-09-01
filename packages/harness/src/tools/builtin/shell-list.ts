@@ -18,7 +18,7 @@ const inputSchema = z.strictObject({
 })
 
 const description = [
-  'List the background shells this session has started, running and finished alike.',
+  'List the background shells this conversation has started, running and finished alike.',
   'Set runningOnly to leave out the ones that have already ended.',
   'Each entry names its shellId, its command, whether it is still running, and how much it has printed.',
   'A shell marked as awaiting input is stuck: its stdin is closed, so nothing can answer it and it must be killed.',
@@ -51,8 +51,11 @@ export class ShellListTool extends SchemaTool<typeof inputSchema> {
     super()
   }
 
-  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const all = this.shells.list()
+  protected override async run({
+    input,
+    threadId,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const all = this.shells.list({ threadId })
     const shown =
       input.runningOnly === true ? all.filter((one) => one.status === EShellStatus.Running) : all
 
@@ -63,7 +66,7 @@ export class ShellListTool extends SchemaTool<typeof inputSchema> {
         modelText:
           input.runningOnly === true
             ? 'No background shell is running.'
-            : 'This session has started no background shells.',
+            : 'This conversation has started no background shells.',
       }
     }
 

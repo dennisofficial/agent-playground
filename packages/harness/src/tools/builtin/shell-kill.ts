@@ -30,8 +30,11 @@ export class ShellKillTool extends SchemaTool<typeof inputSchema> {
     super()
   }
 
-  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const killed = this.shells.kill({ shellId: input.shellId, by: EKilledBy.Model })
+  protected override async run({
+    input,
+    threadId,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const killed = this.shells.kill({ shellId: input.shellId, by: EKilledBy.Model, threadId })
     if (!killed.ok) return killed
 
     const { snapshot } = killed

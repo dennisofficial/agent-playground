@@ -134,7 +134,7 @@ describe('HookChain', () => {
       ],
     })
 
-    await chain.beforeTurn({ threadId })
+    await chain.beforeTurn({ threadId, projectDirectory: '/repo' })
     await chain.beforeStep({ assembled, trace: [] })
     await chain.beforeRequest({ prompt })
     await chain.onChunk({ chunk: delta })
@@ -221,7 +221,7 @@ describe('HookChain', () => {
       ],
     })
 
-    expect(await chain.beforeTurn({ threadId })).toEqual([
+    expect(await chain.beforeTurn({ threadId, projectDirectory: '/repo' })).toEqual([
       { type: 'context-loaded', slot: 'gitState', key: HOOK_CONTEXT_KEY, content: '3 files dirty' },
     ])
   })
@@ -254,7 +254,7 @@ describe('HookChain', () => {
     expect(await chain.beforeStep({ assembled, trace: [] })).toBe(assembled)
     expect(await chain.beforeRequest({ prompt })).toBe(prompt)
     expect(await chain.onChunk({ chunk: delta })).toBe(delta)
-    expect(await chain.beforeTurn({ threadId })).toEqual([])
+    expect(await chain.beforeTurn({ threadId, projectDirectory: '/repo' })).toEqual([])
     expect(await chain.afterTurn({ threadId })).toEqual([])
   })
 })

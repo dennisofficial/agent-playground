@@ -86,7 +86,7 @@ const decide = ({
   name: string
   input: unknown
   threadId?: ThreadId
-}) => createReadBeforeWriteHook({ seen, tools }).run({ call: callTo({ name, input, threadId }) })
+}) => createReadBeforeWriteHook({ seen, tools }).run({ call: callTo({ name, input, threadId }), projectDirectory: root })
 
 const fileHolding = async ({ name, text }: { name: string; text: string }): Promise<string> => {
   const path = join(root, name)

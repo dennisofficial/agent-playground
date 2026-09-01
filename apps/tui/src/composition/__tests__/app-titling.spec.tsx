@@ -103,7 +103,7 @@ describe('naming a session from its opening message', () => {
   it('drops the name when a new conversation starts, rather than carrying it over', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />,
       { width: 140, height: 40 },
     )
 
@@ -120,7 +120,8 @@ describe('naming a session from its opening message', () => {
 
       expect(await until({ holds: async () => (await frame()).includes(NAME), within: WITHIN_MS })).toBe(true)
 
-      setup.mockInput.pressKey('n', { ctrl: true })
+      await setup.mockInput.typeText('/new')
+      setup.mockInput.pressEnter()
 
       const dropped = await until({
         holds: async () => !(await frame()).includes(NAME),
@@ -136,7 +137,7 @@ describe('naming a session from its opening message', () => {
   it('heads the sidebar with the name once it lands', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />,
       { width: 140, height: 40 },
     )
 
@@ -164,7 +165,7 @@ describe('naming a session from its opening message', () => {
   it('heads the composer with the handle the session resumes by, not the written name', async () => {
     const app = naming(NAME)
     const setup = await testRender(
-      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null }} />,
+      <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />,
       { width: 140, height: 40 },
     )
 
@@ -186,6 +187,83 @@ describe('naming a session from its opening message', () => {
       expect(headed).toBe(true)
     } finally {
       await teardown(setup)
+    }
+  })
+})
+
+const RENAMED = 'Doing something cool'
+
+describe('renaming a session with /rename', () => {
+  it('takes the name the operator wrote, without asking the titler', async () => {
+    const mounted = await open({ app: naming(NAME) })
+
+    try {
+      await mounted.typeText(`/rename ${RENAMED}`)
+      mounted.pressEnter()
+
+      const named = await until({
+        holds: async () => {
+          await mounted.frame()
+          return mounted.app.threads.renames.length > 0
+        },
+        within: WITHIN_MS,
+      })
+
+      expect(named).toBe(true)
+      expect(mounted.app.threads.renames).toEqual([{ threadId: THREAD, title: RENAMED }])
+      expect(mounted.app.titled).toEqual([])
+    } finally {
+      await mounted.done()
+    }
+  })
+
+  it('names the session again from the transcript when no name is written', async () => {
+    const mounted = await open({ app: naming(NAME) })
+
+    try {
+      await mounted.typeText(OPENING)
+      mounted.pressEnter()
+
+      expect(
+        await until({ holds: async () => (await mounted.frame()).includes(REPLY), within: WITHIN_MS }),
+      ).toBe(true)
+
+      await mounted.typeText('/rename')
+      mounted.pressEnter()
+
+      const named = await until({
+        holds: async () => {
+          await mounted.frame()
+          return mounted.app.titled.length > 1
+        },
+        within: WITHIN_MS,
+      })
+
+      expect(named).toBe(true)
+      expect(mounted.app.titled.at(-1)).toContain(`Operator: ${OPENING}`)
+      expect(mounted.app.titled.at(-1)).toContain(REPLY)
+      expect(mounted.app.threads.renames.at(-1)).toEqual({ threadId: THREAD, title: NAME })
+    } finally {
+      await mounted.done()
+    }
+  })
+
+  it('says what to do when there is nothing said yet to name the session from', async () => {
+    const mounted = await open({ app: naming(NAME) })
+
+    try {
+      await mounted.typeText('/rename')
+      mounted.pressEnter()
+
+      const refused = await until({
+        holds: async () => (await mounted.frame()).includes('nothing to read yet'),
+        within: WITHIN_MS,
+      })
+
+      expect(refused).toBe(true)
+      expect(mounted.app.threads.renames).toEqual([])
+    } finally {
+      await mounted.done()
     }
   })
 })

@@ -1,79 +1,127 @@
 import { describe, expect, it } from 'bun:test'
 
 import {
+  chromeWidthOf,
+  contentWidthOf,
   ESidebarLayout,
-  flipSidebar,
-  sidebarChoiceInForce,
+  floatingSidebarWidth,
+  peekInForce,
+  sidebarFoldsAt,
   sidebarLayout,
   sidebarShown,
-  type SidebarChoice,
 } from '../sidebar-visibility'
 
-import { SIDEBAR_MIN_TERMINAL_WIDTH } from '../theme'
+import { MIN_TRANSCRIPT_WIDTH, SIDEBAR_FOLD_BELOW, SIDEBAR_GUTTER, SIDEBAR_WIDTH } from '../theme'
 
-const WIDE = SIDEBAR_MIN_TERMINAL_WIDTH + 20
+const shipped = { foldBelow: SIDEBAR_FOLD_BELOW, sidebarWidth: SIDEBAR_WIDTH }
 
-const NARROW = SIDEBAR_MIN_TERMINAL_WIDTH - 20
+const layoutAt = (width: number) => sidebarLayout({ width, ...shipped })
 
-type Session = { layout: ESidebarLayout; choice: SidebarChoice | null }
+type Session = { layout: ESidebarLayout; peeking: boolean }
 
-const opened = (width: number): Session => ({ layout: sidebarLayout(width), choice: null })
+const opened = (width: number): Session => ({ layout: layoutAt(width), peeking: false })
 
-const pressed = (session: Session): Session => ({
-  layout: session.layout,
-  choice: flipSidebar(session),
-})
+const pressed = (session: Session): Session => ({ ...session, peeking: !session.peeking })
 
 const resized = (args: { session: Session; width: number }): Session => {
-  const layout = sidebarLayout(args.width)
+  const layout = layoutAt(args.width)
 
-  return { layout, choice: sidebarChoiceInForce({ layout, choice: args.session.choice }) }
+  return { layout, peeking: peekInForce({ layout, peeking: args.session.peeking }) }
 }
 
 describe('sidebar visibility', () => {
-  it('shows itself on a wide terminal and hides on a narrow one', () => {
-    expect(sidebarShown(opened(WIDE))).toBe(true)
-    expect(sidebarShown(opened(NARROW))).toBe(false)
+  it('docks on a wide terminal and folds away on a narrow one', () => {
+    expect(sidebarShown(opened(SIDEBAR_FOLD_BELOW + 20))).toBe(true)
+    expect(sidebarShown(opened(SIDEBAR_FOLD_BELOW - 20))).toBe(false)
   })
 
-  it('reads the threshold width itself as narrow', () => {
-    expect(sidebarLayout(SIDEBAR_MIN_TERMINAL_WIDTH)).toBe(ESidebarLayout.Narrow)
+  it('reads the configured fold width itself as narrow', () => {
+    expect(layoutAt(SIDEBAR_FOLD_BELOW)).toBe(ESidebarLayout.Narrow)
+    expect(layoutAt(SIDEBAR_FOLD_BELOW + 1)).toBe(ESidebarLayout.Wide)
   })
 
-  it('folds away when the toggle is pressed on a wide terminal', () => {
-    expect(sidebarShown(pressed(opened(WIDE)))).toBe(false)
+  it('folds where the reader asked it to rather than at a fixed width', () => {
+    const asked = { foldBelow: 90, sidebarWidth: SIDEBAR_WIDTH }
+
+    expect(sidebarLayout({ width: 100, ...asked })).toBe(ESidebarLayout.Wide)
+    expect(sidebarLayout({ width: 100, ...shipped })).toBe(ESidebarLayout.Narrow)
   })
 
-  it('opens as a peek when the toggle is pressed on a narrow terminal', () => {
-    expect(sidebarShown(pressed(opened(NARROW)))).toBe(true)
+  it('opens as an overlay when the toggle is pressed on a narrow terminal', () => {
+    expect(sidebarShown(pressed(opened(SIDEBAR_FOLD_BELOW - 20)))).toBe(true)
   })
 
-  it('comes back on widening after a narrow peek was closed again', () => {
-    const peeked = pressed(opened(NARROW))
-    const closed = pressed(peeked)
-    expect(sidebarShown(closed)).toBe(false)
+  it('closes the overlay again on a second press', () => {
+    const peeked = pressed(opened(SIDEBAR_FOLD_BELOW - 20))
 
-    expect(sidebarShown(resized({ session: closed, width: WIDE }))).toBe(true)
+    expect(sidebarShown(pressed(peeked))).toBe(false)
   })
 
-  it('auto-collapses on narrowing after it was opened on a wide terminal', () => {
-    const hidden = pressed(opened(WIDE))
-    const shown = pressed(hidden)
-    expect(sidebarShown(shown)).toBe(true)
+  it('drops the overlay on widening, where the sidebar is docked anyway', () => {
+    const peeked = pressed(opened(SIDEBAR_FOLD_BELOW - 20))
+    const widened = resized({ session: peeked, width: SIDEBAR_FOLD_BELOW + 20 })
 
-    expect(sidebarShown(resized({ session: shown, width: NARROW }))).toBe(false)
+    expect(widened.peeking).toBe(false)
+    expect(sidebarShown(widened)).toBe(true)
   })
 
-  it('forgets a hide made on a wide terminal once the terminal has been narrow', () => {
-    const hidden = pressed(opened(WIDE))
-    const narrowed = resized({ session: hidden, width: NARROW })
+  it('folds closed on narrowing rather than carrying the docked sidebar over', () => {
+    const docked = opened(SIDEBAR_FOLD_BELOW + 20)
 
-    expect(sidebarShown(resized({ session: narrowed, width: WIDE }))).toBe(true)
+    expect(sidebarShown(resized({ session: docked, width: SIDEBAR_FOLD_BELOW - 20 }))).toBe(false)
   })
 
-  it('keeps a choice while the terminal only resizes within one layout', () => {
-    const hidden = pressed(opened(WIDE))
+  it('keeps the overlay open while the terminal only resizes within the narrow layout', () => {
+    const peeked = pressed(opened(SIDEBAR_FOLD_BELOW - 20))
 
-    expect(sidebarShown(resized({ session: hidden, width: WIDE + 40 }))).toBe(false)
+    expect(sidebarShown(resized({ session: peeked, width: SIDEBAR_FOLD_BELOW - 30 }))).toBe(true)
+  })
+})
+
+describe('the width the sidebar refuses to dock at', () => {
+  it('honours a fold width that leaves the transcript room', () => {
+    expect(sidebarFoldsAt({ foldBelow: 160, sidebarWidth: SIDEBAR_WIDTH })).toBe(160)
+  })
+
+  it('overrides a fold width that would starve the transcript', () => {
+    const starved = { foldBelow: 60, sidebarWidth: 64 }
+
+    expect(sidebarFoldsAt(starved)).toBe(64 + SIDEBAR_GUTTER + MIN_TRANSCRIPT_WIDTH)
+    expect(sidebarLayout({ width: 80, ...starved })).toBe(ESidebarLayout.Narrow)
+  })
+
+  it('leaves the transcript at least its minimum wherever it does dock', () => {
+    for (const sidebarWidth of [30, 42, 64]) {
+      for (const foldBelow of [60, 120, 240]) {
+        const width = sidebarFoldsAt({ foldBelow, sidebarWidth }) + 1
+
+        expect(sidebarLayout({ width, foldBelow, sidebarWidth })).toBe(ESidebarLayout.Wide)
+        expect(chromeWidthOf({ width, sidebarWidth, docked: true })).toBeGreaterThanOrEqual(
+          MIN_TRANSCRIPT_WIDTH,
+        )
+      }
+    }
+  })
+})
+
+describe('widths handed to the renderer', () => {
+  it('never lets the floating sidebar reach past the terminal', () => {
+    expect(floatingSidebarWidth({ width: 30, sidebarWidth: 64 })).toBe(30)
+    expect(floatingSidebarWidth({ width: 200, sidebarWidth: 64 })).toBe(64)
+  })
+
+  it('gives the transcript the whole terminal while the sidebar floats', () => {
+    expect(contentWidthOf({ width: 90, sidebarWidth: 42, docked: false })).toBe(90)
+    expect(chromeWidthOf({ width: 90, sidebarWidth: 42, docked: false })).toBe(90)
+  })
+
+  it('takes the sidebar and its gutter out of the transcript while docked', () => {
+    expect(contentWidthOf({ width: 200, sidebarWidth: 42, docked: true })).toBe(158)
+    expect(chromeWidthOf({ width: 200, sidebarWidth: 42, docked: true })).toBe(158 - SIDEBAR_GUTTER)
+  })
+
+  it('stays positive even on a terminal narrower than the sidebar', () => {
+    expect(contentWidthOf({ width: 20, sidebarWidth: 64, docked: true })).toBe(1)
+    expect(chromeWidthOf({ width: 20, sidebarWidth: 64, docked: true })).toBe(1)
   })
 })

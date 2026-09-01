@@ -62,8 +62,8 @@ const systemFor = (args: {
 }): readonly string[] => {
   const pipeline = defaultPipeline({
     prompt: () =>
-      args.registry.compile(promptContextFor({ agent: EPromptAgent.Main, provider: args.provider })),
-    projectDirectory: PROJECT_DIRECTORY,
+      args.registry.compile(promptContextFor({ agent: EPromptAgent.Main, provider: args.provider, projectDirectory: '/w' })),
+    launchDirectory: PROJECT_DIRECTORY,
   })
 
   return assemble({ ...pipeline, ctx: ctxFor(args.provider) }).assembled.system.map((block) => block.text)
@@ -76,7 +76,7 @@ describe('a model switch, seen through the pipeline the composition root built o
 
     const pipeline = defaultPipeline({
       prompt: () => registry.compile(promptContextFor({ agent: EPromptAgent.Main, provider })),
-      projectDirectory: PROJECT_DIRECTORY,
+      launchDirectory: PROJECT_DIRECTORY,
     })
 
     const onOpus = assemble({ ...pipeline, ctx: ctxFor(provider) }).assembled.system

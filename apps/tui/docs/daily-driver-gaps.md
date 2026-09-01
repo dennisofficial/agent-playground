@@ -12,7 +12,8 @@ The loop (`harness/loop/run-turn.ts`), the event log, streaming into the transcr
 running turn, undo, rewind, compaction on demand and automatically, background shells with the
 sidebar, the `ctrl+t` panel and an exit guard that names what would die, twelve builtin tools,
 instruction-file loading (`CLAUDE.md` / `AGENTS.md`, nested, reloaded per turn), slash commands,
-skills and the command menu, the model/effort switcher, layered settings, a spend ledger, the raw
+skills and the command menu, sub-agents with a sidebar roster and a readable child transcript,
+the model/effort switcher, layered settings, a spend ledger, the raw
 tape, markdown with two-tier syntax highlighting, table panning and side-by-side diffs, plan
 mirroring from `task_write`, and an account vault that refreshes its own logins.
 
@@ -35,16 +36,26 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
    problem is solved; the content problem is untouched, and it is still the cheapest quality win
    available. `.scratch/prompt-registry/issues/02-the-prose.md` is the open issue.
 
-8. **No sub-agents / `task` tool.** Architecturally reserved (`runId`/`parentRunId`/`depth` on every
-   event, `EForkMode`) and explicitly not safe yet — `docs/architecture.md` lists six invariants that
-   break when a child inherits rows. Every "go read these forty files" job burns the main context.
+8. **Sub-agents are built, bar one deliberate omission.** The feature shipped end to end — four
+   agent types, five tools, a supervisor, a sidebar roster, a child transcript reachable by `ctrl+g`
+   or `/agents`, `ctrl+k` to stop one, reports that reach the parent's prompt through
+   `agentEndingsBlock`, endings that wake the parent, running children named in the exit guard,
+   recovery that writes an ending for a child the session lost, and a delegated-cost line at the
+   foot of the transcript. What remains:
+
+   **No operator-facing spawn**, and that one is deliberate — choosing a type and writing a brief
+   is the model's job, and a human who wants a sub-agent can ask for one in a sentence. `spawn`,
+   `resume` and `types` stay model-only; `list`, `say` and `stop` are the three the TUI needs.
 
 9. **No web access.** No `web_fetch`, no `web_search`. Any doc lookup has to go through `bash curl`,
    which is ungated by design — see "Accepted, not gaps".
 
-10. **Cost and usage are invisible.** The ledger records four token tiers per turn and
-    `MODEL_CATALOG` carries prices; `ui/switcher-model.ts:83` renders a per-model price, but nothing
-    sums a session. No `/cost`, no session total. The footer shows context pressure only.
+10. **Cost across a session is invisible.** The ledger records four token tiers per turn and
+    `MODEL_CATALOG` carries prices; `ui/switcher-model.ts:83` renders a per-model price, and one
+    conversation now shows what its sub-agents cost as a line at the foot of the transcript
+    (`readThreadSpend` over `forThreadTree`, tri-state so a failed read says so rather than
+    reporting zero). What is still missing is the level above: no `/cost`, no total across
+    conversations, no spend-to-date. The footer shows context pressure only.
 
 11. **User-authored commands and hooks.** Skills load from embedded + `~/.atlas/skills` + project,
     but there is no `.atlas/commands/*.md` equivalent, and hooks are compiled-in classes only — no
@@ -60,8 +71,13 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
     key, and an api-key account already reaches Anthropic through `x-api-key` — but no second
     `LanguageModelV4` provider is wired, so the model-agnostic claim is still one adapter short.
 
-14. **No images.** No paste-image path, no image parts in `core/message` — zero hits for `image`
-    anywhere in `core` — so screenshots and design references are out.
+14. **Images work.** Closed. `core/message` carries an `ImagePart`, `read` returns a picture for an
+    image file, ctrl+v pulls a screenshot off the macOS clipboard, and `imagesInContext` stops old
+    ones being re-billed every step. Rendering goes through OpenTUI 0.5.9's native
+    `ImageRenderable` at `protocol="auto"`, so a terminal answering the kitty handshake gets real
+    full-resolution pixels and everything else falls back to quadrant glyphs; decode is native, so
+    PNG, JPEG, WebP and GIF all paint. Remaining limits are narrow: clipboard pull is macOS-only,
+    and tmux forces the block fallback.
 
 ## Accepted, not gaps
 
@@ -72,9 +88,17 @@ which checks staleness rather than location. No hook returns `EBeforeToolDecisio
 appends `approval-answered`, and `bash` inherits `TAKES_NO_PATHS`, so every command runs unprompted.
 That is the intended posture: a single trusted operator on a local machine, where a confirmation
 prompt costs more than it buys. The machinery stays where it is —
-`dispatch.ts:85` still emits `approval-requested` and `run-turn.ts:177` still pauses on it — so a
+`dispatch.ts:94` still emits `approval-requested` and `run-turn.ts:188` still pauses on it — so a
 future sandboxed or multi-tenant deployment can supply a hook and an overlay without reopening the
 loop. Until then, no classifier, no permission lists, no approval UI.
+
+One decision is already taken for whenever that changes: **a sub-agent's `Ask` routes to the parent
+agent, never to a human overlay.** A child is managed by the main agent, so the request is something
+the parent answers with a tool call of its own; do not extend the human overlay to render it. The
+honest half of that is already in place — a child whose turn pauses ends as `EAgentStatus.Blocked`
+and the parent is told it is blocked on an approval it cannot answer — but the ending carries no
+`callId`, and `agent_resume` on a blocked child re-enters the turn and pauses again. Answering the
+approval, rather than re-entering, is the approval effort's job.
 
 ## P2 — parity items, deliberately deferred
 
@@ -84,6 +108,29 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 `docs/architecture.md` names most of these; none needs a decision reopened.
 
 ## Closed since the first audit
+
+- **Sub-agents run.** A child is a real thread Atlas spawned — its own row carrying
+  `spawnerThreadId` and `agentType`, its log and brief written in one transaction by
+  `createWithFirstEvents`, its loop stepped unawaited under its own `AbortController`. Two things
+  distinguish it from the main agent and no others: the five agent tools are denied to it, which
+  caps depth at one by construction, and its system prompt is its agent type's prose compiled under
+  `EPromptAgent.Sub`. Four types ship embedded and `~/.atlas/agents/*.md` and
+  `<project>/.atlas/agents/*.md` shadow them project over user over built-in, with a refusal rather
+  than silence for a definition that will not load. Reports reach the parent's model through
+  `agentEndingsBlock`, which collapses a wave of endings into one spliced block on a shared prose
+  budget. `ctrl+g` and `/agents` walk to a child, `ctrl+k` stops one, and the ending says who
+  stopped it — `EKilledBy` now covering `Unrecorded` for a child the session lost before it could
+  report. Five of the six fork invariants in `docs/architecture.md` closed on the way, including the
+  rewind hole — `ERewindRefusal.UnendedSubAgent` refuses a cut below a live child.
+
+- **Read-before-write is per thread, locked, and content-aware.** `ToolCall` carries a required
+  `threadId` and `FileReadStatePort` keys views on `{ threadId, path }`, so a sub-agent's read no
+  longer vouches for its parent's write. `FileWriteGuardPort.underLock` puts the whole
+  verify-then-write inside a per-path in-process mutex, which **eliminates** the agent-versus-agent
+  race outright — every sub-agent runs in this process — and `FileView.digest`, consulted by
+  `movedSince` only when mtime and size agree, closes the content-blind predicate. A concurrent
+  external editor is **narrowed and not closed**, which no in-process lock can do; `writeFileAtomically`
+  is a separate guarantee again, that no reader sees a half-written file.
 
 - **A run from a checkout keeps its state in the checkout.** `atlasDirectory()` now resolves through
   `core/workspace/atlas-home.ts`: `ATLAS_HOME` wins if set, otherwise a source launch lands in

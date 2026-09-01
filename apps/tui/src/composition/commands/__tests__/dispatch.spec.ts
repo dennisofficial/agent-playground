@@ -4,7 +4,9 @@ import { describe, expect, it } from 'bun:test'
 import { dispatchSubmission, EDispatch, type LoadedSkill } from '../dispatch'
 import { ECommandEcho, ECommandEffect, ECommandTiming, RAN, type LocalCommand } from '../local-command'
 import { ECompactScope } from '../../compact-turn'
+import { ERenamed } from '../../session-rename'
 import { localCommands } from '../registry'
+import { handlers } from './local-handlers'
 
 const skillSpec = (name: string): CommandSpec => ({
   name,
@@ -164,36 +166,14 @@ describe('dispatchSubmission', () => {
 
 describe('localCommands', () => {
   it('gives every command a name, a summary and a group so /help can derive itself', () => {
-    const handler = () => undefined
-    const commands = localCommands({
-      onCompact: handler,
-      onRewind: handler,
-      onShortcuts: handler,
-      onOpenSwitcher: handler,
-      onOpenShells: handler,
-      onOpenSettings: handler,
-      onOpenAccounts: handler,
-      onNewConversation: handler,
-      onOpenThreads: handler,
-    })
+    const commands = localCommands(handlers())
 
     expect(commands.length).toBeGreaterThan(0)
     expect(commands.every((one) => one.summary !== '' && one.kind === ECommandKind.Local)).toBe(true)
   })
 
   it('marks the commands that must wait for the turn to settle', () => {
-    const handler = () => undefined
-    const commands = localCommands({
-      onCompact: handler,
-      onRewind: handler,
-      onShortcuts: handler,
-      onOpenSwitcher: handler,
-      onOpenShells: handler,
-      onOpenSettings: handler,
-      onOpenAccounts: handler,
-      onNewConversation: handler,
-      onOpenThreads: handler,
-    })
+    const commands = localCommands(handlers())
 
     const settled = commands.filter((one) => one.timing === ECommandTiming.Settled)
 
@@ -201,21 +181,116 @@ describe('localCommands', () => {
   })
 })
 
-describe('the compact command and its scope', () => {
-  const commandsWith = (onCompact: (scope: ECompactScope) => void) => {
-    const handler = () => undefined
-    return localCommands({
-      onCompact,
-      onRewind: handler,
-      onShortcuts: handler,
-      onOpenSwitcher: handler,
-      onOpenShells: handler,
-      onOpenSettings: handler,
-      onOpenAccounts: handler,
-      onNewConversation: handler,
-      onOpenThreads: handler,
+describe('the skills command', () => {
+  it('reloads and reports what the reload holds', async () => {
+    let reloads = 0
+
+    const dispatched = await dispatchSubmission({
+      text: '/skills',
+      commands: localCommands(
+        handlers({
+          onReloadSkills: async () => {
+            reloads += 1
+            return { loaded: 3, added: ['shanty'], removed: [] }
+          },
+        }),
+      ),
+      skills: [],
     })
-  }
+
+    expect(reloads).toBe(1)
+    expect(dispatched).toEqual({ type: EDispatch.Ran, notice: '3 skills — added shanty' })
+  })
+
+  it('reloads mid-turn, because nothing already in the prompt is rewritten', async () => {
+    const dispatched = await dispatchSubmission({
+      text: '/skills',
+      commands: localCommands(handlers()),
+      skills: [],
+      working: true,
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Ran)
+  })
+})
+
+describe('the rename command', () => {
+  it('passes the name the operator wrote through to the rename', async () => {
+    const asked: string[] = []
+
+    const dispatched = await dispatchSubmission({
+      text: '/rename Doing something cool',
+      commands: localCommands(
+        handlers({
+          onRename: async (argumentText) => {
+            asked.push(argumentText)
+            return { type: ERenamed.Renamed, name: argumentText }
+          },
+        }),
+      ),
+      skills: [],
+    })
+
+    expect(dispatched).toEqual({ type: EDispatch.Ran })
+    expect(asked).toEqual(['Doing something cool'])
+  })
+
+  it('asks for a name from the transcript when the operator wrote none', async () => {
+    const asked: string[] = []
+
+    await dispatchSubmission({
+      text: '/rename',
+      commands: localCommands(
+        handlers({
+          onRename: async (argumentText) => {
+            asked.push(argumentText)
+            return { type: ERenamed.Renamed, name: 'Rotating refresh tokens' }
+          },
+        }),
+      ),
+      skills: [],
+    })
+
+    expect(asked).toEqual([''])
+  })
+
+  it('renames mid-turn, because a name changes nothing the turn is reading', async () => {
+    const dispatched = await dispatchSubmission({
+      text: '/rename Doing something cool',
+      commands: localCommands(handlers()),
+      skills: [],
+      working: true,
+    })
+
+    expect(dispatched).toEqual({ type: EDispatch.Ran })
+  })
+
+  it('says what to do when there is nothing said yet to name the session from', async () => {
+    const dispatched = await dispatchSubmission({
+      text: '/rename',
+      commands: localCommands(handlers({ onRename: async () => ({ type: ERenamed.Empty }) })),
+      skills: [],
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('/rename Doing something cool')
+  })
+
+  it('says so when no name comes back, rather than leaving the ask silent', async () => {
+    const dispatched = await dispatchSubmission({
+      text: '/rename',
+      commands: localCommands(handlers({ onRename: async () => ({ type: ERenamed.Declined }) })),
+      skills: [],
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('could not think of a name')
+  })
+})
+
+describe('the compact command and its scope', () => {
+  const commandsWith = (onCompact: (scope: ECompactScope) => void) =>
+    localCommands(handlers({ onCompact }))
 
   it('compacts only the older turns when asked with no argument', async () => {
     const asked: ECompactScope[] = []
@@ -267,18 +342,7 @@ describe('the compact command and its scope', () => {
 
   it('still opens an overlay mid-turn, because that rewrites nothing', async () => {
     const opened: string[] = []
-    const handler = () => undefined
-    const commands = localCommands({
-      onCompact: handler,
-      onRewind: () => opened.push('rewind'),
-      onShortcuts: handler,
-      onOpenSwitcher: handler,
-      onOpenShells: handler,
-      onOpenSettings: handler,
-      onOpenAccounts: handler,
-      onNewConversation: handler,
-      onOpenThreads: handler,
-    })
+    const commands = localCommands(handlers({ onRewind: () => opened.push('rewind') }))
 
     await dispatchSubmission({ text: '/rewind', commands, skills: [], working: true })
 

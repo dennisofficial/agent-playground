@@ -211,10 +211,10 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     signal,
-    sessionDirectory,
+    projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = input
-    const searchPath = path ?? sessionDirectory
+    const searchPath = path ?? projectDirectory
     const searcher = searcherFor({
       pattern,
       searchPath,
@@ -229,7 +229,7 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     try {
       const search = Bun.spawn({
         cmd: [...searcher.command],
-        cwd: sessionDirectory,
+        cwd: projectDirectory,
         stdin: 'ignore',
         stdout: 'pipe',
         stderr: 'pipe',

@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { Chunk, EventRef } from '@dltech/atlas-core'
+import type { Chunk, ERetryReason, EventRef } from '@dltech/atlas-core'
 
 export const stepIdSchema = z.string().min(1).brand<'StepId'>()
 
@@ -12,6 +12,7 @@ export enum EStepEnd {
   Completed = 'completed',
   Interrupted = 'interrupted',
   Failed = 'failed',
+  Retried = 'retried',
 }
 
 export type StepSignal =
@@ -19,4 +20,16 @@ export type StepSignal =
   | { type: 'chunk'; stepId: StepId; chunk: Chunk }
   | { type: 'step-ended'; stepId: StepId; end: EStepEnd; supersededBy: EventRef | null }
 
-export type ChannelSignal = StepSignal | { type: 'events-appended' }
+export type RetryWaitingSignal = {
+  type: 'retry-waiting'
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  reason: ERetryReason
+}
+
+export type ChannelSignal =
+  | StepSignal
+  | { type: 'events-appended' }
+  | RetryWaitingSignal
+  | { type: 'retry-cleared' }

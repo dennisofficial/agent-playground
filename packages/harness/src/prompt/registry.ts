@@ -9,6 +9,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { injectAll, injectable, portToken } from '../container/injection'
+import { isVolatilePromptFragment, type VolatilePromptFragment } from './volatile'
 
 export abstract class PromptRegistry {
   abstract compile(ctx: PromptContext): CompiledPrompt
@@ -49,7 +50,8 @@ function compileFragments(args: {
 @injectable()
 export class InMemoryPromptRegistry extends PromptRegistry {
   private readonly fragments: readonly PromptFragment[]
-  private readonly memo = new Map<string, CompiledPrompt>()
+  private readonly volatile: readonly VolatilePromptFragment[]
+  private readonly memo = new Map<string, { stamp: string; compiled: CompiledPrompt }>()
 
   constructor(@injectAll(portToken(PromptFragment)) fragments: readonly PromptFragment[]) {
     super()
@@ -61,15 +63,22 @@ export class InMemoryPromptRegistry extends PromptRegistry {
       ids.add(fragment.id)
     }
     this.fragments = fragments
+    this.volatile = fragments.filter(isVolatilePromptFragment)
+  }
+
+  private stampFor(ctx: PromptContext): string {
+    if (this.volatile.length === 0) return ''
+    return JSON.stringify(this.volatile.map((fragment) => fragment.stamp(ctx)))
   }
 
   compile(ctx: PromptContext): CompiledPrompt {
     const key = promptContextKey(ctx)
+    const stamp = this.stampFor(ctx)
     const remembered = this.memo.get(key)
-    if (remembered !== undefined) return remembered
+    if (remembered !== undefined && remembered.stamp === stamp) return remembered.compiled
 
     const compiled = compileFragments({ fragments: this.fragments, ctx })
-    this.memo.set(key, compiled)
+    this.memo.set(key, { stamp, compiled })
     return compiled
   }
 }

@@ -7,7 +7,14 @@ export {
   type CommandEffect,
   type LocalCommand,
 } from './local-command'
-export { localCommands, type LocalCommandHandlers } from './registry'
+export {
+  agentChoiceName,
+  agentChoices,
+  agentHasSettled,
+  agentStateLabel,
+  type AgentChoice,
+} from './agent-choices'
+export { agentsAskOfArgument, EAgentsAsk, localCommands, type LocalCommandHandlers } from './registry'
 export {
   commandSpecs,
   dispatchSubmission,

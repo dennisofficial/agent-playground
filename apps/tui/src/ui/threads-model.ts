@@ -6,6 +6,7 @@ export type ThreadListing = {
   id: string
   title?: string | undefined
   updatedAt: string
+  agent?: { spawnedBy: string; type: string } | undefined
 }
 
 export type ThreadRow = {
@@ -48,17 +49,23 @@ export function threadAge(args: { updatedAt: string; now: number }): string {
   return new Date(at).toISOString().slice(0, 10)
 }
 
+/**
+ * A supervised thread is Atlas's own work, not a conversation the operator started, so it is
+ * reached from the sidebar of whoever spawned it rather than from this listing.
+ */
 export function threadRows(args: {
   threads: readonly ThreadListing[]
   activeThreadId: string
 }): readonly ThreadRow[] {
-  return args.threads.map((thread) => ({
-    threadId: thread.id,
-    label: thread.title === undefined || thread.title.length === 0 ? thread.id : thread.title,
-    titled: thread.title !== undefined && thread.title.length > 0,
-    updatedAt: thread.updatedAt,
-    active: thread.id === args.activeThreadId,
-  }))
+  return args.threads
+    .filter((thread) => thread.agent === undefined || thread.id === args.activeThreadId)
+    .map((thread) => ({
+      threadId: thread.id,
+      label: thread.title === undefined || thread.title.length === 0 ? thread.id : thread.title,
+      titled: thread.title !== undefined && thread.title.length > 0,
+      updatedAt: thread.updatedAt,
+      active: thread.id === args.activeThreadId,
+    }))
 }
 
 export function loadingThreads(args: { now: number }): ThreadsState {

@@ -5,6 +5,7 @@ import {
   EPathForm,
   EPathPresence,
   EToolEffect,
+  imageMediaType,
   SchemaTool,
   type DeclaredPathField,
   type ToolOutcome,
@@ -15,6 +16,7 @@ import { z } from 'zod'
 
 import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
+import { readImage } from './read-image'
 
 const MAX_READ_BYTES = 262_144
 
@@ -24,7 +26,7 @@ const MAX_LINE_CHARS = 2_000
 
 const BINARY_SNIFF_LENGTH = 4096
 
-const NUL = '\u0000'
+const NUL_BYTE = 0
 
 const inputSchema = z.strictObject({
   path: absolutePathSchema,
@@ -33,8 +35,9 @@ const inputSchema = z.strictObject({
 })
 
 const description = [
-  'Read a text file from the filesystem.',
+  'Read a file from the filesystem.',
   'The path must be absolute.',
+  'A PNG, JPEG, GIF or WebP file comes back as a picture you can look at, provided it is small enough to send.',
   'Output is line-numbered, tab-separated, one line per file line.',
   'Use offset to start at a given 1-based line and limit to cap how many lines come back.',
   `At most ${DEFAULT_LINE_LIMIT} lines come back at a time and each line is clipped at ${MAX_LINE_CHARS} characters;`,
@@ -186,8 +189,14 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
     }
     if (!stats.isFile()) return { ok: false, reason: `${path} is not a regular file.` }
 
-    const opening = await Bun.file(path).slice(0, BINARY_SNIFF_LENGTH).text()
-    if (opening.includes(NUL)) {
+    const head = new Uint8Array(await Bun.file(path).slice(0, BINARY_SNIFF_LENGTH).arrayBuffer())
+
+    const mediaType = imageMediaType(head)
+    if (mediaType !== null) {
+      return await readImage({ path, mediaType, byteLength: stats.size, head })
+    }
+
+    if (head.includes(NUL_BYTE)) {
       return { ok: false, reason: `${path} looks like a binary file and cannot be read as text.` }
     }
 

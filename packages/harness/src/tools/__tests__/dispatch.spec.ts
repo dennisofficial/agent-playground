@@ -27,7 +27,7 @@ describe('dispatching a call for a tool nobody registered', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toHaveLength(1)
     expect(drafts[0]?.type).toBe('tool-result')
@@ -53,7 +53,7 @@ describe('dispatching a call no hook objects to', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toEqual([
       {
@@ -78,7 +78,7 @@ describe('dispatching a call the tool itself cannot complete', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toEqual([
       {
@@ -104,7 +104,7 @@ describe('dispatching a call the tool itself cannot complete', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toHaveLength(1)
     const error = drafts[0]?.type === 'tool-result' ? drafts[0].error?.message : undefined
@@ -128,7 +128,7 @@ describe('the two projections of a successful result', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts).toEqual([
       {
@@ -149,7 +149,7 @@ describe('the two projections of a successful result', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts[0]?.type === 'tool-result' ? drafts[0].modelText : 'absent').toBe('')
   })
@@ -162,7 +162,7 @@ describe('the two projections of a successful result', () => {
       hooks: new HookChain({}),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(drafts[0]?.type === 'tool-result' ? drafts[0].modelText : 'present').toBeUndefined()
   })
@@ -187,7 +187,7 @@ describe('dispatching a call whose input the tool schema rejects', () => {
     const drafts = await dispatcher.dispatch({
       call: { ...readCall, input: {} },
       signal: new AbortController().signal,
-      sessionDirectory: SESSION_DIRECTORY,
+      projectDirectory: SESSION_DIRECTORY,
     })
 
     expect(invoked).toBe(false)
@@ -229,7 +229,7 @@ describe('dispatching a call carrying a key the tool never declared', () => {
     const drafts = await dispatcher.dispatch({
       call: { ...readCall, input: { path: 'a.ts', sudo: true } },
       signal: new AbortController().signal,
-      sessionDirectory: SESSION_DIRECTORY,
+      projectDirectory: SESSION_DIRECTORY,
     })
 
     expect(invoked).toBe(false)
@@ -253,7 +253,7 @@ describe('dispatching a call the schema accepts and completes', () => {
       hooks: new HookChain({}),
     })
 
-    await dispatcher.dispatch({ call: { ...readCall, input: { path: 'a.ts' } }, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    await dispatcher.dispatch({ call: { ...readCall, input: { path: 'a.ts' } }, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(invocations[0]?.input).toEqual({ path: 'a.ts', limit: 50 })
   })
@@ -272,7 +272,7 @@ describe('dispatching a call the schema accepts and completes', () => {
       }),
     })
 
-    await dispatcher.dispatch({ call: { ...readCall, input: { path: 'a.ts' } }, signal: new AbortController().signal, sessionDirectory: SESSION_DIRECTORY })
+    await dispatcher.dispatch({ call: { ...readCall, input: { path: 'a.ts' } }, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(seen).toEqual([{ path: 'a.ts', limit: 50 }])
   })

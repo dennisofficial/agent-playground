@@ -1,76 +1,53 @@
 import {
-  autoCompactAfterTurn,
+  activeWorktreeOf,
   contextTokens,
-  EAutoCompact,
   ECompactionAnchor,
-  modelEntry,
-  eventsOfType,
-  isResumable,
-  resumeDrafts,
-  sessionDirectoryOf,
+  projectDirectoryOf,
+  type ActiveWorktree,
   type ThreadId,
   type Event,
   type EventDraft,
   type ModelUsage,
+  type SaidImage,
 } from '@dltech/atlas-core'
-import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
   createConversationStore,
   pendingRows,
-  trailingSaid,
   type EThinkingVisibility,
   type PendingRow,
+  type PendingSaid,
   type SidebarModel,
   type TranscriptModel,
 } from '../store'
 import type { Compacting } from '../ui/components/compacting'
 import type { TurnClock } from '../ui/components/transcript'
+import { createAwakeClock } from './awake-clock'
 import type { AtlasApp } from './compose'
-import { EOpenMode } from './config'
-import { openConversation, type OpenedConversation } from './open-conversation'
-import {
-  summariseAt,
-  compactTurn,
-  ECompaction,
-  ECompactScope,
-  type Compaction,
-} from './compact-turn'
-import { discardInterrupted, EDiscard } from './resume-turn'
+import type { OpenedConversation } from './open-conversation'
+import type { RecoveredAgents } from '@dltech/atlas-harness'
+import { ECompactScope } from './compact-turn'
+import type { Renaming } from './session-rename'
 import { threadHandle } from './thread-slug'
-import { EUndo, undoTurn } from './undo-turn'
-import {
-  awakeAt,
-  clockReadableAt,
-  IDLE_PROGRESS,
-  stoppageOf,
-  suspensionFrom,
-  suspensionTicked,
-  transcriptOfTurn,
-  turnAdvanced,
-  turnInterrupting,
-  turnSettled,
-  turnStarted,
-  type Suspension,
-  type TurnProgress,
-} from './turn-progress'
+import { userSaidDraft } from './user-said'
+import { useCompaction } from './use-compaction'
+import { useSessionName } from './use-session-name'
+import { useAgentWake } from './use-agent-wake'
+import { useShellWake } from './use-shell-wake'
+import { useThreadEvents } from './use-thread-events'
+import { useThreadSwap } from './use-thread-swap'
+import { useTurnDriver } from './use-turn-driver'
+import { useTickingNow } from './use-turn-clock'
+import { clockReadableAt, transcriptOfTurn } from './turn-progress'
 
-const CLOCK_TICK_MS = 250
+const NO_IMAGES: readonly SaidImage[] = Object.freeze([])
 
-const UNEXPLAINED = 'The turn stopped for a reason it did not name.'
-
-const messageOf = (error: unknown): string => (error instanceof Error ? error.message : UNEXPLAINED)
-
-const userSaid = (text: string) => ({ type: 'user-said' as const, text })
-
-const COMPACTION_CRASHED = 'compacting the history did not finish, so nothing was changed'
-
-const committedNothing = (outcome: TurnOutcome): boolean =>
-  outcome.status === ETurnStatus.Interrupted && !outcome.committed
+const ALREADY_OPEN = Promise.resolve()
 
 export type Conversation = {
   threadId: ThreadId
+  lost: RecoveredAgents | null
   handle: string | null
   model: TranscriptModel
   sidebar: SidebarModel
@@ -78,19 +55,24 @@ export type Conversation = {
   now: number
   working: boolean
   contextTokens: number
-  sessionDirectory: string
+  projectDirectory: string
+  activeWorktree: ActiveWorktree | null
   pending: readonly PendingRow[]
   readEvents: () => readonly Event[]
-  handleSend: (text: string, context?: readonly EventDraft[]) => void
-  handleTakeBackPending: () => string | null
+  handleSend: (args: {
+    text: string
+    images?: readonly SaidImage[]
+    context?: readonly EventDraft[]
+  }) => void
+  handleTakeBackPending: () => PendingSaid | null
   handleRetry: (() => void) | null
   handleResume: (() => void) | null
-  handleResumeFresh: (() => void) | null
   handleReportProblem: (reason: string) => void
   handleInterrupt: () => void
   compacting: Compacting | null
   handleNewConversation: () => void
   handleOpenThread: (threadId: string) => void
+  handleRename: (argumentText: string) => Promise<Renaming>
   handleCompact: (scope: ECompactScope) => void
   handleCompactAround: (args: { anchor: ECompactionAnchor; seq: number }) => void
   handleRewindTo: (toSeq: number) => void
@@ -107,17 +89,14 @@ export function useConversation(args: {
 }): Conversation {
   const { app, paceReveal, thinking, onUndone } = args
   const [opened, setOpened] = useState<OpenedConversation>(args.opened)
-  const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS)
   const [failure, setFailure] = useState<string | null>(null)
-  const [compacting, setCompacting] = useState<Compacting | null>(null)
-  const [working, setWorking] = useState(false)
-  const [events, setEvents] = useState<readonly Event[]>(args.opened.events)
   const [reported, setReported] = useState<ModelUsage | null>(null)
-  const [name, setName] = useState<string | null>(args.opened.name)
-  const abort = useRef<AbortController | null>(null)
-  const asked = useRef<ThreadId | null>(null)
   const usedRef = useRef(0)
-  const compacter = useRef<AbortController | null>(null)
+  const startedRef = useRef(args.opened.started)
+
+  const forgetUsage = useCallback(() => setReported(null), [])
+
+  const threadId = opened.threadId
 
   const store = useMemo(
     () =>
@@ -134,20 +113,31 @@ export function useConversation(args: {
 
   useEffect(() => () => store.dispose(), [store])
 
+  const { events, setEvents, refresh } = useThreadEvents({
+    app,
+    threadId,
+    store,
+    initial: args.opened.events,
+  })
+
+  const { name, setName, nameSession, renameSession } = useSessionName({
+    app,
+    threadId,
+    started: startedRef,
+    events,
+    initial: args.opened.name,
+  })
+
   const started = events.length > 0
 
   useEffect(
-    () => app.markActiveThread({ threadId: opened.threadId, title: name, started }),
-    [app, name, opened.threadId, started],
+    () => app.markActiveThread({ threadId, title: name, started }),
+    [app, name, threadId, started],
   )
 
   useEffect(() => store.setName(name), [store, name])
 
   useEffect(() => store.setThinking(thinking), [store, thinking])
-
-  const turn = progress.clock
-
-  useEffect(() => store.setTurn(turn), [store, turn])
 
   const derived = useSyncExternalStore(store.subscribe, store.getSnapshot)
   const sidebar = useSyncExternalStore(store.subscribe, store.getSidebar)
@@ -155,417 +145,149 @@ export function useConversation(args: {
   const pending = app.pending
   const queued = useSyncExternalStore(pending.subscribe, pending.getSnapshot)
 
-  const shells = app.shells
-  const subscribeToShells = useCallback(
-    (listener: () => void) => shells.onNotice(listener),
-    [shells],
-  )
-  const readShellNotices = useCallback(() => shells.pendingNotices(), [shells])
-  const notices = useSyncExternalStore(subscribeToShells, readShellNotices)
+  const clock = useMemo(() => createAwakeClock(), [])
+  const readClock = clock.read
 
-  const refresh = useCallback(async () => {
-    const [read, spent] = await Promise.all([
-      app.log.read({ threadId: opened.threadId }),
-      app.ledger.forThread({ threadId: opened.threadId }),
-    ])
-    store.setEvents({ events: read, turns: spent })
-    setEvents(read)
-    pending.settleTaken({ landed: trailingSaid(read) })
-  }, [app.ledger, app.log, opened.threadId, pending, store])
+  const compaction = useCompaction({
+    app,
+    threadId,
+    atPercent: args.autoCompactAtPercent,
+    readClock,
+    refresh,
+    onFailure: setFailure,
+    onCompacted: forgetUsage,
+  })
 
-  useEffect(
-    () =>
-      app.channel.subscribe({
-        threadId: opened.threadId,
-        listener: (signal) => {
-          setProgress((current) => turnAdvanced({ progress: current, signal }))
-          if (signal.type === 'chunk' && signal.chunk.type === 'finish') {
-            const usage = signal.chunk.usage
-            if (usage !== undefined) setReported(usage)
-          }
-          if (signal.type === 'step-ended' || signal.type === 'events-appended') void refresh()
-        },
-      }),
-    [app.channel, opened.threadId, refresh],
-  )
+  const turnDriver = useTurnDriver({
+    app,
+    threadId,
+    started: startedRef,
+    store,
+    events,
+    refresh,
+    readClock,
+    used: usedRef,
+    compactIfFull: compaction.compactIfFull,
+    cancelCompaction: compaction.cancel,
+    onUndone,
+    onUsage: setReported,
+    setFailure,
+    forgetUsage,
+  })
 
-  const streaming = derived.streaming || working
-  const suspension = useRef<Suspension>(suspensionFrom({ now: Date.now() }))
-  const readClock = useCallback(
-    () => awakeAt({ suspension: suspension.current, now: Date.now() }),
-    [],
-  )
-  const [now, setNow] = useState(readClock)
+  const { working, progress, drive } = turnDriver
+  const { compacting } = compaction
+  const now = useTickingNow({
+    ticking: derived.streaming || working || compacting !== null,
+    clock,
+  })
 
-  const ticking = streaming || compacting !== null
+  const turn = progress.clock
 
-  useEffect(() => {
-    if (!ticking) return
+  useEffect(() => store.setTurn(turn), [store, turn])
 
-    suspension.current = suspensionFrom({
-      now: Date.now(),
-      suspendedMs: suspension.current.suspendedMs,
-    })
-    setNow(readClock())
+  const handleWake = useCallback(() => void drive([]), [drive])
 
-    const timer = setInterval(() => {
-      suspension.current = suspensionTicked({
-        suspension: suspension.current,
-        now: Date.now(),
-        intervalMs: CLOCK_TICK_MS,
-      })
-      setNow(readClock())
-    }, CLOCK_TICK_MS)
-    return () => clearInterval(timer)
-  }, [readClock, ticking])
+  const notices = useShellWake({
+    shells: app.shells,
+    threadId,
+    working,
+    canWake: args.canWake,
+    onWake: handleWake,
+  })
 
-  const undo = useCallback(async () => {
-    const undone = await undoTurn({
-      log: app.log,
-      threads: app.threads,
-      threadId: opened.threadId,
-    })
-
-    if (undone.type === EUndo.Refused) {
-      setFailure(undone.reason)
-      return
-    }
-    if (undone.type === EUndo.Nothing) return
-
-    await refresh()
-    onUndone(undone.text)
-  }, [app.threads, app.log, onUndone, opened.threadId, refresh])
-
-  const settleCompaction = useCallback(
-    async (compaction: Compaction) => {
-      if (compaction.type === ECompaction.Refused) {
-        setFailure(compaction.reason)
-        return
-      }
-      if (compaction.type === ECompaction.Nothing) return
-
-      setReported(null)
-      await refresh()
-    },
-    [refresh],
-  )
-
-  const runCompaction = useCallback(
-    async (start: (signal: AbortSignal) => Promise<Compaction>): Promise<void> => {
-      if (compacter.current !== null) return
-
-      const controller = new AbortController()
-      compacter.current = controller
-      setCompacting({ startedAt: readClock(), cancelling: false })
-
-      try {
-        const outcome = await start(controller.signal)
-        if (!controller.signal.aborted) await settleCompaction(outcome)
-      } catch {
-        if (!controller.signal.aborted) setFailure(COMPACTION_CRASHED)
-      } finally {
-        compacter.current = null
-        setCompacting(null)
-      }
-    },
-    [readClock, settleCompaction],
-  )
-
-  const compact = useCallback(
-    (scope: ECompactScope) =>
-      runCompaction((signal) =>
-        compactTurn({
-          log: app.log,
-          threads: app.threads,
-          threadId: opened.threadId,
-          scope,
-          summarise: app.summarise,
-          signal,
-        }),
-      ),
-    [app.threads, app.log, app.summarise, opened.threadId, runCompaction],
-  )
-
-  const compactAround = useCallback(
-    (args: { anchor: ECompactionAnchor; seq: number }) =>
-      runCompaction((signal) =>
-        summariseAt({
-          log: app.log,
-          threads: app.threads,
-          threadId: opened.threadId,
-          anchor: args.anchor,
-          seq: args.seq,
-          summarise: app.summarise,
-          signal,
-        }),
-      ),
-    [app.threads, app.log, app.summarise, opened.threadId, runCompaction],
-  )
-
-  const rewindTo = useCallback(
-    async (toSeq: number) => {
-      const rewound = await rewindThread({
-        log: app.log,
-        threads: app.threads,
-        threadId: opened.threadId,
-        toSeq,
-      })
-
-      if (!rewound.ok) {
-        setFailure(rewound.reason)
-        return
-      }
-      setReported(null)
-      await refresh()
-    },
-    [app.threads, app.log, opened.threadId, refresh],
-  )
-
-  const compactIfFull = useCallback(async () => {
-    const window = modelEntry(app.model.choice().modelId)?.contextWindow ?? 0
-    const decision = autoCompactAfterTurn({
-      used: usedRef.current,
-      window,
-      atPercent: args.autoCompactAtPercent,
-    })
-    if (decision === EAutoCompact.Hold) return
-
-    await runCompaction((signal) =>
-      compactTurn({
-        log: app.log,
-        threads: app.threads,
-        threadId: opened.threadId,
-        summarise: app.summarise,
-        signal,
-      }),
-    )
-  }, [app, args.autoCompactAtPercent, opened.threadId, runCompaction])
-
-  const drive = useCallback(
-    (drafts: readonly EventDraft[]) => {
-      const controller = new AbortController()
-
-      abort.current = controller
-      setWorking(true)
-      setFailure(null)
-      store.supersedeFailure()
-      setProgress(turnStarted({ now: readClock() }))
-
-      void (async () => {
-        try {
-          if (drafts.length > 0) {
-            await app.log.append({
-              threadId: opened.threadId,
-              runId: app.ids.nextRunId(),
-              drafts,
-            })
-            await refresh()
-          }
-          const outcome = await app.runner.runTurn({
-            threadId: opened.threadId,
-            signal: controller.signal,
-          })
-          setFailure(stoppageOf(outcome))
-          if (committedNothing(outcome)) await undo()
-        } catch (error) {
-          setFailure(messageOf(error))
-        } finally {
-          abort.current = null
-          setWorking(false)
-          setProgress((current) => turnSettled({ progress: current, now: readClock() }))
-          await refresh().catch(() => undefined)
-          await compactIfFull().catch(() => undefined)
-        }
-      })()
-    },
-    [app, opened.threadId, readClock, refresh, store, undo],
-  )
-
-  /**
-   * A background shell that ends while nothing is running has no turn to be delivered into, so the
-   * ending is what starts one. Mid-turn there is nothing to do: the loop drains the same queue on
-   * its next pass. The witness keeps a turn that dies before its first drain from spinning here.
-   *
-   * A turn must not start behind a prompt that has taken the keyboard, so an overlay waiting on an
-   * answer holds the wake off until it is closed. The ending keeps until then.
-   */
-  const woken = useRef<string | null>(null)
-
-  useEffect(() => {
-    if (notices.length === 0) {
-      woken.current = null
-      return
-    }
-    if (working || !args.canWake) return
-
-    const witness = notices.map((notice) => notice.shellId).join(' ')
-    if (woken.current === witness) return
-
-    woken.current = witness
-    drive([])
-  }, [args.canWake, drive, notices, working])
-
-  const nameSession = useCallback(
-    (said: string) => {
-      if (name !== null || asked.current === opened.threadId) return
-
-      asked.current = opened.threadId
-      const opening = eventsOfType({ events, type: 'user-said' }).at(0)?.text ?? said
-
-      void app
-        .titler({ text: opening })
-        .then((named) => {
-          if (named === null) return
-          setName(named)
-          return app.threads.rename({ threadId: opened.threadId, title: named })
-        })
-        .catch(() => undefined)
-    },
-    [app, events, name, opened.threadId],
-  )
+  const agentNotices = useAgentWake({
+    agents: app.agents,
+    threadId,
+    working,
+    canWake: args.canWake,
+    onWake: handleWake,
+  })
 
   const handleSend = useCallback(
-    (text: string, context: readonly EventDraft[] = []) => {
-      const said = text.trim()
-      if (said.length === 0) return
-
-      nameSession(said)
+    (args: {
+      text: string
+      images?: readonly SaidImage[]
+      context?: readonly EventDraft[]
+    }) => {
+      const text = args.text.trim()
+      const images = args.images ?? NO_IMAGES
+      if (text.length === 0) return
 
       if (working) {
-        pending.enqueue({ text: said })
+        pending.enqueue({ text, images })
+        nameSession({ said: text, opened: ALREADY_OPEN })
         return
       }
 
-      drive([...context, ...[...pending.drain(), said].map(userSaid)])
+      const opened = drive([
+        ...(args.context ?? []),
+        ...[...pending.drain(), { text, images }].map(userSaidDraft),
+      ])
+      nameSession({ said: text, opened })
     },
     [drive, nameSession, pending, working],
   )
 
-  const handleTakeBackPending = useCallback(() => pending.takeBackLast()?.text ?? null, [pending])
+  const handleTakeBackPending = useCallback(() => pending.takeBackLast(), [pending])
 
   /**
-   * A failed turn leaves its events durable, so retrying is the same turn run again with nothing
-   * appended — the loop picks up from the last event rather than replaying what already landed.
+   * Shell endings are not dropped on the way out: they belong to the thread that started the shell,
+   * so leaving one keeps its queue for when it is opened again.
    */
-  const handleRetry = useCallback(() => {
-    if (working) return
-    drive([])
-  }, [drive, working])
-
-  const handleResume = useCallback(() => {
-    if (working) return
-    drive(resumeDrafts(events))
-  }, [drive, events, working])
-
-  const handleResumeFresh = useCallback(() => {
-    if (working) return
-
-    void (async () => {
-      const discarded = await discardInterrupted({
-        log: app.log,
-        threads: app.threads,
-        threadId: opened.threadId,
-      })
-
-      if (discarded.type === EDiscard.Refused) {
-        setFailure(discarded.reason)
-        return
-      }
-
-      setReported(null)
-      await refresh()
-      drive([])
-    })()
-  }, [app.log, app.threads, drive, opened.threadId, refresh, working])
-
-  const handleInterrupt = useCallback(() => {
-    const compacter_ = compacter.current
-    if (compacter_ !== null) {
-      setCompacting((current) => (current === null ? null : { ...current, cancelling: true }))
-      compacter_.abort()
-      return
-    }
-
-    const controller = abort.current
-    if (controller === null) return
-
-    setProgress(turnInterrupting)
-    controller.abort()
-  }, [])
-
   const adopt = useCallback(
     (next: OpenedConversation) => {
       pending.clear()
-      app.shells.forgetNotices()
-      setProgress(IDLE_PROGRESS)
+      turnDriver.settle()
       setFailure(null)
       setReported(null)
+      startedRef.current = next.started
       setEvents(next.events)
       setName(next.name)
       setOpened(next)
     },
-    [app.shells, pending],
+    [pending, setEvents, setName, turnDriver],
   )
 
-  const handleNewConversation = useCallback(() => {
-    if (working) return
-
-    void app.threads
-      .create({ workspace: app.workspace.workspace, repo: app.workspace.repo })
-      .then((thread) => adopt({ threadId: thread.id, events: [], turns: [], name: null }))
-  }, [adopt, app.threads, app.workspace, working])
-
-  const handleOpenThread = useCallback(
-    (threadId: string) => {
-      if (working || threadId === opened.threadId) return
-
-      void openConversation({
-        threads: app.threads,
-        log: app.log,
-        ledger: app.ledger,
-        workspace: app.workspace,
-        open: { mode: EOpenMode.Resume, threadId },
-      }).then((outcome) => {
-        if (!outcome.ok) {
-          setFailure(outcome.reason)
-          return
-        }
-
-        adopt(outcome.conversation)
-      })
-    },
-    [adopt, app.ledger, app.log, app.threads, app.workspace, opened.threadId, working],
-  )
-
-  const handleCompact = useCallback((scope: ECompactScope) => void compact(scope), [compact])
-
-  const handleCompactAround = useCallback(
-    (args: { anchor: ECompactionAnchor; seq: number }) => void compactAround(args),
-    [compactAround],
-  )
-
-  const handleRewindTo = useCallback((toSeq: number) => void rewindTo(toSeq), [rewindTo])
+  const { handleNewConversation, handleOpenThread } = useThreadSwap({
+    app,
+    threadId,
+    working,
+    adopt,
+    onFailure: setFailure,
+  })
 
   const readEvents = useCallback((): readonly Event[] => events, [events])
 
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
 
-  const sessionDirectory = useMemo(
-    () => sessionDirectoryOf({ events, projectDirectory: app.config.cwd }),
-    [events, app.config.cwd],
-  )
+  const workspace = useMemo((): {
+      projectDirectory: string
+    activeWorktree: ActiveWorktree | null
+  } => {
+    const launchDirectory = app.config.cwd
+    return {
+      projectDirectory: projectDirectoryOf({ events, launchDirectory }),
+      activeWorktree: activeWorktreeOf(events) ?? null,
+    }
+  }, [events, app.config.cwd])
   usedRef.current = used
 
-  const rows = useMemo(() => pendingRows({ messages: queued, notices }), [notices, queued])
+  const rows = useMemo(
+    () => pendingRows({ messages: queued, notices, agents: agentNotices }),
+    [agentNotices, notices, queued],
+  )
 
   const model = transcriptOfTurn({ model: derived, working, failure })
   const retryable = model.failure !== null && !working
-  const resumable = model.failure === null && !working && isResumable(events)
+  const resumable = model.failure === null && !working && turnDriver.isResumable
 
   return {
-    sessionDirectory,
-    threadId: opened.threadId,
-    handle: name === null ? null : threadHandle({ threadId: opened.threadId, title: name }),
+    projectDirectory: workspace.projectDirectory,
+    activeWorktree: workspace.activeWorktree,
+    threadId,
+    lost: opened.lost ?? null,
+    handle: name === null ? null : threadHandle({ threadId, title: name }),
     model,
     sidebar,
     turn,
@@ -575,17 +297,17 @@ export function useConversation(args: {
     pending: rows,
     handleSend,
     handleTakeBackPending,
-    handleRetry: retryable ? handleRetry : null,
-    handleResume: resumable ? handleResume : null,
-    handleResumeFresh: resumable ? handleResumeFresh : null,
+    handleRetry: retryable ? turnDriver.handleRetry : null,
+    handleResume: resumable ? turnDriver.handleResume : null,
     readEvents,
     compacting,
     handleReportProblem: setFailure,
-    handleInterrupt,
+    handleInterrupt: turnDriver.handleInterrupt,
     handleNewConversation,
     handleOpenThread,
-    handleCompact,
-    handleCompactAround,
-    handleRewindTo,
+    handleRename: renameSession,
+    handleCompact: compaction.compact,
+    handleCompactAround: compaction.compactAround,
+    handleRewindTo: turnDriver.handleRewindTo,
   }
 }

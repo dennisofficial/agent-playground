@@ -156,7 +156,7 @@ export async function openExitPathHarness(args: {
       log: new PrismaEventLog(database.prisma, clock, ids),
       model: model.port,
       ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       hooks,
       ...(mode === EDispatchMode.None ? {} : { dispatch: new HookedToolDispatcher({ registry, hooks }) }),

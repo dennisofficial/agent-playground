@@ -5,6 +5,8 @@ import type { SystemBlock } from '../../assembled'
 import { contextFor, log } from '../../__tests__/log-fixture'
 import { EMPTY_PROMPT, systemPrompt } from '../system-prompt'
 
+const LAUNCH = '/w'
+
 const DOCTRINE =
   'You are Atlas, a coding agent talking to a developer in their terminal.\n' +
   'Answer directly and concisely, and prefer using a tool over describing what you would do.\n' +
@@ -25,7 +27,7 @@ const promptOf = (blocks: readonly SystemBlock[]): CompiledPrompt => ({
 })
 
 const systemOf = (prompt: CompiledPrompt, earlier: readonly SystemBlock[] = []) =>
-  systemPrompt({ prompt: () => prompt })({ system: earlier, messages: [] }, ctx).system
+  systemPrompt({ prompt: () => prompt, launchDirectory: LAUNCH })({ system: earlier, messages: [] }, ctx).system
 
 describe('what reaches the provider, pinned byte for byte', () => {
   it('is the compiled text with every newline and blank line exactly as compiled', () => {
@@ -84,6 +86,6 @@ describe('what the rule does to the assembly it was handed', () => {
   })
 
   it('names itself so the trace can attribute the block', () => {
-    expect(systemPrompt({ prompt: () => EMPTY_PROMPT }).ruleName).toBe('systemPrompt')
+    expect(systemPrompt({ prompt: () => EMPTY_PROMPT, launchDirectory: LAUNCH }).ruleName).toBe('systemPrompt')
   })
 })

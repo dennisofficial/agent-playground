@@ -2,6 +2,8 @@ import React from 'react'
 
 import type { ShellSnapshot } from '@dltech/atlas-harness'
 
+import type { SidebarCrewFold } from '../../../store/subagent-row'
+import { plural } from '../../../store/tools/reading'
 import { usePress } from '../../hooks/use-press'
 import {
   AWAITING_INPUT_LABEL,
@@ -25,18 +27,37 @@ const valueFor = (shell: ShellSnapshot) => {
   return [{ text: label, fg: theme.meta }]
 }
 
+/**
+ * What the panel let go of, kept as one line rather than a heading of its own. The reading names
+ * `/shells` because a reclaimed shell is still whole — the row leaves the sidebar, nothing leaves
+ * the registry or its scrollback.
+ */
+function RetiredLine(props: { fold: SidebarCrewFold; cells: number }): React.ReactNode {
+  return (
+    <Row
+      label={`${plural(props.fold.hidden, 'more')} in /shells`}
+      labelFg={theme.rule}
+      cells={props.cells}
+      mark={{ text: glyph.seen, fg: theme.rule }}
+      {...(props.fold.hiddenFailed ? { value: [{ text: 'one failed', fg: theme.warn }] } : {})}
+    />
+  )
+}
+
 export function ShellsSection(props: {
   shells: readonly ShellSnapshot[]
   cells: number
+  fold?: SidebarCrewFold | undefined
   onOpen?: (shellId: string) => void
 }): React.ReactNode {
   const press = usePress()
   if (props.shells.length === 0) return null
 
   const running = props.shells.filter(isShellRunning).length
+  const hidden = props.fold?.hidden ?? 0
 
   return (
-    <Section label="Shells" count={`${running}/${props.shells.length}`}>
+    <Section label="Shells" count={`${running}/${props.shells.length + hidden}`}>
       {props.shells.map((shell) => (
         <box
           key={shell.shellId}
@@ -52,6 +73,9 @@ export function ShellsSection(props: {
           />
         </box>
       ))}
+      {props.fold === undefined || props.fold.hidden === 0 ? null : (
+        <RetiredLine fold={props.fold} cells={props.cells} />
+      )}
     </Section>
   )
 }

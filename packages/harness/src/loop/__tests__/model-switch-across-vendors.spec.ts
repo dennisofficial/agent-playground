@@ -59,7 +59,7 @@ async function openSwitchable() {
     databaseUrl: temp.databaseUrl,
     model: switchable.model,
     prompt: fixturePrompt(),
-    assembly: defaultPipeline({ prompt: () => fixturePrompt(), projectDirectory: PROJECT_DIRECTORY }),
+    assembly: defaultPipeline({ prompt: () => fixturePrompt(), launchDirectory: PROJECT_DIRECTORY }),
     hooks: new HookChain({
       beforeStep: [{ name: 'recordAssembly', order: { stage: EStage.Observe, nudge: 0 }, run: recordAssembly }],
     }),

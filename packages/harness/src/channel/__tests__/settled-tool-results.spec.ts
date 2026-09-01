@@ -48,6 +48,7 @@ function announcing(inner: DeltaChannel): { channel: DeltaChannel; announced: Ev
             publisher.settleAppend({ events })
           },
           close: (closeArgs) => publisher.close(closeArgs),
+          retrying: (notice) => publisher.retrying(notice),
         }
       },
     },
@@ -76,7 +77,7 @@ describe('a turn that settles a tool call', () => {
         log: harness.log,
         model: harness.model,
         ids: harness.ids,
-        assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+        assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
         tools: registry.declarations(),
         dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
       },

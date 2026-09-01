@@ -64,7 +64,7 @@ type CachedBlock = { cache_control?: { type: string; ttl?: string } }
 
 const sentBody = async (): Promise<{ system: CachedBlock[]; messages: { content: CachedBlock[] }[] }> => {
   const { assembled } = assemble({
-    rules: defaultRules({ prompt: () => FIXTURE_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+    rules: defaultRules({ prompt: () => FIXTURE_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
     annotators: defaultAnnotators(),
     ctx: {
       events: exchange,

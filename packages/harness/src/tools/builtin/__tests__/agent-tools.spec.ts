@@ -93,7 +93,7 @@ const invoke = ({
     input,
     signal: AbortSignal.timeout(10_000),
     idempotencyKey: 'key-1',
-    sessionDirectory: tmpdir(),
+    projectDirectory: tmpdir(),
     threadId,
   })
 

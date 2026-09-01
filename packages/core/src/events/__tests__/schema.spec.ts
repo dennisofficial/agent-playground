@@ -187,3 +187,24 @@ describe('a row written before workspace snapshots were removed', () => {
     expect(parsed.success && 'snapshotId' in parsed.data).toBe(false)
   })
 })
+
+describe('a tool result that carries an image', () => {
+  const stored: EventDraft = {
+    type: 'tool-result',
+    callId: toCallId('call-1'),
+    name: 'read',
+    output: { path: '/repo/docs/shot.png', inlined: true },
+    modelText: '/repo/docs/shot.png — image/png, 8×8, 1 KB.',
+    modelParts: [
+      { type: 'text', text: '/repo/docs/shot.png — image/png, 8×8, 1 KB.' },
+      { type: 'image', data: 'iVBOR', mediaType: 'image/png', source: '/repo/docs/shot.png' },
+    ],
+  }
+
+  it('keeps the pixels and the path they came from across a round trip', () => {
+    const parsed = eventBodySchema.safeParse(stored)
+
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && parsed.data).toEqual(stored)
+  })
+})

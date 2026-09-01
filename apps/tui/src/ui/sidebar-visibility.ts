@@ -1,33 +1,40 @@
-import { SIDEBAR_MIN_TERMINAL_WIDTH } from './theme'
+import { MIN_TRANSCRIPT_WIDTH, SIDEBAR_GUTTER } from './theme'
 
 export enum ESidebarLayout {
   Wide = 'wide',
   Narrow = 'narrow',
 }
 
-export type SidebarChoice = { layout: ESidebarLayout; shown: boolean }
-
-export function sidebarLayout(width: number): ESidebarLayout {
-  return width > SIDEBAR_MIN_TERMINAL_WIDTH ? ESidebarLayout.Wide : ESidebarLayout.Narrow
+export function sidebarFoldsAt(args: { foldBelow: number; sidebarWidth: number }): number {
+  return Math.max(args.foldBelow, args.sidebarWidth + SIDEBAR_GUTTER + MIN_TRANSCRIPT_WIDTH)
 }
 
-export function sidebarChoiceInForce(args: {
-  layout: ESidebarLayout
-  choice: SidebarChoice | null
-}): SidebarChoice | null {
-  return args.choice?.layout === args.layout ? args.choice : null
+export function sidebarLayout(args: {
+  width: number
+  foldBelow: number
+  sidebarWidth: number
+}): ESidebarLayout {
+  return args.width > sidebarFoldsAt(args) ? ESidebarLayout.Wide : ESidebarLayout.Narrow
 }
 
-export function sidebarShown(args: {
-  layout: ESidebarLayout
-  choice: SidebarChoice | null
-}): boolean {
-  return sidebarChoiceInForce(args)?.shown ?? args.layout === ESidebarLayout.Wide
+export function sidebarShown(args: { layout: ESidebarLayout; peeking: boolean }): boolean {
+  return args.layout === ESidebarLayout.Wide || args.peeking
 }
 
-export function flipSidebar(args: {
-  layout: ESidebarLayout
-  choice: SidebarChoice | null
-}): SidebarChoice {
-  return { layout: args.layout, shown: !sidebarShown(args) }
+export function peekInForce(args: { layout: ESidebarLayout; peeking: boolean }): boolean {
+  return args.layout === ESidebarLayout.Narrow && args.peeking
+}
+
+export function floatingSidebarWidth(args: { width: number; sidebarWidth: number }): number {
+  return Math.min(args.sidebarWidth, args.width)
+}
+
+type Beside = { width: number; sidebarWidth: number; docked: boolean }
+
+export function contentWidthOf(args: Beside): number {
+  return args.docked ? Math.max(1, args.width - args.sidebarWidth) : args.width
+}
+
+export function chromeWidthOf(args: Beside): number {
+  return args.docked ? Math.max(1, args.width - args.sidebarWidth - SIDEBAR_GUTTER) : args.width
 }

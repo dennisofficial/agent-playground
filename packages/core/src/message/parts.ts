@@ -5,6 +5,14 @@ export type TextPart = { type: 'text'; text: string; providerOptions?: ProviderO
 
 export type ReasoningPart = { type: 'reasoning'; text: string; providerOptions?: ProviderOptions | undefined }
 
+export type ImagePart = {
+  type: 'image'
+  data: string
+  mediaType: string
+  source?: string | undefined
+  providerOptions?: ProviderOptions | undefined
+}
+
 export type ToolCallPart = {
   type: 'tool-call'
   toolCallId: string
@@ -18,6 +26,7 @@ export type ToolResultOutput =
   | { type: 'json'; value: JsonValue }
   | { type: 'error-text'; value: string }
   | { type: 'error-json'; value: JsonValue }
+  | { type: 'content'; value: readonly (TextPart | ImagePart)[] }
 
 export type ToolResultPart = {
   type: 'tool-result'
@@ -27,4 +36,4 @@ export type ToolResultPart = {
   providerOptions?: ProviderOptions | undefined
 }
 
-export type MessagePart = TextPart | ReasoningPart | ToolCallPart | ToolResultPart
+export type MessagePart = TextPart | ImagePart | ReasoningPart | ToolCallPart | ToolResultPart

@@ -20,7 +20,7 @@ const SNIFFED_TAIL_CHARACTERS = 240
 export type ShellSnapshot = {
   shellId: ShellId
   command: string
-  description?: string | undefined
+  description: string
   status: EShellStatus
   killedBy?: EKilledBy | undefined
   pid: number
@@ -48,12 +48,14 @@ export type StartedBackgroundShell =
 export type BackgroundShellSpec = {
   shellId: ShellId
   command: string
-  description?: string | undefined
+  description: string
   cwd: string
   clock: ClockPort
   retainCharacters: number
   overflowCharacters: number
+  promptSettleMs: number
   onExit: (shell: BackgroundShell) => void
+  onAwaitingInput: (shell: BackgroundShell) => void
 }
 
 function stopReading(drains: readonly Drain[]): void {
@@ -81,19 +83,60 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
   let lastOutputAt = startedAt
   let exitCode: number | undefined
   let endedAt: string | undefined
+  let awaitingSettled = false
+  let awaitingAnnounced = false
+  let promptWatch: ReturnType<typeof setTimeout> | undefined
 
   const drains: Drain[] = []
+
+  const forgetPromptWatch = (): void => {
+    if (promptWatch !== undefined) clearTimeout(promptWatch)
+    promptWatch = undefined
+  }
+
+  const atAPrompt = (): boolean =>
+    status === EShellStatus.Running && looksLikePrompt(buffer.tail(SNIFFED_TAIL_CHARACTERS))
+
+  /**
+   * The sniff fires on output that has no trailing newline, which every chunk arriving mid-line
+   * satisfies for as long as it takes the rest of the line to show up. Only a tail that stays put
+   * is a prompt, so the claim is made after the shell has been quiet, never on the chunk itself.
+   */
+  const settlePrompt = (): void => {
+    promptWatch = undefined
+    if (!atAPrompt()) return
+
+    awaitingSettled = true
+    if (awaitingAnnounced) return
+
+    awaitingAnnounced = true
+    try {
+      spec.onAwaitingInput(self)
+    } catch {
+      return
+    }
+  }
+
+  const watchForPrompt = (): void => {
+    forgetPromptWatch()
+    if (!atAPrompt()) return
+
+    promptWatch = setTimeout(settlePrompt, spec.promptSettleMs)
+    promptWatch.unref?.()
+  }
 
   const kill = (by: EKilledBy): void => {
     if (status !== EShellStatus.Running) return
     status = EShellStatus.Killed
     killedBy = by
+    forgetPromptWatch()
     terminate()
   }
 
   const overflow = (): void => {
     if (status !== EShellStatus.Running) return
     status = EShellStatus.Overflowed
+    forgetPromptWatch()
     terminate()
     stopReading(drains)
   }
@@ -102,7 +145,10 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     if (chunk === '') return
     buffer.append(chunk)
     lastOutputAt = spec.clock.now()
-    if (buffer.totalCharacters() > spec.overflowCharacters) overflow()
+    awaitingSettled = false
+    if (buffer.totalCharacters() > spec.overflowCharacters) return overflow()
+
+    watchForPrompt()
   }
 
   drains.push(
@@ -117,6 +163,8 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
       append(`\natlas could not read this shell to the end: ${messageOf(error)}\n`)
     } finally {
       endedAt = spec.clock.now()
+      forgetPromptWatch()
+      awaitingSettled = false
       if (status === EShellStatus.Running) status = EShellStatus.Exited
     }
   })()
@@ -136,8 +184,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
       lastOutputAt,
       endedAt,
       totalCharacters: buffer.totalCharacters(),
-      awaitingInput:
-        status === EShellStatus.Running && looksLikePrompt(buffer.tail(SNIFFED_TAIL_CHARACTERS)),
+      awaitingInput: status === EShellStatus.Running && awaitingSettled,
     }),
 
     since: (offset) => buffer.since(offset),

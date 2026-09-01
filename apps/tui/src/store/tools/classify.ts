@@ -7,7 +7,9 @@
  */
 
 import { ECallState, type ToolCall } from '../tool-runs'
+import { agentCall } from './agents'
 import { readShell } from './bash'
+import { imageRead } from './images'
 import { EDetail, EGather, EToolClass, type Classification } from './kinds'
 import {
   commandLabel,
@@ -15,27 +17,52 @@ import {
   detailOf,
   diffStatOf,
   inputOf,
+  lineCount,
   num,
   outputOf,
   plural,
   records,
   relativise,
+  standing,
   str,
   strings,
   targetOf,
+  writtenContentOf,
 } from './reading'
 
 const MCP_SEPARATOR = '__'
 
-const pending = (args: { call: ToolCall; cwd: string }): Classification => ({
-  klass: EToolClass.Gathered,
-  gather: EGather.Run,
-  line: targetOf(args) ?? args.call.name,
-  failed: false,
-  note: '',
-  metric: null,
-  detail: EDetail.None,
-})
+/**
+ * A write the model has not finished dictating, opened onto the file it is dictating.
+ *
+ * The content is on the CALL, so the same panel the settled row gets can be drawn from arguments
+ * that are still arriving — which is the whole reason a long write no longer reads as dead air.
+ */
+function dictating(args: { call: ToolCall; cwd: string }): Classification | null {
+  if (args.call.name !== 'write') return null
+  if (writtenContentOf(args.call) === undefined) return null
+
+  return {
+    klass: EToolClass.Change,
+    gather: null,
+    line: `Writing ${targetOf(args) ?? args.call.name}`,
+    failed: false,
+    note: '',
+    metric: null,
+    detail: EDetail.Created,
+  }
+}
+
+const pending = (args: { call: ToolCall; cwd: string }): Classification =>
+  dictating(args) ?? {
+    klass: EToolClass.Gathered,
+    gather: EGather.Run,
+    line: targetOf(args) ?? args.call.name,
+    failed: false,
+    note: '',
+    metric: null,
+    detail: EDetail.None,
+  }
 
 const denied = (args: { call: ToolCall; cwd: string }): Classification => ({
   klass: EToolClass.Command,
@@ -108,18 +135,6 @@ function changed(args: { call: ToolCall; cwd: string }): Classification {
   }
 }
 
-const lineCount = (text: string): number => (text.length === 0 ? 0 : text.split('\n').length)
-
-/**
- * The sentence form, when there is something to put in it.
- *
- * `Read read` is what a fabricated one looks like: a call with no target has nothing for the verb to
- * take, and prefixing the tool's own name with a verb reads as a stutter. Better to fall back to the
- * bare label than to invent a sentence about nothing.
- */
-const standing = (args: { verb: string; target: string | undefined }): { alone?: string } =>
-  args.target === undefined ? {} : { alone: `${args.verb} ${args.target}` }
-
 function gatheredByName(args: { call: ToolCall; cwd: string }): Classification | null {
   const { call } = args
   const output = outputOf(call)
@@ -127,6 +142,9 @@ function gatheredByName(args: { call: ToolCall; cwd: string }): Classification |
   const target = found ?? call.name
 
   if (call.name === 'read') {
+    const picture = imageRead(args)
+    if (picture !== null) return picture
+
     const path = relativise(target, args.cwd)
     const lines = num(output.lines) ?? lineCount(call.modelText)
     return {
@@ -244,6 +262,23 @@ export function classify(args: { call: ToolCall; cwd: string }): Classification 
       detail: EDetail.Plan,
     }
   }
+
+  if (call.name === 'skill') {
+    const named = str(outputOf(call).name) ?? targetOf(args)
+    const lines = lineCount(detailOf(call).join('\n'))
+    return {
+      klass: EToolClass.External,
+      gather: null,
+      line: named === undefined ? 'Loaded a skill' : `Loaded the ${named} skill`,
+      failed: call.state !== ECallState.Ok,
+      note: call.state === ECallState.Ok ? `${count(lines)} l` : 'failed',
+      metric: lines,
+      detail: EDetail.File,
+    }
+  }
+
+  const child = agentCall(args)
+  if (child !== null) return child
 
   return {
     klass: EToolClass.External,

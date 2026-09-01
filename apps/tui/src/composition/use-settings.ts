@@ -13,7 +13,7 @@ import {
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 
-import { appearanceOf, applyAppearance } from '../ui/appearance'
+import { appearanceOf, applyAppearance, type Appearance } from '../ui/appearance'
 import {
   EFooterMeters,
   footerMetersOf,
@@ -31,15 +31,17 @@ import {
   type SettingsModel,
   type SettingsState,
 } from '../ui/settings-model'
-import { SIDEBAR_WIDTH } from '../ui/theme'
+import { SIDEBAR_FOLD_BELOW, SIDEBAR_WIDTH } from '../ui/theme'
 import type { AtlasApp } from './compose'
 
 export type SettingsControl = {
   view: SettingsModel
+  appearance: Appearance
   state: SettingsState | null
   origin: string
   problem: string | undefined
   sidebarWidth: number
+  sidebarFoldBelow: number
   autoCompactAtPercent: number
   paceReveal: boolean
   thinking: EThinkingVisibility
@@ -64,11 +66,16 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
     [app.settings.definitions, held.resolution],
   )
 
-  const { accent, density, composer } = appearanceOf({ resolution: held.resolution })
+  const { accent, density, composer, imageRows } = appearanceOf({ resolution: held.resolution })
+
+  const appearance = useMemo(
+    () => ({ accent, density, composer, imageRows }),
+    [accent, composer, density, imageRows],
+  )
 
   useEffect(() => {
-    applyAppearance({ accent, density, composer })
-  }, [accent, composer, density])
+    applyAppearance(appearance)
+  }, [appearance])
 
   const write = useCallback(
     (target: SettingsState, next: (row: ResolvedSetting) => SettingValue) => {
@@ -136,6 +143,7 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
 
   return {
     view,
+    appearance,
     state,
     origin: held.writesTo,
     problem: refused ?? held.problems[0],
@@ -143,6 +151,11 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
       resolution: held.resolution,
       id: ESettingId.SidebarWidth,
       fallback: SIDEBAR_WIDTH,
+    }),
+    sidebarFoldBelow: rangeValueOf({
+      resolution: held.resolution,
+      id: ESettingId.SidebarFoldBelow,
+      fallback: SIDEBAR_FOLD_BELOW,
     }),
     autoCompactAtPercent: rangeValueOf({
       resolution: held.resolution,

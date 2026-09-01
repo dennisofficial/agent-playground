@@ -14,6 +14,9 @@ describe('EmbeddedSkillSource', () => {
       expect(skill.spec.kind).toBe(ECommandKind.Skill)
       expect(skill.spec.group).toBe(ECommandGroup.Workspace)
       expect(skill.spec.name).toMatch(/^[a-z][a-z0-9:-]*$/)
+      expect(skill.directory).toBeUndefined()
+      expect(skill.entryPath).toBeUndefined()
+      expect(skill.warnings).toEqual([])
     }
   })
 
@@ -26,5 +29,6 @@ describe('EmbeddedSkillSource', () => {
     expect(commit?.body).toContain('<type>(<scope>): <description>')
     expect(commit?.userInvocable).toBe(true)
     expect(commit?.modelInvocable).toBe(true)
+    expect(commit?.frontmatter.name).toBe('commit')
   })
 })

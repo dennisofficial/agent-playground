@@ -13,9 +13,12 @@ const PEEK_GUTTER = 2
 const BACK_UP = '↑'
 
 /**
- * The last thing you said, held at the top edge while you read below it. It floats over the
- * transcript rather than taking a row from it, and clicking it puts that message back at the top
- * so the reply beneath can be read from the beginning.
+ * The last thing you said, held at the top edge while you read below it. Clicking it puts that
+ * message back at the top so the reply beneath can be read from the beginning.
+ *
+ * It takes a row rather than floating over the transcript. Floating worked while every pixel was a
+ * cell the renderer composited, but a terminal drawing a kitty image paints it over the whole text
+ * plane regardless of z-order, so anything overlapping an image is swallowed by it.
  */
 export function PeekLine(props: {
   text: string
@@ -29,12 +32,9 @@ export function PeekLine(props: {
 
   return (
     <box
-      position="absolute"
-      top={0}
-      left={0}
       width={band}
       height={PEEK_ROWS}
-      zIndex={10}
+      flexShrink={0}
       flexDirection="row"
       backgroundColor={ground}
       {...handlers}

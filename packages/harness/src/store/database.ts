@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { PrismaBunSqlite, runMigrations } from 'prisma-adapter-bun-sqlite'
 
 import { PrismaClient } from '../../prisma/generated/client'
-import { loadAtlasMigrations } from './migrations'
+import { atlasMigrationsDirectory, loadAtlasMigrations } from './migrations'
 import { atlasDatabaseUrl, databaseFileFromUrl } from './paths'
 
 // `bun:sqlite` is synchronous, so SQLite's own `busy_timeout` blocks the thread rather than the
@@ -43,10 +43,25 @@ export async function openAtlasDatabase({
 }
 
 async function applyMigrations(factory: PrismaBunSqlite): Promise<void> {
+  const migrations = await loadAtlasMigrations()
+  if (migrations.length === 0) throw new Error(noMigrations())
+
   const adapter = await factory.connect()
   try {
-    await runMigrations(adapter, await loadAtlasMigrations(), { logger: () => undefined })
+    await runMigrations(adapter, migrations, { logger: () => undefined })
   } finally {
     await adapter.dispose()
   }
 }
+
+/**
+ * Applying nothing leaves a database with no tables, and every query then fails somewhere far from
+ * the cause — so an empty migration set is a startup failure rather than a schemaless database.
+ */
+const noMigrations = (): string =>
+  [
+    'Atlas found no migrations to apply.',
+    `A checkout reads them from ${atlasMigrationsDirectory()};`,
+    'the compiled binary reads src/store/migrations.generated.ts, written by',
+    'packages/harness/prisma/embed-migrations.ts during the build.',
+  ].join(' ')

@@ -2,7 +2,8 @@ import React from 'react'
 
 import { useShimmerClock } from '../hooks/use-shimmer-clock'
 import { beaconHeat, shimmerCrest, WORKING_SHIMMER } from '../shimmer'
-import { beaconColour, shimmerSpans } from '../shimmer-style'
+import { retryLabel, type RetryWait } from '../retry-countdown'
+import { shimmerColour, shimmerSpans } from '../shimmer-style'
 import { formatElapsed, formatTokens, spinnerFrame, theme } from '../theme'
 import { Spans } from './spans'
 
@@ -23,8 +24,18 @@ export function WorkingLine(props: {
   outputTokens: number
   interrupting: boolean
   verb?: EWorkingVerb | undefined
+  retry?: RetryWait | null | undefined
 }): React.ReactNode {
   const now = useShimmerClock({ active: true })
+  const { retry } = props
+
+  if (retry !== null && retry !== undefined && !props.interrupting) {
+    return (
+      <box flexDirection="column">
+        <ShimmeringLine label={retryLabel({ retry, now })} now={now} base={theme.error} />
+      </box>
+    )
+  }
 
   if (props.interrupting) {
     return (
@@ -50,13 +61,13 @@ export function WorkingLine(props: {
 
 const TEXT_OFFSET = 2
 
-function ShimmeringLine(props: { label: string; now: number }): React.ReactNode {
+function ShimmeringLine(props: { label: string; now: number; base?: string }): React.ReactNode {
   const cells = [...props.label].length + TEXT_OFFSET
   const crest = shimmerCrest({ nowMs: props.now, cells, spec: WORKING_SHIMMER })
 
   return (
     <text>
-      <span fg={beaconColour(beaconHeat({ crest, spec: WORKING_SHIMMER }))}>
+      <span fg={shimmerColour(beaconHeat({ crest, spec: WORKING_SHIMMER }), props.base)}>
         {spinnerFrame(props.now)}
       </span>
       <span> </span>
@@ -66,6 +77,7 @@ function ShimmeringLine(props: { label: string; now: number }): React.ReactNode 
           crest,
           spec: WORKING_SHIMMER,
           offset: TEXT_OFFSET,
+          ...(props.base === undefined ? {} : { base: props.base }),
         })}
       />
     </text>

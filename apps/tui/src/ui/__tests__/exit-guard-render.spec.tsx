@@ -15,7 +15,7 @@ const WIDTH = 80
 
 const RUNNING_LABEL = 'Wait for TUI suite then report'
 
-const RUNNING: readonly ExitGuardRow[] = [{ shellId: 'sh-1', label: RUNNING_LABEL }]
+const RUNNING: readonly ExitGuardRow[] = [{ id: 'sh-1', tag: 'shell', label: RUNNING_LABEL }]
 
 const guard = (over: { running?: readonly ExitGuardRow[]; selected?: number } = {}) => (
   <ExitGuard
@@ -61,8 +61,8 @@ describe('the exit guard when background work is still running', () => {
     const frame = await frameOf(
       guard({
         running: [
-          { shellId: 'sh-1', label: RUNNING_LABEL },
-          { shellId: 'sh-2', label: 'Tail the dev server' },
+          { id: 'sh-1', tag: 'shell', label: RUNNING_LABEL },
+          { id: 'sh-2', tag: 'shell', label: 'Tail the dev server' },
         ],
       }),
       WIDTH,
@@ -143,7 +143,9 @@ describe('the exit guard when background work is still running', () => {
     const tail = 'THE-TAIL-NOBODY-SEES'
     const frame = await frameOf(
       guard({
-        running: [{ shellId: 'sh-1', label: `${RUNNING_LABEL} ${'and on '.repeat(30)}${tail}` }],
+        running: [
+          { id: 'sh-1', tag: 'shell', label: `${RUNNING_LABEL} ${'and on '.repeat(30)}${tail}` },
+        ],
       }),
       WIDTH,
     )

@@ -1,13 +1,17 @@
 import { basename, dirname, extname } from 'node:path'
 
 import { BUILT_IN_SKILLS } from './manifest.generated'
-import { ESkillOrigin, parseSkill, SkillSource, type DiscoveredSkill } from './skill'
-
-const NESTED_FILENAME = 'skill.md'
+import {
+  ESkillOrigin,
+  isSkillEntryFilename,
+  parseSkill,
+  SkillSource,
+  type DiscoveredSkill,
+} from './skill'
 
 const nameOf = (path: string): string => {
   const file = basename(path)
-  if (file.toLowerCase() === NESTED_FILENAME) return basename(dirname(path))
+  if (isSkillEntryFilename(file)) return basename(dirname(path))
   return basename(file, extname(file))
 }
 

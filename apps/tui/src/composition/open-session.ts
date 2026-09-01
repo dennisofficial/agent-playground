@@ -5,6 +5,7 @@ import type { AtlasConfig } from './config'
 import { diagnoseCredentialFailure, type CredentialDiagnosis } from './credential-diagnosis'
 import { openConversation, type OpenedConversation } from './open-conversation'
 import type { SettingsBinding } from './settings-binding'
+import { stateOfDirectory, workspaceRefusal } from './workspace-directory'
 
 const REFUSED = 1
 
@@ -43,6 +44,12 @@ async function startSession(args: {
 }): Promise<Session> {
   const { config, progress } = args
 
+  const unusable = workspaceRefusal({
+    directory: config.cwd,
+    state: stateOfDirectory(config.cwd),
+  })
+  if (unusable !== null) return { type: ESession.Refused, message: unusable, exitCode: REFUSED }
+
   progress.report(EBootStep.Composing)
   const app = await composeAtlas({ config, env: args.env, settings: args.settings })
 
@@ -63,6 +70,8 @@ async function startSession(args: {
     threads: app.threads,
     log: app.log,
     ledger: app.ledger,
+    agents: app.agents,
+    ids: app.ids,
     workspace: app.workspace,
     open: config.open,
   })

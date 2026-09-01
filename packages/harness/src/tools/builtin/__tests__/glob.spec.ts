@@ -25,7 +25,7 @@ const scan = async (input: unknown) =>
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'glob-1',
-    sessionDirectory: root,
+    projectDirectory: root,
     threadId: toThreadId('thread-1'),
   })
 

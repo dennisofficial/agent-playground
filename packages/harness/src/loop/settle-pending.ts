@@ -3,9 +3,10 @@ import {
   partitionToolCalls,
   pendingCalls,
   rowsOwnedBy,
-  sessionDirectoryOf,
+  projectDirectoryOf,
   type ThreadId,
   type CallId,
+  type EventDraft,
   type EventLogPort,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
@@ -17,11 +18,25 @@ export type SettlePending = (args: {
   signal: AbortSignal
 }) => Promise<{ paused?: { callId: CallId; reason: string } }>
 
+function projectDirectoryAfter(args: {
+  drafts: readonly EventDraft[]
+  launchDirectory: string
+  projectDirectory: string
+}): string {
+  for (let index = args.drafts.length - 1; index >= 0; index -= 1) {
+    const draft = args.drafts[index]
+    if (draft?.type === 'worktree-entered') return draft.path
+    if (draft?.type === 'worktree-exited') return args.launchDirectory
+  }
+
+  return args.projectDirectory
+}
+
 export function createSettlePending(deps: {
   log: EventLogPort
   dispatch: ToolDispatcher
   tools?: readonly ToolDeclaration[] | undefined
-  projectDirectory?: string | undefined
+  launchDirectory?: string | undefined
 }): SettlePending {
   const declarations = new Map((deps.tools ?? []).map((tool) => [tool.name, tool]))
 
@@ -36,16 +51,14 @@ export function createSettlePending(deps: {
 
     const runs = partitionToolCalls({ calls, isSafe })
 
-    let sessionDirectory = sessionDirectoryOf({
-      events,
-      projectDirectory: deps.projectDirectory ?? process.cwd(),
-    })
+    const launchDirectory = deps.launchDirectory ?? process.cwd()
+    let projectDirectory = projectDirectoryOf({ events, launchDirectory })
 
     for (const run of runs) {
       if (signal.aborted) return {}
 
       const settled = await Promise.all(
-        run.map((call) => deps.dispatch.dispatch({ call, signal, sessionDirectory })),
+        run.map((call) => deps.dispatch.dispatch({ call, signal, projectDirectory })),
       )
 
       for (const [index, drafts] of settled.entries()) {
@@ -54,10 +67,11 @@ export function createSettlePending(deps: {
         await deps.log.append({ threadId, runId: call.runId, drafts })
       }
 
-      const moved = settled.flat().findLast((draft) => draft.type === 'cwd-changed')
-      if (moved !== undefined) sessionDirectory = moved.path
+      const drafts = settled.flat()
 
-      const asked = settled.flat().find((draft) => draft.type === 'approval-requested')
+      projectDirectory = projectDirectoryAfter({ drafts, launchDirectory, projectDirectory })
+
+      const asked = drafts.find((draft) => draft.type === 'approval-requested')
       if (asked !== undefined) return { paused: { callId: asked.callId, reason: asked.reason } }
     }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   EPromptAgent,
+  ESkipReason,
   PromptFragment,
   deadFragmentIds,
   modelEntry,
@@ -17,8 +18,10 @@ import {
   type DependencyContainer,
 } from '../../container/injection'
 import { WorkspaceRoot } from '../../container/tokens'
+import { SkillRegistryPort } from '../../skills/port'
 import { registerBuiltinPromptFragments } from '../register-prompt-fragments'
 import { InMemoryPromptRegistry, PromptRegistry } from '../registry'
+import { FakeSkillRegistry } from './fake-skills'
 
 const ROOT = '/Users/dev/project'
 
@@ -31,22 +34,33 @@ const MINIMAL_PREAMBLE = [
 ].join('\n')
 
 const PROJECT_DIRECTORY =
-  `The project directory is ${ROOT}, and it is where a bash command starts.` +
-  ' Keep it there: reach elsewhere with absolute paths rather than cd, unless the developer asks you to move.'
+  `The project directory is ${ROOT}, and every bash command starts there.` +
+  ' You are already in it, so never spend a cd returning to it, and run somewhere else by passing that directory as workdir rather than by cd.'
 
 const RELATIVE_PATHS =
   'A path you pass to a tool resolves against the project directory, so write those relative to it.' +
-  ' A path inside a bash command is resolved by the shell instead, so write those absolute.'
+  ' A path inside a bash command is resolved by the shell instead, against workdir or the project directory, so write those absolute.'
+
+const READ_BEFORE_WRITE = `write replaces a file whole, so an existing file has to have been read whole before you may
+replace it. read gives you that; grep gives you only the lines it matched; reading a file through
+the shell gives you nothing that is tracked at all. edit needs no prior read, because its old text
+has to match — an unanchored change fails rather than lands.
+
+Every file you have read is watched. If it changes underneath you, the next write or edit to it is
+refused until you have read it again.`
 
 const CONTEXT: PromptContext = {
   agent: EPromptAgent.Main,
   provider: { id: 'anthropic-oauth', modelId: 'claude-opus-5' },
-  model: modelEntry('claude-opus-5'),
+  model: modelEntry('claude-opus-5'), projectDirectory: '/w'
 }
 
 const registeredRootless = (): DependencyContainer => {
   const container = createIsolatedContainer()
   registerBuiltinPromptFragments({ container })
+  container.register(portToken(SkillRegistryPort), {
+    useValue: new FakeSkillRegistry({ skills: [] }),
+  })
   return container
 }
 
@@ -77,8 +91,10 @@ describe('the ported prose, pinned byte for byte against the preamble it replace
     expect(compiled().parts[1]?.text).toBe(MINIMAL_PREAMBLE.split('\n').slice(2).join('\n'))
   })
 
-  it('holds exactly those four fragments and no fifth', () => {
-    expect(prose()).toBe(`${MINIMAL_PREAMBLE}\n${PROJECT_DIRECTORY}\n${RELATIVE_PATHS}`)
+  it('holds the ported prose and nothing but the fragments added since', () => {
+    expect(prose()).toBe(
+      `${MINIMAL_PREAMBLE}\n${PROJECT_DIRECTORY}\n${RELATIVE_PATHS}\n${READ_BEFORE_WRITE}`,
+    )
   })
 })
 
@@ -89,7 +105,7 @@ describe('the project-directory sentence, split at the static/live seam', () => 
 
   it('tells the model to hold the directory still rather than to steer it', () => {
     expect(compiled().parts[2]?.text).toEndWith(
-      'unless the developer asks you to move.',
+      'never spend a cd returning to it, and run somewhere else by passing that directory as workdir rather than by cd.',
     )
   })
 
@@ -105,6 +121,23 @@ describe('the project-directory sentence, split at the static/live seam', () => 
   it('is separate from the relative-path rule, which needs no bound root', () => {
     expect(compiled().parts.map((part) => part.id)).toContain('environment.relative-paths')
     expect(compiled().parts[3]?.text).toBe(RELATIVE_PATHS)
+  })
+})
+
+describe('the rule the file guard enforces, said once where the model reads it', () => {
+  it('sits after the path rules, since it is about what you may do to a path', () => {
+    expect(compiled().parts[4]?.id).toBe('files.read-before-write')
+    expect(compiled().parts[4]?.text).toBe(READ_BEFORE_WRITE)
+  })
+
+  it('separates the two tools the guard treats differently', () => {
+    expect(READ_BEFORE_WRITE).toContain('write replaces a file whole')
+    expect(READ_BEFORE_WRITE).toContain('edit needs no prior read')
+  })
+
+  it('says what a search buys and what a shell read does not', () => {
+    expect(READ_BEFORE_WRITE).toContain('grep gives you only the lines it matched')
+    expect(READ_BEFORE_WRITE).toContain('the shell gives you nothing that is tracked at all')
   })
 })
 
@@ -125,9 +158,17 @@ This conversation is compacted when it grows long: the earlier turns are replace
 and you will not be able to read them again. Write anything you will need later into your own
 output or into a file, rather than relying on scrolling back.
 
-The project directory is /Users/dev/project, and it is where a bash command starts. Keep it there: reach elsewhere with absolute paths rather than cd, unless the developer asks you to move.
+The project directory is /Users/dev/project, and every bash command starts there. You are already in it, so never spend a cd returning to it, and run somewhere else by passing that directory as workdir rather than by cd.
 
-A path you pass to a tool resolves against the project directory, so write those relative to it. A path inside a bash command is resolved by the shell instead, so write those absolute.`,
+A path you pass to a tool resolves against the project directory, so write those relative to it. A path inside a bash command is resolved by the shell instead, against workdir or the project directory, so write those absolute.
+
+write replaces a file whole, so an existing file has to have been read whole before you may
+replace it. read gives you that; grep gives you only the lines it matched; reading a file through
+the shell gives you nothing that is tracked at all. edit needs no prior read, because its old text
+has to match — an unanchored change fails rather than lands.
+
+Every file you have read is watched. If it changes underneath you, the next write or edit to it is
+refused until you have read it again.`,
       },
     ])
   })
@@ -138,8 +179,10 @@ A path you pass to a tool resolves against the project directory, so write those
     )
   })
 
-  it('skips nothing, since none of the ported prose is conditional', () => {
-    expect(compiled().skipped).toEqual([])
+  it('skips none of the ported prose, none of which is conditional', () => {
+    expect(compiled().skipped).toEqual([
+      { id: 'skills.listing', reason: ESkipReason.Empty },
+    ])
   })
 })
 
@@ -153,6 +196,8 @@ describe('the registration file as the table of contents', () => {
       'workflow.compaction-notice',
       'environment.project-directory',
       'environment.relative-paths',
+      'files.read-before-write',
+      'skills.listing',
     ])
   })
 
@@ -171,6 +216,7 @@ describe('the registration file as the table of contents', () => {
         contexts: reachablePromptContexts({
           agents: Object.values(EPromptAgent),
           providerIds: ['anthropic-oauth'],
+          projectDirectory: '/w',
         }),
       }),
     ).toEqual([])
@@ -179,9 +225,7 @@ describe('the registration file as the table of contents', () => {
 
 describe('the registry is one instance per container, so its memo is not incidental', () => {
   it('hands back the same registry however many times it is resolved', () => {
-    const container = createIsolatedContainer()
-    registerBuiltinPromptFragments({ container })
-    container.register(WorkspaceRoot, { useValue: ROOT })
+    const container = registered()
 
     const first = container.resolve(portToken(PromptRegistry))
     const second = container.resolve(portToken(PromptRegistry))

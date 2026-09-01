@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'bun:test'
 
 import { EmbeddedSkillSource } from '../embedded-source'
 import { FilesystemSkillSource } from '../filesystem-source'
-import { loadSkills } from '../registry'
+import { loadSkills, readSkillSources } from '../registry'
 import { ESkillOrigin } from '../skill'
 
 let home: string
@@ -88,5 +88,32 @@ describe('loadSkills', () => {
 
   it('yields nothing when no source has anything to offer', async () => {
     expect(await loadSkills({ sources: [] })).toEqual([])
+  })
+})
+
+describe('readSkillSources', () => {
+  it('reports the skills a higher-precedence source shadowed', async () => {
+    write({ root: home, at: 'commit.md', content: 'user commit' })
+    write({ root: repository, at: 'commit.md', content: 'project commit' })
+
+    const load = await readSkillSources({
+      sources: [new EmbeddedSkillSource(), userSource(), projectSource()],
+    })
+
+    expect(load.skills.map((skill) => skill.body)).toEqual(['project commit'])
+    expect(load.shadowed.map((skill) => skill.origin).sort()).toEqual([
+      ESkillOrigin.BuiltIn,
+      ESkillOrigin.User,
+    ])
+  })
+
+  it('reports nothing shadowed when no name collides', async () => {
+    write({ root: repository, at: 'review.md', content: 'project review' })
+
+    const load = await readSkillSources({
+      sources: [new EmbeddedSkillSource(), projectSource()],
+    })
+
+    expect(load.shadowed).toEqual([])
   })
 })

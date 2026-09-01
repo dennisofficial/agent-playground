@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
+import { EAgentStatus } from '@dltech/atlas-core'
+
 import { ECallState } from '../../tool-runs'
 import { classify } from '../classify'
 import { EDetail, EGather, EToolClass } from '../kinds'
@@ -150,6 +152,40 @@ describe('the tools that are not bash', () => {
     expect(watch.note).toBe('quiet')
   })
 
+  it('names the skill it loaded, rather than saying only that a skill was called', () => {
+    const loaded = reading(
+      aCall({
+        name: 'skill',
+        input: { name: 'handoff' },
+        output: {
+          name: 'handoff',
+          path: '/Users/dev/.agents/skills/handoff/SKILL.md',
+          text: 'one\ntwo\nthree',
+        },
+      }),
+    )
+
+    expect(loaded.line).toBe('Loaded the handoff skill')
+    expect(loaded.note).toBe('3 l')
+    expect(loaded.metric).toBe(3)
+    expect(loaded.detail).toBe(EDetail.File)
+  })
+
+  it('names the skill on a refusal too, rather than leaving a bare tool name', () => {
+    const refused = reading(
+      aCall({
+        name: 'skill',
+        input: { name: 'tdd' },
+        state: ECallState.Failed,
+        note: 'no skill is named tdd',
+      }),
+    )
+
+    expect(refused.line).toBe('Failed skill tdd')
+    expect(refused.failed).toBe(true)
+    expect(refused.detail).toBe(EDetail.Reason)
+  })
+
   it('gives an MCP tool its own line under its own name', () => {
     const external = reading(aCall({ name: 'mcp__linear__save_issue' }))
 
@@ -194,5 +230,271 @@ describe('the tools that are not bash', () => {
     expect(pending.note).toBe('')
     expect(pending.metric).toBeNull()
     expect(pending.detail).toBe(EDetail.None)
+  })
+})
+
+describe('what a sub-agent call reads as', () => {
+  it('names what the child was spawned to do, not the tool that spawned it', () => {
+    const spawned = reading(
+      aCall({
+        name: 'agent_spawn',
+        input: { agentType: 'explore', brief: 'find every call site', intent: 'vault audit' },
+        output: { agentId: 'thr_child' },
+      }),
+    )
+
+    expect(spawned.line).toBe('Spawned vault audit')
+    expect(spawned.note).toBe('running')
+    expect(spawned.klass).toBe(EToolClass.External)
+  })
+
+  it('falls back to the agent type when the spawn carried no intent', () => {
+    const spawned = reading(
+      aCall({ name: 'agent_spawn', input: { agentType: 'reviewer', brief: 'check this' } }),
+    )
+
+    expect(spawned.line).toBe('Spawned reviewer')
+  })
+
+  it('names the child a message, a resume and a stop were aimed at', () => {
+    const said = reading(aCall({ name: 'agent_say', input: { agentId: 'thr_child', text: 'go on' } }))
+    const resumed = reading(aCall({ name: 'agent_resume', input: { agentId: 'thr_child' } }))
+    const stopped = reading(aCall({ name: 'agent_stop', input: { agentId: 'thr_child' } }))
+
+    expect(said.line).toBe('Messaged thr_child')
+    expect(resumed.line).toBe('Resumed thr_child')
+    expect(stopped.line).toBe('Stopped thr_child')
+  })
+
+  it('says a message to a busy child is waiting rather than running', () => {
+    const queued = reading(
+      aCall({
+        name: 'agent_say',
+        input: { agentId: 'thr_child', text: 'go on' },
+        output: { agentId: 'thr_child', queued: true },
+      }),
+    )
+    const woken = reading(
+      aCall({
+        name: 'agent_say',
+        input: { agentId: 'thr_child', text: 'go on' },
+        output: { agentId: 'thr_child', queued: false },
+      }),
+    )
+
+    expect(queued.note).toBe('queued')
+    expect(woken.note).toBe('running')
+  })
+
+  it('never says a stop left the child running', () => {
+    const signalled = reading(
+      aCall({
+        name: 'agent_stop',
+        input: { agentId: 'thr_child' },
+        output: { agentId: 'thr_child', agentType: 'explore', status: EAgentStatus.Running },
+      }),
+    )
+    const overAlready = reading(
+      aCall({
+        name: 'agent_stop',
+        input: { agentId: 'thr_child' },
+        output: { agentId: 'thr_child', agentType: 'explore', status: EAgentStatus.Finished },
+      }),
+    )
+
+    expect(signalled.note).toBe('stopping')
+    expect(overAlready.note).toBe('already done')
+  })
+
+  it('counts what a listing found still running, not what it found at all', () => {
+    const listed = reading(
+      aCall({
+        name: 'agent_list',
+        output: {
+          agents: [
+            { agentId: 'a', status: EAgentStatus.Running },
+            { agentId: 'b', status: EAgentStatus.Finished },
+            { agentId: 'c', status: EAgentStatus.Failed },
+          ],
+        },
+      }),
+    )
+
+    expect(listed.line).toBe('Checked on the sub-agents')
+    expect(listed.note).toBe('1 running')
+    expect(listed.metric).toBe(3)
+  })
+
+  it('does not call a listing of finished children running', () => {
+    const listed = reading(
+      aCall({
+        name: 'agent_list',
+        output: {
+          agents: [
+            { agentId: 'a', status: EAgentStatus.Finished },
+            { agentId: 'b', status: EAgentStatus.Stopped },
+          ],
+        },
+      }),
+    )
+
+    expect(listed.note).toBe('2 ended')
+  })
+
+  it('surfaces a child blocked on an approval ahead of the ones still working', () => {
+    const listed = reading(
+      aCall({
+        name: 'agent_list',
+        output: {
+          agents: [
+            { agentId: 'a', status: EAgentStatus.Running },
+            { agentId: 'b', status: EAgentStatus.Blocked },
+          ],
+        },
+      }),
+    )
+
+    expect(listed.note).toBe('1 blocked')
+  })
+
+  it('claims nothing about a listing whose entries carry no status', () => {
+    const listed = reading(
+      aCall({ name: 'agent_list', output: { agents: [{ agentId: 'a' }, { agentId: 'b' }] } }),
+    )
+
+    expect(listed.note).toBe('2 sub-agents')
+  })
+
+  it('says none when nothing has been spawned', () => {
+    expect(reading(aCall({ name: 'agent_list', output: { agents: [] } })).note).toBe('none')
+  })
+
+  it('names the count and not one anonymous child when a wave is spawned in one call', () => {
+    const wave = reading(
+      aCall({
+        name: 'agent_spawn',
+        input: {
+          agents: [
+            { agentType: 'explore', brief: 'map the tui', intent: 'map the tui app structure' },
+            { agentType: 'explore', brief: 'map the loop', intent: 'map the harness loop' },
+            { agentType: 'reviewer', brief: 'read the diff', intent: 'review the diff' },
+          ],
+        },
+        output: {
+          agents: [
+            { agentId: 'a', agentType: 'explore', intent: 'map the tui app structure' },
+            { agentId: 'b', agentType: 'explore', intent: 'map the harness loop' },
+            { agentId: 'c', agentType: 'reviewer', intent: 'review the diff' },
+          ],
+        },
+        modelText: 'Started 3 sub-agents.\na  explore  map the tui app structure',
+      }),
+    )
+
+    expect(wave.line).toBe('Spawned 3 sub-agents')
+    expect(wave.note).toBe('3/3 running')
+    expect(wave.metric).toBe(3)
+    expect(wave.detail).toBe(EDetail.Output)
+  })
+
+  it('counts a pair as a pair', () => {
+    const pair = reading(
+      aCall({
+        name: 'agent_spawn',
+        input: {
+          agents: [
+            { agentType: 'explore', brief: 'one', intent: 'the first' },
+            { agentType: 'explore', brief: 'two', intent: 'the second' },
+          ],
+        },
+        output: { agents: [{ agentId: 'a' }, { agentId: 'b' }] },
+      }),
+    )
+
+    expect(pair.line).toBe('Spawned 2 sub-agents')
+    expect(pair.note).toBe('2/2 running')
+  })
+
+  it('claims no more than it asked for when part of a wave was refused', () => {
+    const partial = reading(
+      aCall({
+        name: 'agent_spawn',
+        input: {
+          agents: [
+            { agentType: 'explore', brief: 'one', intent: 'the first' },
+            { agentType: 'explore', brief: 'two', intent: 'the second' },
+            { agentType: 'nope', brief: 'three', intent: 'the third' },
+          ],
+        },
+        output: { agents: [{ agentId: 'a' }, { agentId: 'b' }] },
+      }),
+    )
+
+    expect(partial.line).toBe('Spawned 3 sub-agents')
+    expect(partial.note).toBe('2/3 running')
+    expect(partial.metric).toBe(3)
+  })
+
+  it('keeps a single-child spawn reading as the one child it named', () => {
+    const one = reading(
+      aCall({
+        name: 'agent_spawn',
+        input: { agentType: 'explore', brief: 'map the tui', intent: 'map the tui app structure' },
+      }),
+    )
+
+    expect(one.line).toBe('Spawned map the tui app structure')
+    expect(one.note).toBe('running')
+  })
+
+  it('still names the child while the spawn is only pending', () => {
+    const spawning = reading(
+      aCall({
+        name: 'agent_spawn',
+        input: { agentType: 'explore', intent: 'vault audit' },
+        state: ECallState.Pending,
+      }),
+    )
+
+    expect(spawning.line).toBe('agent_spawn')
+    expect(spawning.failed).toBe(false)
+  })
+})
+
+describe('a call the model is still dictating', () => {
+  it('names a write and opens onto the file as its content arrives', () => {
+    const reading = classify({
+      call: aCall({
+        name: 'write',
+        state: ECallState.Pending,
+        input: { path: '/repo/docs/plans/notes.md', content: '# Is the ver' },
+      }),
+      cwd: CWD,
+    })
+
+    expect(reading.klass).toBe(EToolClass.Change)
+    expect(reading.line).toBe('Writing docs/plans/notes.md')
+    expect(reading.detail).toBe(EDetail.Created)
+  })
+
+  it('waits for the content before promising a panel there is nothing to fill', () => {
+    const reading = classify({
+      call: aCall({
+        name: 'write',
+        state: ECallState.Pending,
+        input: { path: '/repo/docs/plans/notes.md' },
+      }),
+      cwd: CWD,
+    })
+
+    expect(reading.line).toBe('docs/plans/notes.md')
+    expect(reading.detail).toBe(EDetail.None)
+  })
+
+  it('says the tool name until the arguments say anything at all', () => {
+    const reading = classify({ call: aCall({ name: 'write', state: ECallState.Pending }), cwd: CWD })
+
+    expect(reading.line).toBe('write')
+    expect(reading.detail).toBe(EDetail.None)
   })
 })

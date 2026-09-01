@@ -89,17 +89,17 @@ async function spawn(args: {
           ids: harness.ids,
           assembly: defaultPipeline({
             prompt: () => EMPTY_PROMPT,
-            projectDirectory: PROJECT_DIRECTORY,
+            launchDirectory: PROJECT_DIRECTORY,
           }),
-          projectDirectory: PROJECT_DIRECTORY,
+          launchDirectory: PROJECT_DIRECTORY,
         },
         tools,
         hooks: new HookChain({}),
         drainNotices: async () => [],
         assemblyFor: ({ agentType }) =>
           defaultPipeline({
-            prompt: () => subAgentPrompt({ prompts, agentType, provider: harness.model.identity }),
-            projectDirectory: PROJECT_DIRECTORY,
+            prompt: () => subAgentPrompt({ prompts, agentType, provider: harness.model.identity, projectDirectory: '/w' }),
+            launchDirectory: PROJECT_DIRECTORY,
           }),
         ...(pinned === undefined
           ? {}

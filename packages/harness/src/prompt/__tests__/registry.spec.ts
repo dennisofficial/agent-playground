@@ -14,7 +14,7 @@ import {
 import { InMemoryPromptRegistry } from '../registry'
 import { ConditionalFragment, CountingFragment, SayingFragment, contextFor } from './fake-fragments'
 
-const forModel = (modelId: string) => contextFor({ modelId, model: modelEntry(modelId) })
+const forModel = (modelId: string) => contextFor({ modelId, model: modelEntry(modelId), projectDirectory: '/w' })
 
 const OPUS = forModel('claude-opus-5')
 const CODEX = forModel('gpt-5-codex')
@@ -192,7 +192,8 @@ describe('dead prose', () => {
   const contexts = reachablePromptContexts({
     agents: Object.values(EPromptAgent),
     providerIds: ['anthropic-oauth'],
-  })
+          projectDirectory: '/w',
+        })
 
   const idsThatAreDead = (fragments: readonly PromptFragment[]): readonly string[] =>
     deadFragmentIds({ fragments, contexts })

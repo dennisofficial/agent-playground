@@ -23,6 +23,7 @@ export type ChildState = {
   lastText: string
   startedAt: string
   endedAt: string | undefined
+  deliveredAt: string | undefined
   abort: AbortController
   pending: string[]
   context: ChildContext | undefined
@@ -52,6 +53,7 @@ export function recoveredChild({
     lastText: agent.prose,
     startedAt: agent.spawnedAt ?? at,
     endedAt: agent.endedAt,
+    deliveredAt: undefined,
     abort: new AbortController(),
     pending: [],
     context: undefined,
@@ -71,6 +73,7 @@ export function snapshotOf(child: ChildState): AgentSnapshot {
     lastTool: child.lastTool,
     startedAt: child.startedAt,
     endedAt: child.endedAt,
+    deliveredAt: child.deliveredAt,
     context: child.context,
   }
 }

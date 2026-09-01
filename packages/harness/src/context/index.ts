@@ -5,3 +5,5 @@ export {
   type InstructionRequest,
   type LoadedInstruction,
 } from './read-instructions'
+
+export { repositoryRootOf } from './repository-root'

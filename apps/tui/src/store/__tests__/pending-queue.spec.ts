@@ -21,7 +21,7 @@ describe('the queue a message waits in until the loop takes it', () => {
     queue.enqueue({ text: 'first' })
     queue.enqueue({ text: 'second' })
 
-    expect(queue.drain()).toEqual(['first', 'second'])
+    expect(queue.drain().map((said) => said.text)).toEqual(['first', 'second'])
     expect(queue.drain()).toEqual([])
   })
 
@@ -80,7 +80,7 @@ describe('the queue a message waits in until the loop takes it', () => {
     const queue = createPendingQueue()
     queue.enqueue({ text: 'only once' })
 
-    expect(queue.drain()).toEqual(['only once'])
+    expect(queue.drain().map((said) => said.text)).toEqual(['only once'])
     expect(queue.drain()).toEqual([])
   })
 

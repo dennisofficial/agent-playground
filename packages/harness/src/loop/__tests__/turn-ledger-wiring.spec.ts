@@ -51,7 +51,7 @@ function runnerOver(args: {
     log: args.harness.log,
     model: args.model ?? args.harness.model,
     ids: args.harness.ids,
-    assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+    assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
     spend: {
       ledger: args.ledger,
       clock: args.harness.clock,
@@ -183,7 +183,7 @@ describe('the ledger is accounting, not the turn', () => {
       log: harness.log,
       model: harness.model,
       ids: harness.ids,
-      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY }),
+      assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
     })
 
     const outcome = await runner.say({ threadId: thread.id, text: 'what changed?' })

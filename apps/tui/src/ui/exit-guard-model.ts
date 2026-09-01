@@ -1,5 +1,6 @@
-import type { ShellSnapshot } from '@dltech/atlas-harness'
+import type { AgentSnapshot, ShellSnapshot } from '@dltech/atlas-harness'
 
+import { subagentLabel } from '../store/subagent-row'
 import { shellNameLabel } from './shells-model'
 
 export enum EExitChoice {
@@ -8,8 +9,13 @@ export enum EExitChoice {
   Stay = 'stay',
 }
 
+export const SHELL_TAG = 'shell'
+
+export const AGENT_TAG = 'agent'
+
 export type ExitGuardRow = {
-  shellId: string
+  id: string
+  tag: string
   label: string
 }
 
@@ -43,9 +49,15 @@ const FIRST_ENABLED = Math.max(
 )
 
 export function exitGuardRow(
-  shell: Pick<ShellSnapshot, 'shellId' | 'command' | 'description'>,
+  shell: Pick<ShellSnapshot, 'shellId' | 'command'> & { description?: string | undefined },
 ): ExitGuardRow {
-  return { shellId: shell.shellId, label: shellNameLabel(shell) }
+  return { id: shell.shellId, tag: SHELL_TAG, label: shellNameLabel(shell) }
+}
+
+export function exitGuardAgentRow(
+  agent: Pick<AgentSnapshot, 'agentId' | 'agentType' | 'intent'>,
+): ExitGuardRow {
+  return { id: agent.agentId, tag: AGENT_TAG, label: subagentLabel(agent) }
 }
 
 export function openExitGuard(): ExitGuardState {

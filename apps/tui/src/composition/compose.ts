@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { homedir } from 'node:os'
 
 import {
   AccountStorePort,
@@ -6,11 +6,18 @@ import {
   ClockPort,
   CredentialPort,
   defaultPipeline,
+  EAgentStatus,
   EPromptAgent,
+  DEFAULT_WORKTREE_DIRECTORY,
+  ESettingId,
+  choiceValueOf,
+  EShellStatus,
   EventLogPort,
   IdPort,
+  IMAGES_KEPT_IN_CONTEXT,
   ModelPort,
   promptContextFor,
+  rangeValueOf,
   toThreadId,
   type ThreadId,
   type EventDraft,
@@ -18,6 +25,14 @@ import {
 } from '@dltech/atlas-core'
 import {
   AccountsService,
+  agentTypeSources,
+  AgentRegistryPort,
+  AiSdkModelPort,
+  anthropicThinkingOptions,
+  bindAgentTypes,
+  pinnedModelSource,
+  ChildRunnerDepsToken,
+  subAgentPrompt,
   ThreadStorePort,
   AnthropicUsageClient,
   builtinOauthClients,
@@ -25,16 +40,11 @@ import {
   createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
-  ATLAS_DIRECTORY_NAME,
   atlasDirectory,
   createSecurityKeychainReader,
   createUrlOpener,
   disposeAll,
-  EmbeddedSkillSource,
-  ESkillOrigin,
-  FilesystemSkillSource,
   HookChainToken,
-  loadSkills,
   LoadInstructionsHook,
   probeWorkspace,
   ClaudeCodeSource,
@@ -52,6 +62,7 @@ import {
   registerBuiltinPromptFragments,
   registerDisposable,
   ShellRegistryPort,
+  SkillRegistryPort,
   summaryFor,
   titleFor,
   ToolDispatcher,
@@ -59,9 +70,13 @@ import {
   TurnLedgerPort,
   TurnRunner,
   WorkspaceRoot,
+  WorktreeDirectoryToken,
   FileBrowser,
   type UrlOpener,
   type AccountUsageService,
+  type AgentTypeCatalog,
+  type ChildRunnerDeps,
+  type TurnDeps,
   type DeltaChannel,
   type DiscoveredSkill,
   type SettingsService,
@@ -72,9 +87,12 @@ import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, rememberSelection } from './model-preference'
-import { selectableModel, type ModelChoice } from './model-selection'
+import { faultInjected } from './fault-injection'
+import { modelIsReachable, selectableModel, type ModelChoice } from './model-selection'
 import { instructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
+import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
+import { userSaidDraft } from './user-said'
 
 export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
 
@@ -95,16 +113,17 @@ export type AtlasApp = {
   ids: IdPort
   pending: PendingQueue
   shells: ShellRegistryPort
+  agents: AgentRegistryPort
   model: ModelChoice
   settings: SettingsService
   usage: AccountUsageService
   files: FileBrowser
   openUrl: UrlOpener
   skills: readonly DiscoveredSkill[]
+  skillRegistry: SkillRegistryPort
+  agentTypes: AgentTypeCatalog
   close: () => Promise<void>
 }
-
-const SKILLS_DIRECTORY_NAME = 'skills'
 
 export async function composeAtlas(args: {
   config: AtlasConfig
@@ -149,9 +168,18 @@ export async function composeAtlas(args: {
   const settings = args.settings.service
   args.settings.bindTo(container)
 
+  container.register(WorktreeDirectoryToken, {
+    useValue: () =>
+      choiceValueOf({
+        resolution: settings.snapshot().resolution,
+        id: ESettingId.WorktreeDirectory,
+        fallback: DEFAULT_WORKTREE_DIRECTORY,
+      }),
+  })
+
   container.register(portToken(BeforeTurnHook), {
     useValue: new LoadInstructionsHook({
-      source: () => instructionPlanOf({ settings, cwd: config.cwd }),
+      source: ({ projectDirectory }) => instructionPlanOf({ settings, projectDirectory }),
     }),
   })
 
@@ -170,30 +198,43 @@ export async function composeAtlas(args: {
   container.register(PrismaClientToken, { useValue: database.prisma })
   registerDisposable({ container, close: database.close })
 
+  const skillRegistry = bindSkillRegistry({
+    container,
+    registry: await liveSkillRegistry({
+      atlasHome: atlasDirectory(),
+      home: homedir(),
+      cwd: config.cwd,
+    }),
+  })
+
+  const agentTypes = await bindAgentTypes({
+    container,
+    sources: await agentTypeSources({
+      atlasHome: atlasDirectory(),
+      home: homedir(),
+      cwd: config.cwd,
+    }),
+    modelIsUsable: modelIsReachable,
+    subagentModelId: config.subagentModelId,
+  })
+
   const log = container.resolve(portToken(EventLogPort))
   const ids = container.resolve(portToken(IdPort))
   const threads = container.resolve(portToken(ThreadStorePort))
   const ledger = container.resolve(portToken(TurnLedgerPort))
   const tools = container.resolve(portToken(ToolRegistry)).declarations()
-  const modelPort = container.resolve(portToken(ModelPort))
+  const modelPort = faultInjected(container.resolve(portToken(ModelPort)))
   const prompts = container.resolve(portToken(PromptRegistry))
-  const compiledPrompt = () =>
-    prompts.compile(promptContextFor({ agent: EPromptAgent.Main, provider: modelPort.identity }))
+  const compiledPrompt = ({ projectDirectory }: { projectDirectory: string }) =>
+    prompts.compile(
+      promptContextFor({
+        agent: EPromptAgent.Main,
+        provider: modelPort.identity,
+        projectDirectory,
+      }),
+    )
   const shells = container.resolve(portToken(ShellRegistryPort))
-
-  const skills = await loadSkills({
-    sources: [
-      new EmbeddedSkillSource(),
-      new FilesystemSkillSource({
-        directory: join(atlasDirectory(), SKILLS_DIRECTORY_NAME),
-        origin: ESkillOrigin.User,
-      }),
-      new FilesystemSkillSource({
-        directory: join(config.cwd, ATLAS_DIRECTORY_NAME, SKILLS_DIRECTORY_NAME),
-        origin: ESkillOrigin.Project,
-      }),
-    ],
-  })
+  const agents = container.resolve(portToken(AgentRegistryPort))
 
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
@@ -230,17 +271,129 @@ export async function composeAtlas(args: {
   /**
    * Teardown kills every background shell, and those endings are worth keeping: reopening the
    * conversation should say where the dev server went. Nothing is left running to drain them, so the
-   * close path appends what teardown produced before the database goes.
+   * close path appends what teardown produced before the database goes — each ending to the thread
+   * that started the shell, which is not necessarily the one on screen when the session ended.
    */
   const recordTeardownEndings = async (): Promise<void> => {
-    await shells.closeAll()
+    await Promise.all([shells.closeAll(), agents.closeAll()])
 
-    const active = activeThread
-    const drafts = shells.drainNotifications()
-    if (active === null || drafts.length === 0) return
+    for (const source of [shells, agents]) {
+      for (const threadId of source.threadsAwaitingNotice()) {
+        const drafts = source.drainNotifications({ threadId })
+        if (drafts.length === 0) continue
 
-    await log.append({ threadId: toThreadId(active.threadId), runId: ids.nextRunId(), drafts })
+        await log.append({ threadId, runId: ids.nextRunId(), drafts })
+      }
+    }
   }
+
+  const runningShells = ({ threadId }: { threadId: ThreadId }) =>
+    shells
+      .list({ threadId })
+      .filter((shell) => shell.status === EShellStatus.Running)
+      .map((shell) => ({
+        shellId: shell.shellId,
+        command: shell.command,
+        description: shell.description,
+        awaitingInput: shell.awaitingInput,
+        totalCharacters: shell.totalCharacters,
+      }))
+
+  const runningAgents = ({ threadId }: { threadId: ThreadId }) =>
+    agents
+      .list({ threadId })
+      .filter((agent) => agent.status === EAgentStatus.Running)
+      .map((agent) => ({
+        agentId: agent.agentId,
+        agentType: agent.agentType,
+        intent: agent.intent,
+      }))
+
+  const drainNotices = async ({
+    threadId,
+  }: {
+    threadId: ThreadId
+  }): Promise<readonly EventDraft[]> => [
+    ...shells.drainNotifications({ threadId }),
+    ...agents.drainNotifications({ threadId }),
+  ]
+
+  const imagesKept = (): number =>
+    rangeValueOf({
+      resolution: settings.snapshot().resolution,
+      id: ESettingId.ImagesKept,
+      fallback: IMAGES_KEPT_IN_CONTEXT,
+    })
+
+  const turn: TurnDeps = {
+    log,
+    model: modelPort,
+    ids,
+    assembly: defaultPipeline({
+      prompt: compiledPrompt,
+      launchDirectory: config.cwd,
+      runningShells,
+      runningAgents,
+      imagesKept,
+    }),
+    launchDirectory: config.cwd,
+    tools,
+    dispatch: container.resolve(portToken(ToolDispatcher)),
+    hooks: container.resolve(HookChainToken),
+    drainPending: async (args) => [
+      ...pending.drain().map(userSaidDraft),
+      ...(await drainNotices(args)),
+    ],
+    spend: { ledger, clock: container.resolve(portToken(ClockPort)) },
+    compact: compactBeforeOverflow,
+  }
+
+  const modelFor = pinnedModelSource({
+    subagentModelId: config.subagentModelId,
+    inherited: () => modelPort,
+    build: ({ modelId }) =>
+      faultInjected(
+        new AiSdkModelPort({
+          model: createAnthropicOauthModel({
+            credentials,
+            modelId,
+            providerOptions: anthropicThinkingOptions({
+              modelId,
+              effort: model.choice().effort,
+            }),
+          }),
+          hooks: container.resolve(HookChainToken),
+        }),
+      ),
+  })
+
+  /**
+   * The supervisor holds this as a thunk rather than a value: `agent_spawn` is a ToolDefinition the
+   * ToolRegistry constructs, so resolving a child's tools while the supervisor is being built would
+   * close the cycle. Nothing here is read until the first spawn.
+   */
+  container.register(ChildRunnerDepsToken, {
+    useValue: (): ChildRunnerDeps => ({
+      turn,
+      tools: container.resolve(portToken(ToolRegistry)),
+      hooks: container.resolve(HookChainToken),
+      drainNotices,
+      modelFor,
+      assemblyFor: ({ agentType }) =>
+        defaultPipeline({
+          prompt: ({ projectDirectory }) =>
+            subAgentPrompt({
+              prompts,
+              agentType,
+              provider: modelPort.identity,
+              projectDirectory,
+            }),
+          launchDirectory: config.cwd,
+          runningShells,
+          imagesKept,
+        }),
+    }),
+  })
 
   return {
     config,
@@ -252,7 +405,9 @@ export async function composeAtlas(args: {
     titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
     summarise,
     settings,
-    skills,
+    skills: skillRegistry.all(),
+    skillRegistry,
+    agentTypes,
     files: new FileBrowser({ root: config.cwd }),
     openUrl: createUrlOpener(),
     credentials,
@@ -265,30 +420,13 @@ export async function composeAtlas(args: {
     ids,
     pending,
     shells,
+    agents,
     model,
     close: async () => {
       usage.dispose()
       await recordTeardownEndings().catch(() => undefined)
       await disposeAll({ container })
     },
-    runner: new PublishingTurnRunner({
-      channel,
-      deps: {
-        log,
-        model: modelPort,
-        ids,
-        assembly: defaultPipeline({ prompt: compiledPrompt, projectDirectory: config.cwd }),
-        projectDirectory: config.cwd,
-        tools,
-        dispatch: container.resolve(portToken(ToolDispatcher)),
-        hooks: container.resolve(HookChainToken),
-        drainPending: async () => [
-          ...pending.drain().map((text): EventDraft => ({ type: 'user-said', text })),
-          ...shells.drainNotifications(),
-        ],
-        spend: { ledger, clock: container.resolve(portToken(ClockPort)) },
-        compact: compactBeforeOverflow,
-      },
-    }),
+    runner: new PublishingTurnRunner({ channel, deps: turn }),
   }
 }

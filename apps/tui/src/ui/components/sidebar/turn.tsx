@@ -11,6 +11,16 @@ const APPROVAL_MARK = '?'
 
 const tokenValue = (tokens: number) => [{ text: `↓ ${formatTokens(tokens)}`, fg: theme.hint }]
 
+function stateOf(turn: TurnClock): string {
+  if (turn.interrupting) return 'interrupting'
+  return turn.retry === null ? 'working' : 'retrying'
+}
+
+function stateColourOf(turn: TurnClock): string {
+  if (turn.interrupting) return theme.warn
+  return turn.retry === null ? theme.ok : theme.error
+}
+
 export function TurnSection(props: {
   turn: TurnClock
   now: number
@@ -22,13 +32,13 @@ export function TurnSection(props: {
     return (
       <Section label="Turn">
         <Row
-          label={turn.interrupting ? 'interrupting' : 'working'}
+          label={stateOf(turn)}
           labelFg={theme.meta}
           cells={props.cells}
           value={[
             {
               text: formatElapsed(Math.max(0, props.now - turn.startedAt)),
-              fg: turn.interrupting ? theme.warn : theme.ok,
+              fg: stateColourOf(turn),
             },
           ]}
         />

@@ -1,6 +1,13 @@
 import type { ThreadId, ChunkFilter, Event, EventOfType, EventRef } from '@dltech/atlas-core'
 
-import { EStepEnd, toStepId, type ChannelSignal, type StepId, type StepSignal } from './signal'
+import {
+  EStepEnd,
+  toStepId,
+  type ChannelSignal,
+  type RetryWaitingSignal,
+  type StepId,
+  type StepSignal,
+} from './signal'
 
 export type ChannelListener = (signal: ChannelSignal) => void
 
@@ -11,6 +18,7 @@ export type ThreadPublisher = {
   readonly onChunk: ChunkFilter
   settleAppend(args: { events: readonly Event[] }): void
   close(args: { end: EStepEnd }): void
+  retrying(notice: Omit<RetryWaitingSignal, 'type'>): void
 }
 
 export type DeltaChannel = {
@@ -75,6 +83,7 @@ export function createDeltaChannel(): DeltaChannel {
     args.state.stepsStarted += 1
     const stepId = toStepId(`${args.threadId}#${args.state.stepsStarted}`)
     args.state.stepId = stepId
+    args.state.inFlight = NOTHING_IN_FLIGHT
     publish({ state: args.state, signal: { type: 'step-started', stepId } })
     return stepId
   }
@@ -143,6 +152,12 @@ export function createDeltaChannel(): DeltaChannel {
 
           if (needsAStepToFailIn({ state, end })) startStep({ threadId, state })
           endStep({ threadId, state, end, supersededBy: null })
+        },
+
+        retrying(notice) {
+          const state = stateFor(threadId)
+          endStep({ threadId, state, end: EStepEnd.Retried, supersededBy: null })
+          notify({ state: stateFor(threadId), signal: { type: 'retry-waiting', ...notice } })
         },
       }
     },

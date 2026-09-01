@@ -31,7 +31,7 @@ describe('defaultRules', () => {
     ])
 
     const { assembled, trace } = assemble({
-      rules: defaultRules({ prompt: () => compiled(DOCTRINE), projectDirectory: PROJECT_DIRECTORY }),
+      rules: defaultRules({ prompt: () => compiled(DOCTRINE), launchDirectory: PROJECT_DIRECTORY }),
       ctx: contextFor({ events }),
     })
 
@@ -40,13 +40,15 @@ describe('defaultRules', () => {
     expect(trace.map((step) => step.name)).toEqual([
       'systemPrompt',
       'messagesFromEvents',
+      'agentEndingsBlock',
       'compactedHistory',
-      'sessionDirectoryBlock',
+      'imagesInContext',
+      'worktreeBlock',
     ])
   })
 
   it('carries whatever the composition root compiled, rather than prose of its own', () => {
-    const rules = defaultRules({ prompt: () => compiled('The project directory is /w.'), projectDirectory: PROJECT_DIRECTORY })
+    const rules = defaultRules({ prompt: () => compiled('The project directory is /w.'), launchDirectory: PROJECT_DIRECTORY })
 
     const { assembled } = assemble({ rules, ctx: contextFor({ events: log([]) }) })
 
@@ -54,7 +56,7 @@ describe('defaultRules', () => {
   })
 
   it('sends no system block at all when the registry compiled none', () => {
-    const rules = defaultRules({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY })
+    const rules = defaultRules({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY })
 
     const { assembled, trace } = assemble({ rules, ctx: contextFor({ events: log([]) }) })
 
@@ -64,7 +66,7 @@ describe('defaultRules', () => {
 
   it('re-reads the source each assembly, so a rebuilt prompt reaches the next step', () => {
     let held = compiled('first')
-    const rules = defaultRules({ prompt: () => held, projectDirectory: PROJECT_DIRECTORY })
+    const rules = defaultRules({ prompt: () => held, launchDirectory: PROJECT_DIRECTORY })
     const ctx = contextFor({ events: log([]) })
 
     const before = assemble({ rules, ctx }).assembled.system
@@ -81,7 +83,7 @@ describe('defaultRules', () => {
     }, { ruleName: 'exploding' })
 
     const { assembled, trace } = assemble({
-      rules: [...defaultRules({ prompt: () => compiled(DOCTRINE), projectDirectory: PROJECT_DIRECTORY }), exploding],
+      rules: [...defaultRules({ prompt: () => compiled(DOCTRINE), launchDirectory: PROJECT_DIRECTORY }), exploding],
       ctx: contextFor({ events: log([{ type: 'user-said', text: 'hello' }]) }),
     })
 
@@ -93,15 +95,17 @@ describe('defaultRules', () => {
 describe('defaultPipeline', () => {
   it('carries the annotators alongside the rules, so one root wires the whole projection', () => {
     const events = log([{ type: 'user-said', text: 'hello' }])
-    const pipeline = defaultPipeline({ prompt: () => compiled(DOCTRINE), projectDirectory: PROJECT_DIRECTORY })
+    const pipeline = defaultPipeline({ prompt: () => compiled(DOCTRINE), launchDirectory: PROJECT_DIRECTORY })
 
     const { assembled, trace } = assemble({ ...pipeline, ctx: anthropic(events) })
 
     expect(trace.map((step) => step.name)).toEqual([
       'systemPrompt',
       'messagesFromEvents',
+      'agentEndingsBlock',
       'compactedHistory',
-      'sessionDirectoryBlock',
+      'imagesInContext',
+      'worktreeBlock',
       'cacheBreakpoints',
     ])
     expect(assembled.system.at(-1)?.providerOptions).toBeDefined()
@@ -110,7 +114,7 @@ describe('defaultPipeline', () => {
 
   it('marks nothing on the system side when the registry emitted no block', () => {
     const events = log([{ type: 'user-said', text: 'hello' }])
-    const pipeline = defaultPipeline({ prompt: () => EMPTY_PROMPT, projectDirectory: PROJECT_DIRECTORY })
+    const pipeline = defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY })
 
     const { assembled } = assemble({ ...pipeline, ctx: anthropic(events) })
 
