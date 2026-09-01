@@ -1,0 +1,101 @@
+import { describe, expect, it } from 'bun:test'
+import React from 'react'
+
+import { toCallId } from '@dltech/atlas-core'
+
+import { APPROVAL_HEADING, APPROVAL_OPTIONS, EApprovalChoice } from '../approval-model'
+import { Approval } from '../components/approval'
+import { glyph } from '../theme'
+import { frameOf, mount } from './transcript-fixture'
+
+const WIDTH = 80
+
+const CALL = toCallId('call-1')
+
+const REASON = 'this would remove a worktree another session is standing in'
+
+const drawer = (over: { reason?: string; selected?: number } = {}) => (
+  <Approval
+    width={WIDTH}
+    state={{ callId: CALL, reason: over.reason ?? REASON, selected: over.selected ?? 0 }}
+    overlay
+    onPick={() => undefined}
+    onDismiss={() => undefined}
+  />
+)
+
+const rowsOf = (frame: string): string[] => frame.replace(/\n$/, '').split('\n')
+
+const rowWith = (frame: string, text: string): string =>
+  rowsOf(frame).find((row) => row.includes(text)) ?? ''
+
+const labelOf = (choice: EApprovalChoice): string =>
+  APPROVAL_OPTIONS.find((option) => option.choice === choice)?.label ?? ''
+
+describe('the drawer that asks the operator to double-check a call', () => {
+  it('says why it stopped, in the words the hook used', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    expect(frame).toContain(APPROVAL_HEADING)
+    expect(frame).toContain(REASON)
+  })
+
+  it('offers both answers, numbered so they can be spoken about', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    APPROVAL_OPTIONS.forEach((option, index) => {
+      expect(rowWith(frame, option.label)).toContain(`${String(index + 1)}. ${option.label}`)
+    })
+  })
+
+  it('marks the selected answer and nothing else', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    expect(rowWith(frame, labelOf(EApprovalChoice.Proceed))).toContain(glyph.selected)
+    expect(rowWith(frame, labelOf(EApprovalChoice.Decline))).not.toContain(glyph.selected)
+  })
+
+  it('moves the mark when the selection moves', async () => {
+    const frame = await frameOf(drawer({ selected: 1 }), WIDTH)
+
+    expect(rowWith(frame, labelOf(EApprovalChoice.Decline))).toContain(glyph.selected)
+    expect(rowWith(frame, labelOf(EApprovalChoice.Proceed))).not.toContain(glyph.selected)
+  })
+
+  it('says which keys answer the question', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    expect(frame).toContain('Enter to proceed')
+    expect(frame).toContain('Esc to decline')
+  })
+
+  it('wraps a long reason inside the card rather than spilling past it', async () => {
+    const frame = await frameOf(drawer({ reason: `${REASON} ${'and on '.repeat(20)}` }), WIDTH)
+
+    for (const row of rowsOf(frame)) expect(row.trimEnd().length).toBeLessThanOrEqual(WIDTH)
+    expect(frame).toContain('another session')
+  })
+
+  it('rises from the bottom rather than floating over the middle', async () => {
+    const rows = rowsOf(await frameOf(drawer(), WIDTH))
+    const edge = rows.findIndex((row) => row.trimEnd().startsWith('─'))
+
+    expect(edge).toBeGreaterThan(rows.length / 2)
+    expect(rows.slice(edge).some((row) => row.includes(APPROVAL_HEADING))).toBe(true)
+  })
+
+  it('mounts at a narrow width without spilling', async () => {
+    await expect(
+      mount(
+        <Approval
+          width={40}
+          state={{ callId: CALL, reason: REASON, selected: 0 }}
+          overlay
+          onPick={() => undefined}
+          onDismiss={() => undefined}
+        />,
+        40,
+      ),
+    ).resolves.toBeUndefined()
+  })
+})

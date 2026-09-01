@@ -1,8 +1,11 @@
 import {
   isResumable,
   resumeDrafts,
+  rowsOwnedBy,
+  type ApprovalRequest,
   type Event,
   type EventDraft,
+  type EventLogPort,
   type ModelUsage,
   type ThreadId,
 } from '@dltech/atlas-core'
@@ -10,6 +13,8 @@ import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harne
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 import type { ConversationStore } from '../store'
+import { unansweredApproval } from '../ui/approval-model'
+import { useApproval, type ApprovalControl } from './use-approval'
 import type { AtlasApp } from './compose'
 import { discardInterrupted, EDiscard } from './resume-turn'
 import { EUndo, undoTurn } from './undo-turn'
@@ -30,6 +35,20 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 const committedNothing = (outcome: TurnOutcome): boolean =>
   outcome.status === ETurnStatus.Interrupted && !outcome.committed
 
+async function pausedOnApproval(args: {
+  log: EventLogPort
+  threadId: ThreadId
+  outcome: TurnOutcome
+}): Promise<ApprovalRequest | null> {
+  if (args.outcome.status !== ETurnStatus.Paused) return null
+
+  const events = await args.log.read({ threadId: args.threadId })
+  return unansweredApproval({
+    events: rowsOwnedBy({ events, threadId: args.threadId }),
+    callId: args.outcome.callId,
+  })
+}
+
 type CommitGate = { reached: Promise<void>; settle: () => void }
 
 const commitGate = (): CommitGate => {
@@ -43,6 +62,7 @@ const commitGate = (): CommitGate => {
 
 export type TurnDriver = {
   working: boolean
+  approval: ApprovalControl
   progress: TurnProgress
   drive: (drafts: readonly EventDraft[]) => Promise<void>
   handleInterrupt: () => void
@@ -76,6 +96,14 @@ export function useTurnDriver(args: {
   const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS)
   const [working, setWorking] = useState(false)
   const abort = useRef<AbortController | null>(null)
+  const driveLatest = useRef<(drafts: readonly EventDraft[]) => Promise<void>>(async () => undefined)
+
+  const handleAnswered = useCallback((drafts: readonly EventDraft[]) => {
+    void driveLatest.current(drafts)
+  }, [])
+
+  const approval = useApproval({ onAnswer: handleAnswered })
+  const { handleOpen: openApproval } = approval
 
   /**
    * A conversation nobody has spoken in has an id but no thread behind it, so the first drafts open
@@ -151,7 +179,9 @@ export function useTurnDriver(args: {
           }
           gate.settle()
           const outcome = await app.runner.runTurn({ threadId, signal: controller.signal })
-          setFailure(stoppageOf(outcome))
+          const asked = await pausedOnApproval({ log: app.log, threadId, outcome })
+          if (asked === null) setFailure(stoppageOf(outcome))
+          else openApproval(asked)
           if (committedNothing(outcome)) await undo()
         } catch (error) {
           setFailure(messageOf(error))
@@ -167,8 +197,24 @@ export function useTurnDriver(args: {
 
       return gate.reached
     },
-    [app, commit, compactIfFull, readClock, refresh, setFailure, store, threadId, undo, used],
+    [
+      app,
+      commit,
+      compactIfFull,
+      openApproval,
+      readClock,
+      refresh,
+      setFailure,
+      store,
+      threadId,
+      undo,
+      used,
+    ],
   )
+
+  useEffect(() => {
+    driveLatest.current = drive
+  }, [drive])
 
   /**
    * A failed turn leaves its events durable, so retrying is the same turn run again with nothing
@@ -239,6 +285,7 @@ export function useTurnDriver(args: {
 
   return {
     working,
+    approval,
     progress,
     drive,
     handleInterrupt,

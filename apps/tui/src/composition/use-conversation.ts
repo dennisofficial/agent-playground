@@ -37,6 +37,7 @@ import { useAgentWake } from './use-agent-wake'
 import { useShellWake } from './use-shell-wake'
 import { useThreadEvents } from './use-thread-events'
 import { useThreadSwap } from './use-thread-swap'
+import type { ApprovalControl } from './use-approval'
 import { useTurnDriver } from './use-turn-driver'
 import { useTickingNow } from './use-turn-clock'
 import { clockReadableAt, transcriptOfTurn } from './turn-progress'
@@ -47,6 +48,7 @@ const ALREADY_OPEN = Promise.resolve()
 
 export type Conversation = {
   threadId: ThreadId
+  approval: ApprovalControl
   lost: RecoveredAgents | null
   handle: string | null
   model: TranscriptModel
@@ -283,6 +285,7 @@ export function useConversation(args: {
   const resumable = model.failure === null && !working && turnDriver.isResumable
 
   return {
+    approval: turnDriver.approval,
     projectDirectory: workspace.projectDirectory,
     activeWorktree: workspace.activeWorktree,
     threadId,

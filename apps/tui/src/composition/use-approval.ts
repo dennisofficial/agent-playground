@@ -1,0 +1,68 @@
+import type { ApprovalRequest, EventDraft } from '@dltech/atlas-core'
+import type { KeyEvent } from '@opentui/core'
+import { useCallback, useMemo, useState } from 'react'
+
+import {
+  answerDrafts,
+  EApprovalChoice,
+  moveSelection,
+  openApproval,
+  resolve,
+  type ApprovalState,
+} from '../ui/approval-model'
+
+export type ApprovalControl = {
+  state: ApprovalState | null
+  handleOpen: (request: ApprovalRequest) => void
+  handleDismiss: () => void
+  handlePick: (choice: EApprovalChoice) => void
+  handleKey: (key: KeyEvent) => void
+}
+
+export function useApproval(args: {
+  onAnswer: (drafts: readonly EventDraft[]) => void
+}): ApprovalControl {
+  const [state, setState] = useState<ApprovalState | null>(null)
+  const { onAnswer } = args
+
+  const handleOpen = useCallback((request: ApprovalRequest) => setState(openApproval(request)), [])
+
+  const handlePick = useCallback(
+    (choice: EApprovalChoice) => {
+      if (state === null) return
+
+      setState(null)
+      onAnswer(answerDrafts({ callId: state.callId, choice }))
+    },
+    [onAnswer, state],
+  )
+
+  const handleDismiss = useCallback(() => handlePick(EApprovalChoice.Decline), [handlePick])
+
+  const handleKey = useCallback(
+    (key: KeyEvent) => {
+      if (state === null) return
+
+      if (key.name === 'escape') {
+        handleDismiss()
+        return
+      }
+
+      if (key.name === 'return') {
+        const choice = resolve(state)
+        if (choice !== null) handlePick(choice)
+        return
+      }
+
+      if (key.name === 'up' || key.name === 'down') {
+        setState(moveSelection({ state, delta: key.name === 'up' ? -1 : 1 }))
+      }
+    },
+    [handleDismiss, handlePick, state],
+  )
+
+  return useMemo(
+    () => ({ state, handleOpen, handleDismiss, handlePick, handleKey }),
+    [handleDismiss, handleKey, handleOpen, handlePick, state],
+  )
+}

@@ -7,6 +7,7 @@
  */
 
 import { ECallState, type ToolCall } from '../tool-runs'
+import { awaitingApproval, denied, failed } from './call-state'
 import { agentCall } from './agents'
 import { readShell } from './bash'
 import { imageRead } from './images'
@@ -63,32 +64,6 @@ const pending = (args: { call: ToolCall; cwd: string }): Classification =>
     metric: null,
     detail: EDetail.None,
   }
-
-const denied = (args: { call: ToolCall; cwd: string }): Classification => ({
-  klass: EToolClass.Command,
-  gather: null,
-  line: `Refused ${args.call.name} ${targetOf(args) ?? ''}`.trim(),
-  failed: true,
-  note: 'denied',
-  metric: null,
-  detail: args.call.note === null ? EDetail.None : EDetail.Reason,
-})
-
-/**
- * A call the tool itself refused to complete — not a command that exited non-zero.
- *
- * There is no output to classify, so every renderer below would draw an empty panel. What the call
- * has instead is the sentence the model was handed, and that is the only thing worth opening onto.
- */
-const failed = (args: { call: ToolCall; cwd: string }): Classification => ({
-  klass: EToolClass.Command,
-  gather: null,
-  line: `Failed ${args.call.name} ${targetOf(args) ?? ''}`.trim(),
-  failed: true,
-  note: 'failed',
-  metric: null,
-  detail: EDetail.Reason,
-})
 
 /** A patch when the tool sent one, and the counts it reported when it did not. */
 function statOf(call: ToolCall): { added: number; removed: number } | null {
@@ -207,6 +182,7 @@ function gatheredByName(args: { call: ToolCall; cwd: string }): Classification |
 export function classify(args: { call: ToolCall; cwd: string }): Classification {
   const { call } = args
   if (call.state === ECallState.Denied) return denied(args)
+  if (call.state === ECallState.AwaitingApproval) return awaitingApproval(args)
   if (call.state === ECallState.Pending) return pending(args)
   if (call.state === ECallState.Failed && call.note !== null) return failed(args)
 

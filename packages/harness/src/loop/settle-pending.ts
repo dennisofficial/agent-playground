@@ -1,11 +1,14 @@
 import {
+  EApprovalResolution,
   isConcurrencySafeCall,
   partitionToolCalls,
   pendingCalls,
+  resolveApproval,
   rowsOwnedBy,
   projectDirectoryOf,
   type ThreadId,
   type CallId,
+  type Event,
   type EventDraft,
   type EventLogPort,
   type ToolDeclaration,
@@ -43,11 +46,43 @@ export function createSettlePending(deps: {
   const isSafe = (call: DispatchableCall): boolean =>
     isConcurrencySafeCall({ declaration: declarations.get(call.name), input: call.input })
 
+  const settleOne = async (args: {
+    call: DispatchableCall
+    refusal: string | undefined
+    events: readonly Event[]
+    signal: AbortSignal
+    projectDirectory: string
+  }): Promise<readonly EventDraft[]> => {
+    const { call, refusal } = args
+
+    if (refusal !== undefined) {
+      return [{ type: 'tool-denied', callId: call.callId, name: call.name, reason: refusal }]
+    }
+
+    return deps.dispatch.dispatch({
+      call,
+      signal: args.signal,
+      projectDirectory: args.projectDirectory,
+      events: args.events,
+    })
+  }
+
   return async ({ threadId, signal }) => {
     const events = await deps.log.read({ threadId })
-    const calls = [...pendingCalls(rowsOwnedBy({ events, threadId }))].sort(
-      (left, right) => left.ordinal - right.ordinal,
-    )
+    const owned = rowsOwnedBy({ events, threadId })
+    const refusals = new Map<CallId, string>()
+
+    const calls = [...pendingCalls(owned)]
+      .sort((left, right) => left.ordinal - right.ordinal)
+      .map((call) => {
+        const answered = resolveApproval({ events: owned, callId: call.callId })
+        if (answered.resolution === EApprovalResolution.Dispatch) {
+          return { ...call, input: answered.input }
+        }
+
+        refusals.set(call.callId, answered.reason)
+        return call
+      })
 
     const runs = partitionToolCalls({ calls, isSafe })
 
@@ -58,7 +93,15 @@ export function createSettlePending(deps: {
       if (signal.aborted) return {}
 
       const settled = await Promise.all(
-        run.map((call) => deps.dispatch.dispatch({ call, signal, projectDirectory, events })),
+        run.map((call) =>
+          settleOne({
+            call,
+            refusal: refusals.get(call.callId),
+            events,
+            signal,
+            projectDirectory,
+          }),
+        ),
       )
 
       for (const [index, drafts] of settled.entries()) {
