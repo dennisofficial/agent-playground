@@ -1,9 +1,18 @@
-export type ImageSize = { width: number; height: number }
+import {
+  EImageTier,
+  projectedSize,
+  projectedTokens,
+  TIER_LIMITS,
+  type ImageSize,
+} from './projection'
+
+export type { ImageSize }
 
 export type ImageFacts = {
   byteLength: number
   width?: number | undefined
   height?: number | undefined
+  tier?: EImageTier | undefined
 }
 
 export enum EImageDelivery {
@@ -17,8 +26,7 @@ export type DeliveryPlan = {
   reason?: string
 }
 
-/** The Anthropic high-resolution tier's long edge; the API downscales past it regardless. */
-export const MAX_LONG_EDGE = 2576
+export const MAX_LONG_EDGE = TIER_LIMITS[EImageTier.HighResolution].maxEdge
 
 /** The API's ceiling is 10 MB of base64, which inflates raw bytes by a third. */
 export const MAX_INLINE_BYTES = 5 * 1024 * 1024
@@ -26,27 +34,18 @@ export const MAX_INLINE_BYTES = 5 * 1024 * 1024
 /** Past this on either edge the API rejects the image outright rather than downscaling it. */
 export const MAX_API_EDGE = 8000
 
-/** An image costs `⌈width / 28⌉ × ⌈height / 28⌉` — the model reads 28×28 patches, not pixels. */
-const PATCH_EDGE = 28
-
 const megabytes = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`
 
-export function fitted(size: ImageSize): ImageSize {
-  const longEdge = Math.max(size.width, size.height)
-  if (longEdge <= MAX_LONG_EDGE) return size
-
-  const scale = MAX_LONG_EDGE / longEdge
-  return {
-    width: Math.max(1, Math.round(size.width * scale)),
-    height: Math.max(1, Math.round(size.height * scale)),
-  }
-}
+export const fitted = (size: ImageSize, tier?: EImageTier): ImageSize =>
+  projectedSize({ size, tier })
 
 export function visualTokens(facts: ImageFacts): number | null {
   if (facts.width === undefined || facts.height === undefined) return null
 
-  const size = fitted({ width: facts.width, height: facts.height })
-  return Math.ceil(size.width / PATCH_EDGE) * Math.ceil(size.height / PATCH_EDGE)
+  return projectedTokens({
+    size: { width: facts.width, height: facts.height },
+    tier: facts.tier,
+  })
 }
 
 export function planDelivery(facts: ImageFacts): DeliveryPlan {
