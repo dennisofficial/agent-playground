@@ -1,0 +1,21 @@
+apps/tui/src/ui/__tests__/welcome-render.spec.tsx
+  s_69bd1f40697a50::t_0d4a1bbfd64edf 1-64
+apps/tui/src/ui/components/welcome-screen.tsx
+  s_69bd1f40697a50::t_0d4a1bbfd64edf 1-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f9f75483adc855831e958690a080481159f1a7c7",
+  "prompts": {},
+  "sessions": {
+    "s_69bd1f40697a50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f2e45b1-4f86-44b4-ba07-c8092a81f968",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
