@@ -5,10 +5,13 @@ quoted inline with links. Repo claims were executed against the working tree, no
 
 ## Conclusion
 
-`context.imagesKept` should stop being a count of images and become a budget of **visual tokens**,
-because a count prices a 900×900 thumbnail and a retina screenshot identically when they differ by
-4.4×. The fallback of 2 is too low and its maximum of 8 has no basis in any provider limit — the API
-accepts 100 images per request on a 200k-context model.
+`context.imagesKept` should not exist. Its fallback of 2 was far too low and its maximum of 8 had no
+basis in any provider limit — the API accepts 100 images per request on a 200k-context model — but
+the deeper problem was the mechanism, not the number. Rolling per-image retirement buys 478 tokens of
+cache read per step and costs up to 138,000 tokens of prefix re-write each time it fires, and it
+fires precisely when the retired image sits furthest back and the tail behind it is longest.
+Compaction already drops images for free. The only image limit worth enforcing is the one the API
+punishes: twenty blocks per request.
 
 Two defects were found while establishing the numbers, and both matter more than the tuning question
 that prompted the investigation:
@@ -218,18 +221,33 @@ that has already meant two incompatible things at one vendor.
 - **`describedSize` decodes base64 on every assembly** to recover dimensions that `SaidImage` already
   carries as `width`/`height`.
 
-## Recommendations
+## What was landed
+
+| Change | Commit |
+| --- | --- |
+| `projection.ts` holds the two-limit search and the tier table; `visualTokens` measures against both | `3e1ed33c` |
+| Retirement fires at twenty image blocks rather than two; `context.imagesKept` removed | `792a07cb` |
+| Paste-time `sips` gone; one delivery plan holding only the ceilings the API enforces | `d9508552` |
+
+A visual-token budget was **considered and dropped**. Once retirement fires only at the twenty-block
+cliff, the budget has nothing left to price: the block count is what the API punishes, and the
+context window is already governed by auto-compaction. A budget would have been a second limiter
+tuned against a constraint that no longer binds. The count survived because the constraint it now
+encodes is itself a count.
+
+The newest-turn exemption was also dropped, for the same reason: with the limit at twenty, a
+ten-image message is honoured without needing a special case. It would only matter for a message
+carrying more than twenty images at once, where retiring the oldest is defensible anyway.
+
+## Still open
 
 | # | Change | Rationale |
 | --- | --- | --- |
-| 1 | Exempt the newest user turn from retirement | Honours a ten-image attachment; well inside the 100-image API limit |
-| 2 | Replace the count with a visual-token budget, default ~30k | Prices a thumbnail and a retina screenshot correctly; ~6 screenshots |
-| 3 | Cap total image blocks at 20 | Avoids the retroactive 2000 px cliff on the 21st image |
-| 4 | Port `resizedSize` into `limits.ts`; add `MAX_VISUAL_TOKENS` | Current math over-reports 16–21% on large images |
-| 5 | Derive the tier from the model rather than hardcoding 2576 | Atlas is model-agnostic; standard tier is 1568/1568 |
-| 6 | Remove paste-time `sips` | Saves no tokens; destroys pixels region-crop needs |
-| 7 | Build region-crop | The one capability gain on the list; cheaper *and* more legible than a downscaled whole frame |
-| 8 | Give subagents pixels | Closes the `load: () => null` gap |
+| 1 | Build region-crop | The one capability gain on the list, and no surveyed harness has it |
+| 2 | Give subagents pixels | Closes the `load: () => null` gap at `app.tsx:564` |
+| 3 | Derive the tier from the model at the call site | `projection.ts` takes a tier; every caller still lets it default |
+| 4 | Stop `describedSize` decoding base64 each assembly | `SaidImage` already carries `width`/`height` |
+| 5 | Consider the Files API for attachments | Upload once, reference by `file_id`; removes the resend-bytes-per-turn cost that paste-time resize was half-addressing |
 
 Not recommended: **model-generated alt text on retirement.** The existing placeholder already carries
 path, media type and dimensions, and the model can re-`read` the file. A real description would need to
