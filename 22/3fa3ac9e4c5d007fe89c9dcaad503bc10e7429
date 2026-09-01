@@ -1,0 +1,62 @@
+packages/core/src/policy/classifier/command/__tests__/read-command.spec.ts
+  s_8ae1fa940f8094::t_48a9a0236815fd 1-227
+packages/core/src/policy/classifier/command/vocabulary.ts
+  s_8ae1fa940f8094::t_fb012356f0488d 1-79
+packages/core/src/policy/classifier/command/operators.ts
+  s_8ae1fa940f8094::t_183063692e02fe 1-104
+packages/core/src/policy/classifier/command/__tests__/adversarial-shapes.spec.ts
+  s_8ae1fa940f8094::t_a4985e58e8e73b 1-159
+packages/core/src/policy/classifier/command/expansion.ts
+  s_8ae1fa940f8094::t_415f6dd809dd87 87
+  s_8ae1fa940f8094::t_58f6ccd3c1d9d0 94
+  s_8ae1fa940f8094::t_1598f69b7db950 28
+  s_8ae1fa940f8094::t_8b21649b977c72 1-27,29-48,56-86,88-93,95-130
+  s_8ae1fa940f8094::t_773a75739e6d55 49-55
+packages/core/src/policy/classifier/command/reading.ts
+  s_8ae1fa940f8094::t_2f43e6878a25c8 1-47
+packages/core/src/policy/classifier/path-set.ts
+  s_8ae1fa940f8094::t_642b69f3daf025 1-67
+packages/core/src/policy/classifier/command/cwd.ts
+  s_8ae1fa940f8094::t_1a8f08d551532b 1-51
+packages/core/src/policy/classifier/__tests__/path-set.spec.ts
+  s_8ae1fa940f8094::t_1ebbb8749b0dbf 1-99
+packages/core/src/index.ts
+  s_8ae1fa940f8094::t_1a8737491baf54 101-102
+packages/core/src/policy/classifier/command/flags.ts
+  s_8ae1fa940f8094::t_f9f7cb6149ad4c 119
+  s_8ae1fa940f8094::t_3ecc33afbb7162 45-46,52-58,66-67
+  s_8ae1fa940f8094::t_8512a6bbcc0e79 1-44,47-51,59-65,68-118,120-133
+packages/core/src/policy/classifier/command/read-command.ts
+  s_8ae1fa940f8094::t_8143f8abb60289 10,13
+  s_8ae1fa940f8094::t_b9a4e3b9d848cf 8-9,11-12,14-16
+  s_8ae1fa940f8094::t_187f4bfa7dab1f 4,6-7,17-22,30-34,73,77-79,81,83-107,120,126,151,167-169,172,174,176-177,187,189,197-211,226-270,273-274
+  s_8ae1fa940f8094::t_8224e4796e52f1 1-3,5,23,26-29,35-62,64-72,74-76,80,82,108-119,121-125,127-134,147,152-166,170-171,173,175,178-186,188,190-196,212-225,271-272,275-276
+  s_8ae1fa940f8094::t_176992a3112cb7 24-25
+  s_8ae1fa940f8094::t_44ccf70771b65d 63
+  s_8ae1fa940f8094::t_9949dfe9ea0ee8 135-146,148-150
+packages/core/src/policy/classifier/command/lex.ts
+  s_8ae1fa940f8094::t_2f2fce2b3de587 51-59
+  s_8ae1fa940f8094::t_692655bb5805a8 19,60,150-155
+  s_8ae1fa940f8094::t_183063692e02fe 8,212
+  s_8ae1fa940f8094::t_56bd1e08f51b19 65,229,233
+  s_8ae1fa940f8094::t_5a1737f18c4371 1-7,9-18,20-50,61-64,66-149,156-211,213-228,230-232,234-247
+packages/core/src/policy/classifier/command/segments.ts
+  s_8ae1fa940f8094::t_891161cdc2d153 39-43
+  s_8ae1fa940f8094::t_5223dc801904c3 1-38,44-116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "223fa3ac9e4c5d007fe89c9dcaad503bc10e7429",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
