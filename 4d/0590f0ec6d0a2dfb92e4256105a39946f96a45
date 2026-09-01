@@ -1,0 +1,81 @@
+packages/core/src/policy/classifier/probes/provenance.ts
+  s_8ae1fa940f8094::t_3324d34585d7a2 1-29
+packages/core/src/policy/classifier/shapes.ts
+  s_8ae1fa940f8094::t_5cab2a98c5aa4d 1-23,26-81
+  s_8ae1fa940f8094::t_8e218f8b2febfa 24-25
+packages/core/src/policy/classifier/grant.ts
+  s_8ae1fa940f8094::t_8e218f8b2febfa 1,3,17-52
+packages/core/src/policy/classifier/probes/contention.ts
+  s_8ae1fa940f8094::t_cd3da396d92d0f 1-109
+packages/core/src/policy/classifier/triage.ts
+  s_8ae1fa940f8094::t_c76c4f37d8c246 2-4,32-73
+packages/core/src/policy/classifier/__tests__/damaging-shapes.spec.ts
+  s_8ae1fa940f8094::t_01a80ea9c5c31f 1-133
+packages/core/src/index.ts
+  s_8ae1fa940f8094::t_6bcc3bbd1be52a 107-109
+packages/core/src/policy/classifier/__tests__/fixtures.ts
+  s_8ae1fa940f8094::t_e5f0b398910b0f 1-13,16-208,222
+  s_8ae1fa940f8094::t_471a972fb6d520 14,209-221
+  s_8ae1fa940f8094::t_8e218f8b2febfa 15
+packages/core/src/policy/classifier/evidence.ts
+  s_8ae1fa940f8094::t_5cab2a98c5aa4d 1-28
+packages/core/src/policy/classifier/__tests__/triage.spec.ts
+  s_8ae1fa940f8094::t_8cf890bad06216 1-111,116-228
+  s_8ae1fa940f8094::t_8e218f8b2febfa 112-115
+packages/core/src/policy/classifier/signals.ts
+  s_8ae1fa940f8094::t_c76c4f37d8c246 1-78
+packages/core/src/policy/classifier/probes/kit.ts
+  s_8ae1fa940f8094::t_a5a5884a29d89f 1-3,5-67,69-97,100-101,103-105,107-116,118-123,125-139,141-151
+  s_8ae1fa940f8094::t_18c416fd853dc0 99
+  s_8ae1fa940f8094::t_8e218f8b2febfa 68,102,106,117,124,140
+  s_8ae1fa940f8094::t_13a02a7c94fc3d 4,98
+packages/core/src/policy/classifier/probes/blast.ts
+  s_8ae1fa940f8094::t_d78a0805783a97 7,145-150
+  s_8ae1fa940f8094::t_3324d34585d7a2 1-6,8-144,151-177
+packages/core/src/policy/classifier/probes/irreversibility.ts
+  s_8ae1fa940f8094::t_8e218f8b2febfa 30
+  s_8ae1fa940f8094::t_6a0eed92e12d3c 1-29,31-161
+packages/core/src/policy/classifier/__tests__/probes.spec.ts
+  s_8ae1fa940f8094::t_8e218f8b2febfa 10,53-55,59-62,68-71,88-90,126-129,167-169,194-199
+  s_8ae1fa940f8094::t_067b62a5f72bf1 188
+  s_8ae1fa940f8094::t_ddc39453c1040a 4
+  s_8ae1fa940f8094::t_4be365968febb7 1-2,5-8,11-52,56-58,63-67,72-87,91-125,130-166,170-187,189-193,200-201
+  s_8ae1fa940f8094::t_2f29ae0e94bcf6 3,9
+packages/core/src/policy/classifier/probes/exposure.ts
+  s_8ae1fa940f8094::t_62ad8609c5eee7 1-85
+packages/core/src/policy/classifier/__tests__/from-events.spec.ts
+  s_8ae1fa940f8094::t_42dfa4bef6e2b1 1-149
+packages/core/src/policy/classifier/probes/reach.ts
+  s_8ae1fa940f8094::t_8e218f8b2febfa 33,60
+  s_8ae1fa940f8094::t_cd3da396d92d0f 1-32,34-59,61
+packages/core/src/policy/classifier/__tests__/history-and-content-probes.spec.ts
+  s_8ae1fa940f8094::t_067b62a5f72bf1 1-4,6-10,21-35,40-46,50-58,63-82,85-135,140-145,152-154,159-171,177-182,186,190-192
+  s_8ae1fa940f8094::t_ddc39453c1040a 5
+  s_8ae1fa940f8094::t_8e218f8b2febfa 11-20,36-39,47-49,59-62,83-84,136-139,146-151,155-158,172-176,183-185,187-189
+packages/core/src/policy/classifier/__tests__/benign-shapes.spec.ts
+  s_8ae1fa940f8094::t_bd36dc330f8076 1-67,74-148
+  s_8ae1fa940f8094::t_8e218f8b2febfa 68-73
+packages/core/src/policy/classifier/probes/shared-history.ts
+  s_8ae1fa940f8094::t_62ad8609c5eee7 1-53,55-71
+  s_8ae1fa940f8094::t_ab668fcc214114 54
+packages/core/src/policy/classifier/from-events.ts
+  ai_agent 1-76
+packages/core/src/policy/classifier/command/verbs/packages.ts
+  s_8ae1fa940f8094::t_d78a0805783a97 12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4d0590f0ec6d0a2dfb92e4256105a39946f96a45",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
