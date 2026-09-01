@@ -65,6 +65,7 @@ export * from './context/render'
 export * from './context/supersede'
 
 export * from './workspace/worktree'
+export * from './workspace/worktree-lock'
 export * from './workspace/identity'
 export * from './workspace/atlas-home'
 
@@ -102,6 +103,7 @@ export * from './policy/classifier/path-set'
 export * from './policy/classifier/command/read-command'
 export * from './policy/classifier/deed'
 export * from './policy/classifier/deed-of'
+export * from './policy/classifier/facts'
 
 export * from './hooks/hooks'
 
@@ -120,6 +122,7 @@ export * from './ports/id.port'
 export * from './ports/model.port'
 export * from './ports/settings-store.port'
 export * from './ports/workspace.port'
+export * from './ports/workspace-facts.port'
 
 export * from './diff/hunk'
 export * from './diff/parse'
