@@ -1,0 +1,32 @@
+packages/core/src/images/limits.ts
+  s_b497bbab0c8dc0::t_c4b1bdfa5e20d7 1
+  s_b497bbab0c8dc0::t_76f0dbf2e38f1e 40-42,44
+packages/core/src/images/__tests__/projection.spec.ts
+  s_b497bbab0c8dc0::t_8381adb3fd2673 3
+  s_b497bbab0c8dc0::t_3c83cf0753d6f5 117
+apps/tui/src/ui/clipboard-image.ts
+  s_b497bbab0c8dc0::t_ff871739ca1e0b 129
+packages/core/src/images/__tests__/limits.spec.ts
+  s_b497bbab0c8dc0::t_7ba956f18ac02d 144,146
+  s_b497bbab0c8dc0::t_11b191331e082e 17,136,142,156-157,163-167
+  s_b497bbab0c8dc0::t_ff871739ca1e0b 137,150
+  s_b497bbab0c8dc0::t_e2de477727204a 178,180
+packages/harness/src/tools/builtin/read-image.ts
+  s_b497bbab0c8dc0::t_ff871739ca1e0b 5,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "d9508552701b26a5ee6635c0b9d49e207ed00651",
+  "prompts": {},
+  "sessions": {
+    "s_b497bbab0c8dc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb584ea0-5857-44a0-8fc5-cb2908572f6c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
