@@ -1,0 +1,86 @@
+packages/core/src/policy/classifier/command/verbs/__tests__/read-deeds.ts
+  s_8ae1fa940f8094::t_3c7132586c3bdf 1-41,49-59
+  s_8ae1fa940f8094::t_1d2b6d331026f9 42-48
+packages/core/src/policy/classifier/command/verbs/view.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 33-34
+  s_8ae1fa940f8094::t_5895b9873ebc38 25-31
+  s_8ae1fa940f8094::t_ecc1b43bb0fe2f 1-24,32,35-44,46-99
+  s_8ae1fa940f8094::t_9a3f240689c2a1 45
+packages/core/src/policy/classifier/command/verbs/git-refs.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 51-55,62-66,92
+  s_8ae1fa940f8094::t_4a613ec2177ec4 1-50,56-61,67-90,93-127,135-175
+  s_8ae1fa940f8094::t_9673c7f45e1308 91
+  s_8ae1fa940f8094::t_e2745d3b9c412f 128-134
+packages/core/src/policy/classifier/command/verbs/__tests__/processes.spec.ts
+  s_8ae1fa940f8094::t_021c7ca109c2d5 1-34
+packages/core/src/policy/classifier/command/verbs/__tests__/git.spec.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 10-16,135-137
+  s_8ae1fa940f8094::t_3af02cad42c5b9 48-55
+  s_8ae1fa940f8094::t_f9ba2ac7d09dd1 1-9,17-47,56-107,109-134,138-140
+  s_8ae1fa940f8094::t_fdd0ff9240c8ab 108
+packages/core/src/policy/classifier/command/verbs/__tests__/packages.spec.ts
+  s_8ae1fa940f8094::t_73d0bc629af9ff 1-36,44-58
+  s_8ae1fa940f8094::t_1d2b6d331026f9 37-43
+packages/core/src/policy/classifier/command/verbs/filesystem.ts
+  s_8ae1fa940f8094::t_8609ecddbff824 1-122
+packages/core/src/policy/classifier/command/verbs/network.ts
+  s_8ae1fa940f8094::t_5e31ca04ea79d4 1-138,149-152
+  s_8ae1fa940f8094::t_a480de19709bb4 143-144
+  s_8ae1fa940f8094::t_1d2b6d331026f9 139-142,145-148
+packages/core/src/policy/classifier/__tests__/deed-of.spec.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 68,203-205
+  s_8ae1fa940f8094::t_5fc530a7c06584 1-67,69-202,206-275
+packages/core/src/policy/classifier/command/verbs/processes.ts
+  s_8ae1fa940f8094::t_f60fad31ce0774 1-47
+packages/core/src/policy/classifier/command/verbs/__tests__/filesystem.spec.ts
+  s_8ae1fa940f8094::t_6eaefaba4c70a0 39
+  s_8ae1fa940f8094::t_6f692020128e11 71-77
+  s_8ae1fa940f8094::t_a21bea4f47ce24 1-38,40-70,78-82
+packages/core/src/policy/classifier/command/verbs/__tests__/network.spec.ts
+  s_8ae1fa940f8094::t_a7e4db74ebd8f6 1-50
+packages/core/src/policy/classifier/deed-of.ts
+  s_8ae1fa940f8094::t_28dc9a617f5b40 1-16,24-82,84-125,133-145,153-166,169-176,182-193,198-248
+  s_8ae1fa940f8094::t_1d2b6d331026f9 17-23,83,146-152,167-168,177-181,194-197
+  s_8ae1fa940f8094::t_3cafef0f94023c 126-132
+packages/core/src/policy/classifier/command/verbs/routine.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 124-125
+  s_8ae1fa940f8094::t_90fde0d77c1ea4 1-22,24-123,126-131
+  s_8ae1fa940f8094::t_a480de19709bb4 23
+packages/core/src/policy/classifier/command/verbs/git.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 73-76,85-88,90-93,103-106
+  s_8ae1fa940f8094::t_cc090bded66279 9,81-82
+  s_8ae1fa940f8094::t_ade7ee17e15845 2-8,10-25,67-70,72,77-78,83,89,94-98,100-102,107-108,117-118
+  s_8ae1fa940f8094::t_175c188b3ff829 65
+  s_8ae1fa940f8094::t_a64676baec5595 1,26-64,66,71,79-80,84,99,109-116,120-124
+  s_8ae1fa940f8094::t_28ced44095df1c 119
+packages/core/src/policy/classifier/command/verbs/__tests__/routine.spec.ts
+  s_8ae1fa940f8094::t_44b72602873ca1 57-62
+  s_8ae1fa940f8094::t_d564a17ad82bee 1-56,63-78
+packages/core/src/policy/classifier/deed.ts
+  s_8ae1fa940f8094::t_e9b645656bbcf3 1-61
+packages/core/src/policy/classifier/command/verbs/packages.ts
+  s_8ae1fa940f8094::t_1d2b6d331026f9 93-94
+  s_8ae1fa940f8094::t_6f8130fa8d302e 1-92,95-102
+packages/core/src/policy/classifier/command/verbs/git-tree.ts
+  s_8ae1fa940f8094::t_5dcce90984e9be 1-104,107-130
+  s_8ae1fa940f8094::t_1d2b6d331026f9 105-106
+packages/core/src/index.ts
+  s_8ae1fa940f8094::t_e582d79ee576ed 104
+  s_8ae1fa940f8094::t_33ce2d6ec182ab 103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c455f83a31c05cb8c003c12542b8a358b90e5505",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
