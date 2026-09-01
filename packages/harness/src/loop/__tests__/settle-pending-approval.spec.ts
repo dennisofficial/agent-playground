@@ -15,7 +15,7 @@ import {
 
 import { HookChain } from '../../hooks/registry'
 import { scriptedModel } from '../../model/testing/scripted-model'
-import { HookedToolDispatcher, type DispatchableCall } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher, type DispatchableCall } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { createSettlePending } from '../settle-pending'
@@ -95,7 +95,7 @@ describe('an approval the operator has already answered', () => {
       model: scriptedModel({ script: [{ text: 'understood, leaving it alone' }] }),
       prompt: fixturePrompt(),
       tools: tools.declarations(),
-      dispatch: new HookedToolDispatcher({ registry: tools, hooks }),
+      dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks }),
       hooks,
     })
     keepOpen({ harness, temp })
@@ -156,7 +156,7 @@ describe('an approval the operator has already answered', () => {
 
     const settle = createSettlePending({
       log: harness.log,
-      dispatch: new HookedToolDispatcher({ registry: tools, hooks }),
+      dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks }),
       tools: tools.declarations(),
       launchDirectory: '/project',
     })

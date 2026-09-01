@@ -8,7 +8,7 @@ import { defaultPipeline, EToolEffect, type ToolDefinition } from '@dltech/atlas
 import { buildHarness, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import type { HookChain } from '../../hooks/registry'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { HookedToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { fixturePrompt } from './fixture-prompt'
 import { createTempDatabase, type TempDatabase } from './temp-database'
@@ -64,7 +64,7 @@ export async function openHooked(args: {
       ...(args.withTools === true
         ? {
             tools: tools.declarations(),
-            dispatch: new HookedToolDispatcher({ registry: tools, hooks: args.hooks }),
+            dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks: args.hooks }),
           }
         : {}),
     }),

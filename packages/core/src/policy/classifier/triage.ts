@@ -9,6 +9,9 @@ export enum EClassifierMode {
   Nudge = 'nudge',
 }
 
+export const classifierModeOf = (value: string): EClassifierMode | undefined =>
+  Object.values(EClassifierMode).find((mode) => mode === value)
+
 export enum ETriage {
   Clear = 'clear',
   Consult = 'consult',

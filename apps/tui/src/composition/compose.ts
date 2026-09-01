@@ -6,11 +6,14 @@ import {
   ClockPort,
   CredentialPort,
   defaultPipeline,
+  DEFAULT_CLASSIFIER_POLICY,
   EAgentStatus,
+  EClassifierMode,
   EPromptAgent,
   DEFAULT_WORKTREE_DIRECTORY,
   ESettingId,
   choiceValueOf,
+  classifierModeOf,
   EShellStatus,
   EventLogPort,
   IdPort,
@@ -69,6 +72,7 @@ import {
   TurnLedgerPort,
   TurnRunner,
   WorkspaceRoot,
+  ClassifierPolicyToken,
   WorktreeDirectoryToken,
   FileBrowser,
   type UrlOpener,
@@ -174,6 +178,20 @@ export async function composeAtlas(args: {
         id: ESettingId.WorktreeDirectory,
         fallback: DEFAULT_WORKTREE_DIRECTORY,
       }),
+  })
+
+  container.register(ClassifierPolicyToken, {
+    useValue: () => ({
+      ...DEFAULT_CLASSIFIER_POLICY,
+      mode:
+        classifierModeOf(
+          choiceValueOf({
+            resolution: settings.snapshot().resolution,
+            id: ESettingId.ClassifierMode,
+            fallback: EClassifierMode.Shadow,
+          }),
+        ) ?? EClassifierMode.Shadow,
+    }),
   })
 
   container.register(portToken(BeforeTurnHook), {

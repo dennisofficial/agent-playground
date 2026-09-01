@@ -5,6 +5,7 @@ import {
   WorkspaceFactsPort,
 } from '@dltech/atlas-core'
 
+import { registerClassifier } from '../classifier/register-classifier'
 import { GitWorkspaceFacts } from '../classifier/workspace-facts'
 import { instanceCachingFactory, portToken, type DependencyContainer } from '../container/injection'
 import { InvalidateFactsHook } from './invalidate-facts'
@@ -22,6 +23,7 @@ export function registerBuiltinHooks({ container }: { container: DependencyConta
 
   container.register(portToken(BeforeToolHook), { useClass: ResolveProjectPathsHook })
   container.register(portToken(BeforeToolHook), { useClass: ReadBeforeWriteHook })
+  registerClassifier({ container })
   container.register(portToken(BeforeTurnHook), { useClass: PrewarmFactsHook })
   container.register(portToken(AfterToolHook), { useClass: RecordFileStateHook })
   container.register(portToken(AfterToolHook), { useClass: MirrorPlanHook })

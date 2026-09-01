@@ -17,7 +17,7 @@ import {
 import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { HookChain } from '../../hooks/registry'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
-import { HookedToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
@@ -140,7 +140,7 @@ export async function openSteerable(args: {
       ...(args.withQueue === false ? {} : { drainPending: queue.drain }),
       ...(args.hooks === undefined ? {} : { hooks: args.hooks }),
       ...(args.withTools === true
-        ? { tools: tools.declarations(), dispatch: new HookedToolDispatcher({ registry: tools, hooks: new HookChain({}) }) }
+        ? { tools: tools.declarations(), dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks: new HookChain({}) }) }
         : {}),
     }),
   }

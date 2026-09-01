@@ -12,7 +12,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { HookChain, type RegisteredHook } from '../../hooks/registry'
-import { HookedToolDispatcher } from '../dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../dispatch'
 import { InMemoryToolRegistry } from '../registry'
 import { readCall, toolNamed } from './fixtures'
 
@@ -22,6 +22,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
   it('denies without invoking anything, carrying the reason to the model', async () => {
     const invoked: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({
           name: 'read',
@@ -42,7 +43,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(drafts).toEqual([
       { type: 'tool-denied', callId: toCallId('call-1'), name: 'read', reason: 'outside the workspace root' },
@@ -53,6 +54,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
   it('asks for approval without invoking anything', async () => {
     const invoked: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({
           name: 'read',
@@ -73,7 +75,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(drafts).toEqual([{ type: 'approval-requested', callId: toCallId('call-1'), reason: 'a human should look' }])
     expect(invoked).toEqual([])
@@ -92,6 +94,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
 
     let invokedWith: unknown
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({
           name: 'read',
@@ -107,7 +110,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(seen).toEqual([
       { hook: 'first', input: { path: 'a.ts' }, effect: EToolEffect.Write },
@@ -119,6 +122,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
   it('fails closed when a guard throws, denying in the name of that guard', async () => {
     const invoked: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({
           name: 'read',
@@ -141,7 +145,7 @@ describe('dispatching a call the before-tool hooks judge', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(drafts).toHaveLength(1)
     expect(drafts[0]?.type).toBe('tool-denied')
@@ -165,13 +169,14 @@ describe('the after-tool observers', () => {
   it('observes a success in order and appends its drafts after the result', async () => {
     const seen: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) })]),
       hooks: new HookChain({
         afterTool: [observer({ name: 'second', nudge: 20, seen }), observer({ name: 'first', nudge: 10, seen })],
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result', 'nudge', 'nudge'])
     expect(seen).toEqual(['first:read:true', 'second:read:true'])
@@ -184,13 +189,14 @@ describe('the after-tool observers', () => {
   it('observes a failure too', async () => {
     const seen: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({ name: 'read', invoke: async () => ({ ok: false, reason: 'gone' }) }),
       ]),
       hooks: new HookChain({ afterTool: [observer({ name: 'audit', nudge: 0, seen })] }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(seen).toEqual(['audit:read:false'])
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result', 'nudge'])
@@ -199,6 +205,7 @@ describe('the after-tool observers', () => {
   it('cannot annul a result by throwing', async () => {
     const seen: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) })]),
       hooks: new HookChain({
         afterTool: [
@@ -214,7 +221,7 @@ describe('the after-tool observers', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result', 'nudge'])
     expect(seen).toEqual(['later:read:true'])
@@ -223,6 +230,7 @@ describe('the after-tool observers', () => {
   it('is not consulted about a call that never ran', async () => {
     const seen: string[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) })]),
       hooks: new HookChain({
         beforeTool: [
@@ -236,7 +244,7 @@ describe('the after-tool observers', () => {
       }),
     })
 
-    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
+    const drafts = await dispatcher.dispatch({ call: readCall, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY, events: [] })
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-denied'])
     expect(seen).toEqual([])
@@ -248,6 +256,7 @@ describe('the thread a call belongs to', () => {
     const guarded: ToolCall[] = []
     const observed: ToolCall[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) }),
       ]),
@@ -279,6 +288,7 @@ describe('the thread a call belongs to', () => {
       call: readCall,
       signal: new AbortController().signal,
       projectDirectory: SESSION_DIRECTORY,
+      events: [],
     })
 
     expect(guarded.map((call) => call.threadId)).toEqual([readCall.threadId])
@@ -288,6 +298,7 @@ describe('the thread a call belongs to', () => {
   it('gives each thread its own call, so one thread never answers for another', async () => {
     const guarded: ToolCall[] = []
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: new InMemoryToolRegistry([
         toolNamed({ name: 'read', invoke: async () => ({ ok: true, output: 'ok', modelText: 'rendered' }) }),
       ]),
@@ -311,6 +322,7 @@ describe('the thread a call belongs to', () => {
         call: { ...readCall, threadId },
         signal: new AbortController().signal,
         projectDirectory: SESSION_DIRECTORY,
+        events: [],
       })
     }
 

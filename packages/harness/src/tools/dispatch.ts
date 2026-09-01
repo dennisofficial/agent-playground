@@ -20,7 +20,10 @@ import {
 
 import { injectable } from '../container/injection'
 import type { HookChain, RegisteredHook } from '../hooks/registry'
+import { EApprovalRouting, unattendedReason } from './approval-routing'
 import type { ToolRegistry } from './registry'
+
+export { EApprovalRouting }
 
 export type DispatchableCall = {
   callId: CallId
@@ -35,7 +38,7 @@ export abstract class ToolDispatcher {
     call: DispatchableCall
     signal: AbortSignal
     projectDirectory: string
-    events?: readonly Event[] | undefined
+    events: readonly Event[]
   }): Promise<readonly EventDraft[]>
 }
 
@@ -50,16 +53,19 @@ const MAX_REPORTED_ISSUES = 3
 export class HookedToolDispatcher extends ToolDispatcher {
   private readonly registry: ToolRegistry
   private readonly hooks: HookChain
+  private readonly approvals: EApprovalRouting
   private readonly workspace: WorkspacePort | undefined
 
   constructor(args: {
     registry: ToolRegistry
     hooks: HookChain
+    approvals: EApprovalRouting
     workspace?: WorkspacePort | undefined
   }) {
     super()
     this.registry = args.registry
     this.hooks = args.hooks
+    this.approvals = args.approvals
     this.workspace = args.workspace
   }
 
@@ -67,10 +73,9 @@ export class HookedToolDispatcher extends ToolDispatcher {
     call: DispatchableCall
     signal: AbortSignal
     projectDirectory: string
-    events?: readonly Event[] | undefined
+    events: readonly Event[]
   }): Promise<readonly EventDraft[]> {
-    const { call, signal, projectDirectory } = args
-    const events = args.events ?? []
+    const { call, signal, projectDirectory, events } = args
     const definition = this.registry.find(call.name)
     if (definition === undefined) return [this.unknownToolDraft({ call })]
 
@@ -98,6 +103,18 @@ export class HookedToolDispatcher extends ToolDispatcher {
     }
 
     if (outcome.decision === EBeforeToolDecision.Ask) {
+      if (this.approvals === EApprovalRouting.None) {
+        return [
+          ...drafts,
+          {
+            type: 'tool-denied',
+            callId: call.callId,
+            name: call.name,
+            reason: unattendedReason({ reason: outcome.reason }),
+          },
+        ]
+      }
+
       return [...drafts, { type: 'approval-requested', callId: call.callId, reason: outcome.reason }]
     }
 

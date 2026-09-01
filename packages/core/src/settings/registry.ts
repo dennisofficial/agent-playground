@@ -1,3 +1,4 @@
+import { EClassifierMode } from '../policy/classifier/triage'
 import { ESettingPage, type SettingDefinition, type SettingPage } from './definition'
 import { ESettingKind } from './value'
 
@@ -25,6 +26,7 @@ export enum ESettingId {
   Accent = 'appearance.accent',
   BlockPadding = 'appearance.blockPadding',
   ComposerEdge = 'appearance.composerEdge',
+  ClassifierMode = 'classifier.mode',
 }
 
 export const DEFAULT_WORKTREE_DIRECTORY = '.atlas/worktrees'
@@ -237,6 +239,22 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 100,
     step: 5,
     unit: '%',
+  },
+  {
+    id: ESettingId.ClassifierMode,
+    page: ESettingPage.General,
+    group: 'Nudges',
+    label: 'Nudge before damage',
+    description:
+      'Whether a second, cheaper model looks at a call that trips one of the deterministic probes — an irreversible removal, a reach outside the project, a write into a worktree another agent is holding — and decides whether interrupting you is warranted. Shadow watches and records without ever pausing anything, which is how the pause rate gets measured before it is trusted; nudge lets it ask.',
+    environmentVariable: 'ATLAS_CLASSIFIER_MODE',
+    kind: ESettingKind.Choice,
+    fallback: EClassifierMode.Shadow,
+    options: [
+      { value: EClassifierMode.Off, label: 'off', detail: 'no classification' },
+      { value: EClassifierMode.Shadow, label: 'shadow', detail: 'watches only' },
+      { value: EClassifierMode.Nudge, label: 'nudge', detail: 'may ask' },
+    ],
   },
   {
     id: ESettingId.Accent,

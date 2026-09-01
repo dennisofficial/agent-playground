@@ -15,7 +15,7 @@ import {
 import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { HookChain } from '../../hooks/registry'
-import { HookedToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { createTempDatabase, type TempDatabase } from './temp-database'
 
@@ -77,7 +77,7 @@ async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<
       ids: harness.ids,
       assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }), recordStep], annotators: defaultAnnotators() },
       tools: registry.declarations(),
-      dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
+      dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
     }),
   }
 }

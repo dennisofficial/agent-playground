@@ -10,7 +10,7 @@ import { defaultPipeline, EMPTY_PROMPT, EToolEffect, toCallId, type ToolDefiniti
 import { buildHarness, ETurnStatus, LoopTurnRunner, TurnRunner, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
 import { HookChain } from '../../hooks/registry'
-import { HookedToolDispatcher, type ToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher, type ToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { FIXTURE_DOCTRINE, fixturePrompt } from './fixture-prompt'
 import { createTempDatabase, type TempDatabase } from './temp-database'
@@ -203,7 +203,7 @@ describe('a turn that settles its own tool call', () => {
       ids: harness.ids,
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
-      dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
+      dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
     })
     const thread = await harness.threads.create({})
 

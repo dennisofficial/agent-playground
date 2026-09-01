@@ -8,7 +8,7 @@ import { buildHarness, ETurnStatus, type AtlasHarness } from '../../loop'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { scriptedModel } from '../../model/testing/scripted-model'
 import { HookChain } from '../../hooks/registry'
-import { HookedToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 
 const PROJECT_DIRECTORY = '/w'
@@ -79,7 +79,7 @@ describe('a turn that settles a tool call', () => {
         ids: harness.ids,
         assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
         tools: registry.declarations(),
-        dispatch: new HookedToolDispatcher({ registry, hooks: new HookChain({}) }),
+        dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
       },
     })
     const thread = await harness.threads.create({})

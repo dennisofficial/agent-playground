@@ -10,7 +10,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { HookChain, type RegisteredHook } from '../../hooks/registry'
-import { HookedToolDispatcher } from '../dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../dispatch'
 import { InMemoryToolRegistry } from '../registry'
 import { readCall, toolNamed } from './fixtures'
 
@@ -46,6 +46,7 @@ function dispatcherFor(args: {
   ])
 
   return new HookedToolDispatcher({
+    approvals: EApprovalRouting.Operator,
     registry,
     hooks: new HookChain({
       ...(args.beforeTool === undefined ? {} : { beforeTool: args.beforeTool }),
@@ -56,7 +57,7 @@ function dispatcherFor(args: {
 }
 
 const settled = (dispatcher: HookedToolDispatcher, call = readCall): Promise<readonly EventDraft[]> =>
-  dispatcher.dispatch({ call, signal: new AbortController().signal, projectDirectory: WORKSPACE_DIRECTORY})
+  dispatcher.dispatch({ call, signal: new AbortController().signal, projectDirectory: WORKSPACE_DIRECTORY, events: [] })
 
 describe('dispatch is total: every failure mode still answers the model with a draft', () => {
   it('answers when the tool itself throws', async () => {

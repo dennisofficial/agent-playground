@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { EToolEffect, toCallId, toRunId, toThreadId } from '@dltech/atlas-core'
 
 import { HookChain } from '../../hooks/registry'
-import { HookedToolDispatcher, type DispatchableCall } from '../dispatch'
+import { EApprovalRouting, HookedToolDispatcher, type DispatchableCall } from '../dispatch'
 import { InMemoryToolRegistry, filteredToolRegistry } from '../registry'
 import { toolNamed } from './fixtures'
 
@@ -145,6 +145,7 @@ describe('a dispatcher built over a narrowed registry', () => {
   it('refuses a denied tool called by name, so a child cannot spawn a child', async () => {
     let spawned = false
     const dispatcher = new HookedToolDispatcher({
+      approvals: EApprovalRouting.Operator,
       registry: filteredToolRegistry({
         registry: new InMemoryToolRegistry([
           toolNamed({ name: 'read', invoke: succeeds }),
@@ -173,6 +174,7 @@ describe('a dispatcher built over a narrowed registry', () => {
       call,
       signal: new AbortController().signal,
       projectDirectory: '/workspace',
+      events: [],
     })
 
     expect(spawned).toBe(false)

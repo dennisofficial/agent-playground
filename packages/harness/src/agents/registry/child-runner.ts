@@ -11,7 +11,7 @@ import type { SteerMessage } from './child-state'
 import type { HookChain } from '../../hooks/registry'
 import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
 import type { TurnRunner } from '../../loop/turn-runner.port'
-import { HookedToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { filteredToolRegistry, type ToolRegistry } from '../../tools/registry'
 import { AGENT_TOOL_NAMES, WORKTREE_TOOL_NAMES, toolRegistryFor, type AgentType } from '../types'
 
@@ -100,7 +100,11 @@ export function buildChildRunner({
     onContext: observeContext,
     model: deps.modelFor === undefined ? turn.model : deps.modelFor({ agentType }),
     tools: registry.declarations(),
-    dispatch: new HookedToolDispatcher({ registry, hooks: deps.hooks }),
+    dispatch: new HookedToolDispatcher({
+      registry,
+      hooks: deps.hooks,
+      approvals: EApprovalRouting.None,
+    }),
     assembly: deps.assemblyFor({ agentType }),
     drainPending: async (args) => [...steerDrafts(steering()), ...(await deps.drainNotices(args))],
   })

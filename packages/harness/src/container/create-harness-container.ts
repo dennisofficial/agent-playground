@@ -28,7 +28,7 @@ import { registerShells } from '../shells/register-shells'
 import { registerSkills } from '../skills/register-skills'
 import { ThreadStorePort, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
 import { AgentRegistrySourceToken, AgentTypesToken } from '../tools/builtin/agent-tokens'
-import { HookedToolDispatcher, ToolDispatcher } from '../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher, ToolDispatcher } from '../tools/dispatch'
 import { registerBuiltinTools } from '../tools/register-tools'
 import { ToolRegistry } from '../tools/registry'
 import { registerDisposable } from './disposal'
@@ -143,6 +143,7 @@ export function createHarnessContainer(): DependencyContainer {
       new HookedToolDispatcher({
         registry: resolver.resolve(portToken(ToolRegistry)),
         hooks: resolver.resolve(HookChainToken),
+        approvals: EApprovalRouting.Operator,
       }),
   })
 

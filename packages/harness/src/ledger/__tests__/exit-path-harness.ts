@@ -25,7 +25,7 @@ import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
 import { TurnRunner } from '../../loop/turn-runner.port'
 import { ModelStreamError } from '../../model/errors'
 import { openAtlasDatabase, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../../store'
-import { HookedToolDispatcher } from '../../tools/dispatch'
+import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { InMemoryToolRegistry } from '../../tools/registry'
 import { PrismaTurnLedger } from '../prisma-turn-ledger'
 import type { TurnLedgerPort, TurnSpend } from '../turn-ledger.port'
@@ -159,7 +159,7 @@ export async function openExitPathHarness(args: {
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
       tools: registry.declarations(),
       hooks,
-      ...(mode === EDispatchMode.None ? {} : { dispatch: new HookedToolDispatcher({ registry, hooks }) }),
+      ...(mode === EDispatchMode.None ? {} : { dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks }) }),
       spend: { ledger, clock, onLedgerFailure: (error) => failures.push(error) },
     }),
     close: async () => {

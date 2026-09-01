@@ -60,6 +60,7 @@ describe('the harness container graph', () => {
     expect(hooks.beforeTool.map((hook) => hook.name)).toEqual([
       'resolveProjectPaths',
       'readBeforeWrite',
+      'classifyCall',
     ])
     expect(hooks.afterTool.map((hook) => hook.name)).toEqual([
       'plan',
@@ -88,6 +89,7 @@ describe('the harness container graph', () => {
       },
       signal: AbortSignal.timeout(5_000),
       projectDirectory: SESSION_DIRECTORY,
+      events: [],
     })
 
     expect(drafts.map((draft) => draft.type)).toEqual(['tool-result'])

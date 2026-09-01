@@ -1,6 +1,6 @@
 import type { LanguageModelV4 } from '@ai-sdk/provider'
 
-import type { SettingsStorePort } from '@dltech/atlas-core'
+import type { ClassifierPolicy, SettingsStorePort } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../prisma/generated/client'
 import type { ClaudeCodeSource } from '../credentials/claude-code-source'
@@ -31,4 +31,8 @@ export const ProjectSettingsStoreToken: InjectionToken<SettingsStorePort> = Symb
 
 export const WorktreeDirectoryToken: InjectionToken<() => string> = Symbol(
   'atlas.WorktreeDirectory',
+)
+
+export const ClassifierPolicyToken: InjectionToken<() => ClassifierPolicy> = Symbol(
+  'atlas.ClassifierPolicy',
 )
