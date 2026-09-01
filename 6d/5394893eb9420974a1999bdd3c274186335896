@@ -1,0 +1,75 @@
+apps/tui/src/store/classifier-fold.ts
+  s_8ae1fa940f8094::t_85e04cc1273e5d 29
+  s_8ae1fa940f8094::t_fd6dbbbada5e0e 10-14,16-18,20-28,30-62,64-66
+  s_8ae1fa940f8094::t_2bb582172b4214 1-9,15,19,63
+packages/core/src/policy/classifier/__tests__/triage.spec.ts
+  s_8ae1fa940f8094::t_e3ebdd0a94aa3d 150-169
+packages/core/src/policy/classifier/__tests__/adjudicate.spec.ts
+  s_8ae1fa940f8094::t_4ddc98ece7c4c9 4-6,8-9,12-22,24
+  s_8ae1fa940f8094::t_c71526a7402a73 10
+apps/tui/src/ui/__tests__/nudge-marker.spec.ts
+  s_8ae1fa940f8094::t_d7cb4b7bf7f4bf 1-56
+apps/tui/src/composition/__tests__/use-approval.spec.tsx
+  s_8ae1fa940f8094::t_1af7ee4054799a 1-103,105-121,123-140,142-176
+  s_8ae1fa940f8094::t_85e04cc1273e5d 104,122,141
+apps/tui/src/store/__tests__/sidebar-model.spec.ts
+  s_8ae1fa940f8094::t_a12d70d7efc39b 1-8,206-237
+packages/core/src/events/body.ts
+  s_8ae1fa940f8094::t_49fa539877f722 142,145-146
+packages/core/src/policy/classifier/adjudicate.ts
+  s_8ae1fa940f8094::t_91eb2e0f8134b8 66-99,106,124,127-128,141-142,145-146,149
+packages/core/src/policy/classifier/__tests__/adjudicate-fixtures.ts
+  s_8ae1fa940f8094::t_c71526a7402a73 16
+  s_8ae1fa940f8094::t_2faaed4682e8fb 37-42,53,62,68-69,76,89,97,107,115
+  s_8ae1fa940f8094::t_84329fbd890287 1-15,17-36,43-52,54-61,63-67,70-75,77-88,90-96,98-106,108-114,116-119
+packages/core/src/policy/classifier/__tests__/shadow-row.spec.ts
+  s_8ae1fa940f8094::t_a42f261e80a5c0 1-78
+apps/tui/src/ui/approval-model.ts
+  s_8ae1fa940f8094::t_c29ed37c76b04c 7,22-26,30-31,37-41,51-58,91-103,107,114-116
+apps/tui/src/store/index.ts
+  s_8ae1fa940f8094::t_d1f3e25b189287 94
+packages/core/src/events/schema.ts
+  s_8ae1fa940f8094::t_49fa539877f722 201,204-205
+apps/tui/src/composition/use-turn-driver.ts
+  s_8ae1fa940f8094::t_be017b2453ebfe 15,41
+packages/harness/src/classifier/__tests__/armed-nudge.spec.ts
+  s_8ae1fa940f8094::t_0219c859d72305 1-127
+apps/tui/src/ui/components/sidebar/turn.tsx
+  s_8ae1fa940f8094::t_6b7d4ee5c7cb6d 3,13-15,81-111,116-117,120-123,133
+apps/tui/src/store/__tests__/classifier-fold.spec.ts
+  s_8ae1fa940f8094::t_27fc37b9009c4c 1-135
+packages/harness/src/classifier/__tests__/fixtures.ts
+  s_8ae1fa940f8094::t_b17a4d4d163e5c 12,14-15,20,170-187
+apps/tui/src/ui/components/approval.tsx
+  s_8ae1fa940f8094::t_2464e80fc39d2d 4,7,25-28,67-98,132,143
+apps/tui/src/ui/__tests__/approval-model.spec.ts
+  s_8ae1fa940f8094::t_54e80ffe4712f2 4,6-8,53-59,105-106,129-180
+apps/tui/src/composition/use-approval.ts
+  s_8ae1fa940f8094::t_be017b2453ebfe 1,11,17,29-32
+apps/tui/src/ui/__tests__/approval-render.spec.tsx
+  s_8ae1fa940f8094::t_adf25bc904e0a5 4-12,23-30,33-39,111-117,126-171
+apps/tui/src/composition/app.tsx
+  s_8ae1fa940f8094::t_3e6ecb5e46ead5 52
+apps/tui/src/store/sidebar-model.ts
+  s_8ae1fa940f8094::t_8d6818b948ec18 10,47,112,123
+apps/tui/src/ui/__tests__/sidebar-render.spec.tsx
+  s_8ae1fa940f8094::t_97cfe0b2dd23bc 3,682-724
+apps/tui/src/ui/nudge-marker.ts
+  s_8ae1fa940f8094::t_4b5bead16bdeb0 1-22
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6d5394893eb9420974a1999bdd3c274186335896",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
