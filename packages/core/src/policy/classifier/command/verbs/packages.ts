@@ -9,7 +9,7 @@ import {
   type VerbTable,
 } from './view'
 
-const packageManagers = new Set([
+export const packageManagers: ReadonlySet<string> = new Set([
   'apt',
   'apt-get',
   'brew',

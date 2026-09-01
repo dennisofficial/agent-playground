@@ -104,6 +104,9 @@ export * from './policy/classifier/command/read-command'
 export * from './policy/classifier/deed'
 export * from './policy/classifier/deed-of'
 export * from './policy/classifier/facts'
+export * from './policy/classifier/evidence'
+export * from './policy/classifier/signals'
+export * from './policy/classifier/from-events'
 
 export * from './hooks/hooks'
 
