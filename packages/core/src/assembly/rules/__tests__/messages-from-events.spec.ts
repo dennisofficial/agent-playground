@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test'
 
 import { toCallId, toEventId } from '../../../events/ids'
+import { ERiskDimension } from '../../../policy/classifier/dimension'
+import { EGrantScope } from '../../../policy/classifier/grant'
+import { EClassifierMode, ETriage } from '../../../policy/classifier/triage'
+import { EJudgment } from '../../../policy/classifier/verdict'
 import type { Assembled } from '../../assembled'
 import { contextFor, log } from '../../__tests__/log-fixture'
 import { messagesFromEvents } from '../messages-from-events'
@@ -225,5 +229,47 @@ describe('messagesFromEvents and nudges', () => {
     const assembled = messagesFromEvents()(empty, contextFor({ events }))
 
     expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('renders nothing for a classifier verdict, so the model never reads its own risk score', () => {
+    const events = log([
+      { type: 'user-said', text: 'clean the worktrees' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'removing' }] },
+      {
+        type: 'classifier-judged',
+        callId: toCallId('call-1'),
+        mode: EClassifierMode.Shadow,
+        triage: ETriage.Consult,
+        judgment: EJudgment.Check,
+        dimensions: [ERiskDimension.Contention],
+        signalIds: ['contention.dirty-foreign-worktree'],
+        reason: 'contention: eng-412-sidebar has 4 changed files',
+        consulted: true,
+        elapsedMs: 612,
+      },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user', 'assistant'])
+  })
+
+  it('renders nothing for a grant or its revocation', () => {
+    const events = log([
+      { type: 'user-said', text: 'stop asking about that worktree' },
+      {
+        type: 'permission-granted',
+        grantId: 'grant-1',
+        dimensions: [ERiskDimension.Contention],
+        scope: EGrantScope.Thread,
+        subject: 'worktree:eng-412-sidebar',
+        reason: 'the operator approved it in the drawer',
+      },
+      { type: 'permission-revoked', grantId: 'grant-1' },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user'])
   })
 })

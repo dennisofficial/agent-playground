@@ -3,6 +3,7 @@ import {
   ECompactionAnchor,
   EForkMode,
   IdPort,
+  SURVIVES_SUMMARY,
   toThreadId,
   type ThreadId,
   type Event,
@@ -16,8 +17,6 @@ import { createThreadWithEvents, type OpenThreadArgs } from './create-with-event
 import { toEventRow } from './event-row'
 import { forkThread } from './fork'
 import { retryOnWriteConflict } from './retry'
-
-const CURRENT_CONTEXT_TYPE = 'context-loaded'
 
 export type SupervisedAgent = { spawnedBy: ThreadId; type: string }
 
@@ -245,14 +244,16 @@ export class PrismaThreadStore implements ThreadStorePort {
       const covered = {
         threadId,
         seq: { gte: fromSeq, lte: throughSeq },
-        type: { not: CURRENT_CONTEXT_TYPE },
+        type: { notIn: [...SURVIVES_SUMMARY] },
       }
-      const replaced = await tx.event.count({ where: covered })
+      const vacated = (
+        await tx.event.findMany({ where: covered, select: { seq: true }, orderBy: { seq: 'asc' } })
+      ).map((row) => row.seq)
+      const replaced = vacated.length
       if (discardRows) await tx.event.deleteMany({ where: covered })
 
-      const seq = discardRows
-        ? standInSeq({ anchor, fromSeq, throughSeq })
-        : await reserveOne({ tx, threadId, at })
+      const standIn = discardRows ? standInSeq({ anchor, vacated }) : undefined
+      const seq = standIn ?? (await reserveOne({ tx, threadId, at }))
 
       const envelope: EventEnvelope = {
         id: this.ids.nextEventId(),
@@ -352,13 +353,11 @@ function supervisedAgentOf(row: ThreadRow): { agent?: SupervisedAgent } {
 
 const standInSeq = ({
   anchor,
-  fromSeq,
-  throughSeq,
+  vacated,
 }: {
   anchor: ECompactionAnchor
-  fromSeq: number
-  throughSeq: number
-}): number => (anchor === ECompactionAnchor.Prefix ? throughSeq : fromSeq)
+  vacated: readonly number[]
+}): number | undefined => (anchor === ECompactionAnchor.Prefix ? vacated.at(-1) : vacated[0])
 
 async function reserveOne({
   tx,

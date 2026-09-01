@@ -1,6 +1,10 @@
 import type { EAgentStart } from '../agents/start'
 import type { EAgentStatus } from '../agents/status'
 import type { ImagePart, ReasoningPart, TextPart } from '../message/parts'
+import type { ERiskDimension } from '../policy/classifier/dimension'
+import type { EGrantScope } from '../policy/classifier/grant'
+import type { EClassifierMode, ETriage } from '../policy/classifier/triage'
+import type { EJudgment } from '../policy/classifier/verdict'
 import type { EKilledBy, EShellStatus } from '../shells/status'
 import type { CallId, ThreadId } from './ids'
 
@@ -110,7 +114,36 @@ export type EventBody =
       summary: string
       replaced: number
     }
+  | {
+      type: 'classifier-judged'
+      callId: CallId
+      mode: EClassifierMode
+      triage: ETriage
+      judgment: EJudgment
+      dimensions: readonly ERiskDimension[]
+      signalIds: readonly string[]
+      reason: string
+      consulted: boolean
+      elapsedMs: number
+    }
+  | {
+      type: 'permission-granted'
+      grantId: string
+      dimensions: readonly ERiskDimension[]
+      scope: EGrantScope
+      subject: string
+      reason: string
+    }
+  | { type: 'permission-revoked'; grantId: string }
 
 export type EventDraft = EventBody
 
 export type EventType = EventBody['type']
+
+export const SURVIVES_SUMMARY: readonly EventType[] = [
+  'context-loaded',
+  'permission-granted',
+  'permission-revoked',
+]
+
+export const survivesSummary = (type: EventType): boolean => SURVIVES_SUMMARY.includes(type)

@@ -6,14 +6,21 @@ import {
   EBeforeToolDecision,
   EStage,
   EToolEffect,
+  stampDrafts,
   toCallId,
+  toEventId,
+  toRunId,
+  toThreadId,
   type BeforeTool,
+  type BeforeToolOutcome,
+  type Event,
+  type EventDraft,
   type ToolCall,
   type ToolDefinition,
   type ToolInvocation,
 } from '@dltech/atlas-core'
 
-import { HookChain } from '../../hooks/registry'
+import { HookChain, type RegisteredHook } from '../../hooks/registry'
 import { HookedToolDispatcher } from '../dispatch'
 import { InMemoryToolRegistry } from '../registry'
 import { readCall, toolNamed } from './fixtures'
@@ -275,5 +282,211 @@ describe('dispatching a call the schema accepts and completes', () => {
     await dispatcher.dispatch({ call: { ...readCall, input: { path: 'a.ts' } }, signal: new AbortController().signal, projectDirectory: SESSION_DIRECTORY})
 
     expect(seen).toEqual([{ path: 'a.ts', limit: 50 }])
+  })
+})
+
+const noted = (text: string): EventDraft => ({ type: 'nudge', text, lifetimeSteps: 1 })
+
+const speaking = (args: {
+  name: string
+  text: string
+  nudge?: number
+  outcome: (call: ToolCall) => BeforeToolOutcome
+}): RegisteredHook<BeforeTool> => ({
+  name: args.name,
+  order: { stage: EStage.Policy, nudge: args.nudge ?? 0 },
+  run: async ({ call }) => ({ ...args.outcome(call), drafts: [noted(args.text)] }),
+})
+
+const dispatcherHearing = (
+  hooks: readonly RegisteredHook<BeforeTool>[],
+): HookedToolDispatcher =>
+  new HookedToolDispatcher({
+    registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: succeeds })]),
+    hooks: new HookChain({ beforeTool: hooks }),
+  })
+
+const dispatched = (dispatcher: HookedToolDispatcher): Promise<readonly EventDraft[]> =>
+  dispatcher.dispatch({
+    call: readCall,
+    signal: new AbortController().signal,
+    projectDirectory: SESSION_DIRECTORY,
+  })
+
+describe('what a before-tool hook says while the dispatcher decides', () => {
+  it('records the draft ahead of the result when the call was allowed', async () => {
+    const drafts = await dispatched(
+      dispatcherHearing([
+        speaking({
+          name: 'classify',
+          text: 'judged clear',
+          outcome: (call) => ({ decision: EBeforeToolDecision.Allow, input: call.input }),
+        }),
+      ]),
+    )
+
+    expect(drafts.map((draft) => draft.type)).toEqual(['nudge', 'tool-result'])
+  })
+
+  it('records the draft ahead of the question when the call was paused', async () => {
+    const drafts = await dispatched(
+      dispatcherHearing([
+        speaking({
+          name: 'classify',
+          text: 'judged check',
+          outcome: () => ({ decision: EBeforeToolDecision.Ask, reason: 'reach: outside the project' }),
+        }),
+      ]),
+    )
+
+    expect(drafts.map((draft) => draft.type)).toEqual(['nudge', 'approval-requested'])
+  })
+
+  it('records the draft ahead of the refusal when the call was denied', async () => {
+    const drafts = await dispatched(
+      dispatcherHearing([
+        speaking({
+          name: 'guard',
+          text: 'judged unsafe',
+          outcome: () => ({ decision: EBeforeToolDecision.Deny, reason: 'outside the workspace root' }),
+        }),
+      ]),
+    )
+
+    expect(drafts.map((draft) => draft.type)).toEqual(['nudge', 'tool-denied'])
+  })
+
+  it('keeps what an allowing hook said even though a later hook took the decision away', async () => {
+    const drafts = await dispatched(
+      dispatcherHearing([
+        speaking({
+          name: 'classify',
+          text: 'judged clear',
+          outcome: (call) => ({ decision: EBeforeToolDecision.Allow, input: call.input }),
+        }),
+        speaking({
+          name: 'approvals',
+          text: 'asked the operator',
+          nudge: 1,
+          outcome: () => ({ decision: EBeforeToolDecision.Ask, reason: 'writes need a human' }),
+        }),
+      ]),
+    )
+
+    expect(drafts).toEqual([
+      noted('judged clear'),
+      noted('asked the operator'),
+      { type: 'approval-requested', callId: toCallId('call-1'), reason: 'writes need a human' },
+    ])
+  })
+
+  it('says nothing extra for a hook that wrote no draft', async () => {
+    const drafts = await dispatched(
+      dispatcherHearing([
+        {
+          name: 'quiet',
+          order: { stage: EStage.Policy, nudge: 0 },
+          run: async ({ call }) => ({ decision: EBeforeToolDecision.Allow, input: call.input }),
+        },
+      ]),
+    )
+
+    expect(drafts.map((draft) => draft.type)).toEqual(['tool-result'])
+  })
+})
+
+describe('what a before-tool hook is handed beyond the call', () => {
+  it('forwards the thread the dispatcher was given, so a hook can read the log', async () => {
+    const seen: (readonly Event[])[] = []
+    const events = stampDrafts({
+      drafts: [{ type: 'user-said', text: 'clean it up' }],
+      envelopes: [
+        {
+          id: toEventId('evt-1'),
+          seq: 1,
+          threadId: toThreadId('thread-1'),
+          runId: toRunId('run-1'),
+          depth: 0,
+          at: '2026-09-01T00:00:00.000Z',
+        },
+      ],
+    })
+
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: succeeds })]),
+      hooks: new HookChain({
+        beforeTool: [
+          {
+            name: 'reader',
+            order: { stage: EStage.Policy, nudge: 0 },
+            run: async ({ call, events: seenEvents }) => {
+              seen.push(seenEvents)
+              return { decision: EBeforeToolDecision.Allow, input: call.input }
+            },
+          },
+        ],
+      }),
+    })
+
+    await dispatcher.dispatch({
+      call: readCall,
+      signal: new AbortController().signal,
+      projectDirectory: SESSION_DIRECTORY,
+      events,
+    })
+
+    expect(seen).toEqual([events])
+  })
+
+  it('forwards the abort signal it already holds, so a hook can give up with the turn', async () => {
+    const controller = new AbortController()
+    let aborted: boolean | undefined
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: succeeds })]),
+      hooks: new HookChain({
+        beforeTool: [
+          {
+            name: 'watcher',
+            order: { stage: EStage.Policy, nudge: 0 },
+            run: async ({ call, signal }) => {
+              aborted = signal.aborted
+              return { decision: EBeforeToolDecision.Allow, input: call.input }
+            },
+          },
+        ],
+      }),
+    })
+
+    controller.abort()
+    await dispatcher.dispatch({
+      call: readCall,
+      signal: controller.signal,
+      projectDirectory: SESSION_DIRECTORY,
+    })
+
+    expect(aborted).toBe(true)
+  })
+
+  it('hands a hook an empty log rather than nothing when the caller passed none', async () => {
+    const seen: (readonly Event[])[] = []
+    const dispatcher = new HookedToolDispatcher({
+      registry: new InMemoryToolRegistry([toolNamed({ name: 'read', invoke: succeeds })]),
+      hooks: new HookChain({
+        beforeTool: [
+          {
+            name: 'reader',
+            order: { stage: EStage.Policy, nudge: 0 },
+            run: async ({ call, events }) => {
+              seen.push(events)
+              return { decision: EBeforeToolDecision.Allow, input: call.input }
+            },
+          },
+        ],
+      }),
+    })
+
+    await dispatched(dispatcher)
+
+    expect(seen).toEqual([[]])
   })
 })

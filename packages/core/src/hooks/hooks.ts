@@ -1,6 +1,7 @@
 import type { Assembled } from '../assembly/assembled'
 import type { ProviderPrompt } from '../assembly/provider-prompt'
 import type { AssemblyTrace } from '../assembly/trace'
+import type { Event } from '../events/envelope'
 import type { ThreadId } from '../events/ids'
 import type { BeforeToolOutcome } from '../policy/before-tool'
 import type { Chunk } from '../stream/chunk'
@@ -33,6 +34,8 @@ export type BeforeRequest = (prompt: ProviderPrompt) => Promise<ProviderPrompt>
 export type BeforeTool = (args: {
   call: ToolCall
   projectDirectory: string
+  events: readonly Event[]
+  signal: AbortSignal
 }) => Promise<BeforeToolOutcome>
 
 export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>

@@ -94,6 +94,10 @@ export * from './prompt/coverage'
 export * from './policy/approval'
 export * from './policy/before-tool'
 export * from './policy/concurrency'
+export * from './policy/classifier/dimension'
+export * from './policy/classifier/triage'
+export * from './policy/classifier/verdict'
+export * from './policy/classifier/grant'
 
 export * from './hooks/hooks'
 

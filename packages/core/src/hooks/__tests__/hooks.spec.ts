@@ -14,6 +14,12 @@ const call: ToolCall = {
   threadId: toThreadId('thread-1'),
 }
 
+const beyondTheCall = {
+  projectDirectory: '/w',
+  events: [],
+  signal: new AbortController().signal,
+}
+
 describe('hook types', () => {
   it('let a guard deny a call with a reason', async () => {
     const denyOutsideWorkspace: BeforeTool = async ({ call: candidate }) =>
@@ -21,7 +27,7 @@ describe('hook types', () => {
         ? { decision: EBeforeToolDecision.Allow, input: candidate.input }
         : { decision: EBeforeToolDecision.Deny, reason: 'outside workspace' }
 
-    expect(await denyOutsideWorkspace({ call, projectDirectory: '/w' })).toEqual({
+    expect(await denyOutsideWorkspace({ call, ...beyondTheCall })).toEqual({
       decision: EBeforeToolDecision.Deny,
       reason: 'outside workspace',
     })
@@ -33,7 +39,7 @@ describe('hook types', () => {
       input: { path: '/private/var' },
     })
 
-    expect(await normalisePath({ call, projectDirectory: '/w' })).toEqual({
+    expect(await normalisePath({ call, ...beyondTheCall })).toEqual({
       decision: EBeforeToolDecision.Allow,
       input: { path: '/private/var' },
     })

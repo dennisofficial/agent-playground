@@ -1,10 +1,8 @@
-import { ECompactionAnchor } from '../events/body'
+import { ECompactionAnchor, survivesSummary } from '../events/body'
 import type { Event, EventOfType } from '../events/envelope'
 import { eventsOfType } from '../events/projections'
 
 export type CompactionWatermark = EventOfType<'history-compacted'>
-
-const CURRENT_CONTEXT = 'context-loaded'
 
 export function compactionWatermarks(events: readonly Event[]): readonly CompactionWatermark[] {
   return eventsOfType({ events, type: 'history-compacted' })
@@ -30,7 +28,7 @@ const rowsSurviveBelow = ({
       event.seq >= watermark.fromSeq &&
       event.seq <= watermark.throughSeq &&
       event.seq !== watermark.seq &&
-      event.type !== CURRENT_CONTEXT,
+      !survivesSummary(event.type),
   )
 
 const prefixWatermarks = (events: readonly Event[]): readonly CompactionWatermark[] =>
@@ -47,8 +45,9 @@ export function compactedThrough(events: readonly Event[]): number {
 /**
  * The lowest sequence a rewind may still name. It rises only where the covered rows are genuinely
  * gone, which is what separates the two operations: compaction hides a range and leaves it
- * rewindable, summarising replaces it and there is nothing underneath to return to. Loaded context is
- * ignored because it is spared either way, so its survival says nothing about the turns around it.
+ * rewindable, summarising replaces it and there is nothing underneath to return to. Rows that survive
+ * a summary are ignored because they are spared either way, so their survival says nothing about the
+ * turns around them.
  */
 export function replacedThrough(events: readonly Event[]): number {
   return furthest(

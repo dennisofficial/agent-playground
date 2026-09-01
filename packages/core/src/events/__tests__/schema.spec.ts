@@ -2,6 +2,10 @@ import { describe, expect, it } from 'bun:test'
 
 import { EAgentStart } from '../../agents/start'
 import { EAgentStatus } from '../../agents/status'
+import { ERiskDimension } from '../../policy/classifier/dimension'
+import { EGrantScope } from '../../policy/classifier/grant'
+import { EClassifierMode, ETriage } from '../../policy/classifier/triage'
+import { EJudgment } from '../../policy/classifier/verdict'
 import { EKilledBy } from '../../shells/status'
 import { EDecision, EMessageOrigin, type EventDraft } from '../body'
 import type { EventEnvelope } from '../envelope'
@@ -58,6 +62,39 @@ const bodies: EventDraft[] = [
     turns: 1,
     toolCalls: 2,
   },
+  {
+    type: 'classifier-judged',
+    callId: toCallId('call-1'),
+    mode: EClassifierMode.Shadow,
+    triage: ETriage.Consult,
+    judgment: EJudgment.Check,
+    dimensions: [ERiskDimension.Contention, ERiskDimension.Irreversibility],
+    signalIds: ['contention.dirty-foreign-worktree'],
+    reason: 'contention: eng-412-sidebar holds 4 changed files',
+    consulted: true,
+    elapsedMs: 612,
+  },
+  {
+    type: 'classifier-judged',
+    callId: toCallId('call-2'),
+    mode: EClassifierMode.Nudge,
+    triage: ETriage.Clear,
+    judgment: EJudgment.Proceed,
+    dimensions: [],
+    signalIds: [],
+    reason: '',
+    consulted: false,
+    elapsedMs: 0,
+  },
+  {
+    type: 'permission-granted',
+    grantId: 'grant-1',
+    dimensions: [ERiskDimension.Reach],
+    scope: EGrantScope.Thread,
+    subject: 'worktree:eng-412-sidebar',
+    reason: 'the operator chose to stop being asked about this',
+  },
+  { type: 'permission-revoked', grantId: 'grant-1' },
 ]
 
 describe('eventBodySchema', () => {
@@ -124,6 +161,68 @@ describe('eventBodySchema', () => {
 
   it('rejects a nudge with no lifetime', () => {
     expect(() => eventBodySchema.parse({ type: 'nudge', text: 'stay on task' })).toThrow()
+  })
+
+  it('rejects a classifier verdict whose judgment is outside the enum', () => {
+    expect(() =>
+      eventBodySchema.parse({
+        type: 'classifier-judged',
+        callId: 'call-1',
+        mode: EClassifierMode.Shadow,
+        triage: ETriage.Consult,
+        judgment: 'maybe',
+        dimensions: [],
+        signalIds: [],
+        reason: '',
+        consulted: true,
+        elapsedMs: 1,
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a classifier verdict that names a dimension the enum does not have', () => {
+    expect(() =>
+      eventBodySchema.parse({
+        type: 'classifier-judged',
+        callId: 'call-1',
+        mode: EClassifierMode.Shadow,
+        triage: ETriage.Consult,
+        judgment: EJudgment.Proceed,
+        dimensions: ['vibes'],
+        signalIds: [],
+        reason: '',
+        consulted: true,
+        elapsedMs: 1,
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a grant with no subject to be scoped to', () => {
+    expect(() =>
+      eventBodySchema.parse({
+        type: 'permission-granted',
+        grantId: 'grant-1',
+        dimensions: [ERiskDimension.Reach],
+        scope: EGrantScope.Thread,
+        subject: '',
+        reason: 'because',
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a revocation that names no grant', () => {
+    expect(() => eventBodySchema.parse({ type: 'permission-revoked' })).toThrow()
+  })
+
+  it('strips a key the classifier row does not declare rather than carrying it forward', () => {
+    const parsed = eventBodySchema.safeParse({
+      type: 'permission-revoked',
+      grantId: 'grant-1',
+      grantedBy: 'the judge',
+    })
+
+    expect(parsed.success).toBe(true)
+    expect(parsed.success && 'grantedBy' in parsed.data).toBe(false)
   })
 
   it('rejects an approval answer with a decision outside the enum', () => {

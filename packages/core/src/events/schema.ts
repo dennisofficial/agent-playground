@@ -2,6 +2,10 @@ import { z } from 'zod'
 
 import { EAgentStart } from '../agents/start'
 import { EAgentStatus } from '../agents/status'
+import { ERiskDimension } from '../policy/classifier/dimension'
+import { EGrantScope } from '../policy/classifier/grant'
+import { EClassifierMode, ETriage } from '../policy/classifier/triage'
+import { EJudgment } from '../policy/classifier/verdict'
 import type { ProviderOptions } from '../provider'
 import { EKilledBy, EShellStatus } from '../shells/status'
 import { ECompactionAnchor, EDecision, EMessageOrigin, EWorktreeExit, type EventBody } from './body'
@@ -174,4 +178,25 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     summary: z.string(),
     replaced: z.number().int().nonnegative(),
   }),
+  z.object({
+    type: z.literal('classifier-judged'),
+    callId: callIdSchema,
+    mode: z.enum(EClassifierMode),
+    triage: z.enum(ETriage),
+    judgment: z.enum(EJudgment),
+    dimensions: z.array(z.enum(ERiskDimension)),
+    signalIds: z.array(z.string()),
+    reason: z.string(),
+    consulted: z.boolean(),
+    elapsedMs: z.number().int().nonnegative(),
+  }),
+  z.object({
+    type: z.literal('permission-granted'),
+    grantId: z.string().min(1),
+    dimensions: z.array(z.enum(ERiskDimension)),
+    scope: z.enum(EGrantScope),
+    subject: z.string().min(1),
+    reason: z.string(),
+  }),
+  z.object({ type: z.literal('permission-revoked'), grantId: z.string().min(1) }),
 ])

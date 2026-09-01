@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
+import type { EventDraft } from '../../events/body'
 import { toCallId, toThreadId } from '../../events/ids'
 import { EToolEffect, type ToolCall } from '../../tools/tool'
 import { EBeforeToolDecision, resolveBeforeTool, type BeforeToolOutcome } from '../before-tool'
@@ -17,6 +18,7 @@ describe('resolveBeforeTool', () => {
     expect(resolveBeforeTool({ call, outcomes: [] })).toEqual({
       outcome: { decision: EBeforeToolDecision.Allow, input: { path: 'src/a.ts' } },
       dissenters: [],
+      drafts: [],
     })
   })
 
@@ -33,6 +35,7 @@ describe('resolveBeforeTool', () => {
     expect(resolution).toEqual({
       outcome: { decision: EBeforeToolDecision.Allow, input: { path: '/private/w/src/a.ts' } },
       dissenters: [],
+      drafts: [],
     })
   })
 
@@ -49,6 +52,7 @@ describe('resolveBeforeTool', () => {
     expect(resolution).toEqual({
       outcome: { decision: EBeforeToolDecision.Deny, reason: 'outside the workspace root' },
       dissenters: [{ hookName: 'boundary', decision: EBeforeToolDecision.Deny, reason: 'outside the workspace root' }],
+      drafts: [],
     })
   })
 
@@ -63,6 +67,7 @@ describe('resolveBeforeTool', () => {
     expect(resolution).toEqual({
       outcome: { decision: EBeforeToolDecision.Ask, reason: 'writes need a human' },
       dissenters: [{ hookName: 'approvals', decision: EBeforeToolDecision.Ask, reason: 'writes need a human' }],
+      drafts: [],
     })
   })
 
@@ -81,6 +86,7 @@ describe('resolveBeforeTool', () => {
         { hookName: 'approvals', decision: EBeforeToolDecision.Ask, reason: 'writes need a human' },
         { hookName: 'boundary', decision: EBeforeToolDecision.Deny, reason: 'outside the workspace root' },
       ],
+      drafts: [],
     })
   })
 
@@ -148,5 +154,94 @@ describe('resolveBeforeTool when a hook returns a decision without a reason', ()
     })
 
     expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+})
+
+describe('the drafts a consulted hook leaves behind', () => {
+  const noted = (text: string): EventDraft => ({ type: 'nudge', text, lifetimeSteps: 1 })
+
+  it('carries a draft written by an allowing hook even though a later hook asked', () => {
+    const { outcome, drafts } = resolveBeforeTool({
+      call,
+      outcomes: [
+        {
+          hookName: 'classify',
+          outcome: {
+            decision: EBeforeToolDecision.Allow,
+            input: call.input,
+            drafts: [noted('judged clear')],
+          },
+        },
+        { hookName: 'approvals', outcome: { decision: EBeforeToolDecision.Ask, reason: 'writes need a human' } },
+      ],
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
+    expect(drafts).toEqual([noted('judged clear')])
+  })
+
+  it('carries a draft written by the asking hook itself', () => {
+    const { drafts } = resolveBeforeTool({
+      call,
+      outcomes: [
+        {
+          hookName: 'classify',
+          outcome: {
+            decision: EBeforeToolDecision.Ask,
+            reason: 'contention: eng-412-sidebar is dirty',
+            drafts: [noted('judged check')],
+          },
+        },
+      ],
+    })
+
+    expect(drafts).toEqual([noted('judged check')])
+  })
+
+  it('carries a draft past a denial, which outranks every other outcome', () => {
+    const { outcome, drafts } = resolveBeforeTool({
+      call,
+      outcomes: [
+        {
+          hookName: 'classify',
+          outcome: { decision: EBeforeToolDecision.Allow, input: call.input, drafts: [noted('judged clear')] },
+        },
+        { hookName: 'boundary', outcome: { decision: EBeforeToolDecision.Deny, reason: 'outside the workspace root' } },
+      ],
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+    expect(drafts).toEqual([noted('judged clear')])
+  })
+
+  it('concatenates the drafts of three hooks in the order they were consulted', () => {
+    const { drafts } = resolveBeforeTool({
+      call,
+      outcomes: [
+        {
+          hookName: 'first',
+          outcome: { decision: EBeforeToolDecision.Allow, input: call.input, drafts: [noted('one')] },
+        },
+        {
+          hookName: 'second',
+          outcome: { decision: EBeforeToolDecision.Allow, input: call.input, drafts: [noted('two'), noted('three')] },
+        },
+        {
+          hookName: 'third',
+          outcome: { decision: EBeforeToolDecision.Allow, input: call.input, drafts: [noted('four')] },
+        },
+      ],
+    })
+
+    expect(drafts).toEqual([noted('one'), noted('two'), noted('three'), noted('four')])
+  })
+
+  it('leaves the drafts empty when no hook wrote one', () => {
+    expect(
+      resolveBeforeTool({
+        call,
+        outcomes: [{ hookName: 'quiet', outcome: { decision: EBeforeToolDecision.Allow, input: call.input } }],
+      }).drafts,
+    ).toEqual([])
   })
 })

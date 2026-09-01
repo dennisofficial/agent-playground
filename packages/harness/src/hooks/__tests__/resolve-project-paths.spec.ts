@@ -43,7 +43,12 @@ const callTo = (name: string, input: unknown): ToolCall => ({
 
 const inputOf = async (input: unknown, name = 'read'): Promise<unknown> => {
   const call = name === 'read' && typeof input === 'string' ? callReading(input) : callTo(name, input)
-  const outcome = await hook().run({ call, projectDirectory: ROOT })
+  const outcome = await hook().run({
+    call,
+    projectDirectory: ROOT,
+    events: [],
+    signal: new AbortController().signal,
+  })
   if (outcome.decision !== EBeforeToolDecision.Allow) throw new Error('expected an allow')
   return outcome.input
 }

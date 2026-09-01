@@ -8,6 +8,7 @@ import {
   type BeforeToolOutcome,
   type CallId,
   type ConsultedHook,
+  type Event,
   type EventDraft,
   type RunId,
   type ThreadId,
@@ -34,6 +35,7 @@ export abstract class ToolDispatcher {
     call: DispatchableCall
     signal: AbortSignal
     projectDirectory: string
+    events?: readonly Event[] | undefined
   }): Promise<readonly EventDraft[]>
 }
 
@@ -65,8 +67,10 @@ export class HookedToolDispatcher extends ToolDispatcher {
     call: DispatchableCall
     signal: AbortSignal
     projectDirectory: string
+    events?: readonly Event[] | undefined
   }): Promise<readonly EventDraft[]> {
     const { call, signal, projectDirectory } = args
+    const events = args.events ?? []
     const definition = this.registry.find(call.name)
     if (definition === undefined) return [this.unknownToolDraft({ call })]
 
@@ -81,17 +85,20 @@ export class HookedToolDispatcher extends ToolDispatcher {
       threadId: call.threadId,
     }
 
-    const { outcome } = resolveBeforeTool({
+    const { outcome, drafts } = resolveBeforeTool({
       call: candidate,
-      outcomes: await this.consultBeforeTool({ call: candidate, projectDirectory }),
+      outcomes: await this.consultBeforeTool({ call: candidate, projectDirectory, events, signal }),
     })
 
     if (outcome.decision === EBeforeToolDecision.Deny) {
-      return [{ type: 'tool-denied', callId: call.callId, name: call.name, reason: outcome.reason }]
+      return [
+        ...drafts,
+        { type: 'tool-denied', callId: call.callId, name: call.name, reason: outcome.reason },
+      ]
     }
 
     if (outcome.decision === EBeforeToolDecision.Ask) {
-      return [{ type: 'approval-requested', callId: call.callId, reason: outcome.reason }]
+      return [...drafts, { type: 'approval-requested', callId: call.callId, reason: outcome.reason }]
     }
 
     const allowed: ToolCall = { ...candidate, input: outcome.input }
@@ -106,6 +113,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     })
 
     return [
+      ...drafts,
       this.resultDraft({ call: allowed, result, interrupted: signal.aborted }),
       ...(await this.observeAfterTool({ call: allowed, result })),
     ]
@@ -152,9 +160,16 @@ export class HookedToolDispatcher extends ToolDispatcher {
     hook: RegisteredHook<BeforeTool>
     call: ToolCall
     projectDirectory: string
+    events: readonly Event[]
+    signal: AbortSignal
   }): Promise<BeforeToolOutcome> {
     try {
-      return await args.hook.run({ call: args.call, projectDirectory: args.projectDirectory })
+      return await args.hook.run({
+        call: args.call,
+        projectDirectory: args.projectDirectory,
+        events: args.events,
+        signal: args.signal,
+      })
     } catch (error) {
       return {
         decision: EBeforeToolDecision.Deny,
@@ -166,6 +181,8 @@ export class HookedToolDispatcher extends ToolDispatcher {
   private async consultBeforeTool(args: {
     call: ToolCall
     projectDirectory: string
+    events: readonly Event[]
+    signal: AbortSignal
   }): Promise<ConsultedHook[]> {
     const consulted: ConsultedHook[] = []
     let input = args.call.input
@@ -175,6 +192,8 @@ export class HookedToolDispatcher extends ToolDispatcher {
         hook,
         call: { ...args.call, input },
         projectDirectory: args.projectDirectory,
+        events: args.events,
+        signal: args.signal,
       })
       if (outcome.decision === EBeforeToolDecision.Allow) input = outcome.input
       consulted.push({ hookName: hook.name, outcome })

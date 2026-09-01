@@ -58,7 +58,7 @@ export function createSettlePending(deps: {
       if (signal.aborted) return {}
 
       const settled = await Promise.all(
-        run.map((call) => deps.dispatch.dispatch({ call, signal, projectDirectory })),
+        run.map((call) => deps.dispatch.dispatch({ call, signal, projectDirectory, events })),
       )
 
       for (const [index, drafts] of settled.entries()) {

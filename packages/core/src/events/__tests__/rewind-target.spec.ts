@@ -5,6 +5,8 @@ import { EAgentStatus } from '../../agents/status'
 import { ECompactionAnchor, EDecision, type EventDraft } from '../body'
 import type { Event } from '../envelope'
 import { toThreadId, toCallId, toEventId, toRunId } from '../ids'
+import { ERiskDimension } from '../../policy/classifier/dimension'
+import { EGrantScope } from '../../policy/classifier/grant'
 import { compactedRange, loaded } from '../../compaction/__tests__/fixture'
 import { ERewindRefusal, rewindTarget } from '../rewind-target'
 import { stampDrafts } from '../stamp'
@@ -108,6 +110,15 @@ describe('rewindTarget', () => {
   })
 })
 
+const granted = (subject: string): EventDraft => ({
+  type: 'permission-granted',
+  grantId: `grant-${subject}`,
+  dimensions: [ERiskDimension.Contention],
+  scope: EGrantScope.Thread,
+  subject,
+  reason: 'the operator chose to stop being asked about this',
+})
+
 const compacted = (throughSeq: number, summary: string): EventDraft => ({
   type: 'history-compacted',
   anchor: ECompactionAnchor.Prefix,
@@ -186,6 +197,27 @@ describe('rewindTarget across the two kinds of compaction', () => {
     ])
 
     expect(rewindTarget({ events, toSeq: 1 }).allowed).toBe(false)
+  })
+
+  it('does not count a spared grant as a surviving turn either', () => {
+    const events = eventsFrom([
+      granted('worktree:eng-412-sidebar'),
+      compactedRange({ fromSeq: 1, throughSeq: 2, summary: 'the opening' }),
+      said('three'),
+    ])
+
+    expect(rewindTarget({ events, toSeq: 1 }).allowed).toBe(false)
+  })
+
+  it('does count a turn beside a spared grant, which keeps the range rewindable', () => {
+    const events = eventsFrom([
+      granted('worktree:eng-412-sidebar'),
+      said('two'),
+      compactedRange({ fromSeq: 1, throughSeq: 3, summary: 'the opening' }),
+      said('four'),
+    ])
+
+    expect(rewindTarget({ events, toSeq: 1 }).allowed).toBe(true)
   })
 })
 

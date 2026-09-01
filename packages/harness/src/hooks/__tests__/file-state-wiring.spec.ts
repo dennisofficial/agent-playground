@@ -96,8 +96,10 @@ const overwriting = (path: string, threadId?: ThreadId): ToolCall =>
     ...(threadId === undefined ? {} : { threadId }),
   })
 
+const beyondTheCall = { projectDirectory: '/w', events: [], signal: new AbortController().signal }
+
 const decisionOf = async (call: ToolCall): Promise<EBeforeToolDecision> =>
-  (await gate().run({ call, projectDirectory: '/w' })).decision
+  (await gate().run({ call, ...beyondTheCall })).decision
 
 const readTool = new ReadTool()
 
@@ -271,7 +273,7 @@ describe('the file-state hooks resolved from one container', () => {
 
     expect(await decisionOf(overwriting(path, child))).toBe(EBeforeToolDecision.Allow)
 
-    const outcome = await gate().run({ call: overwriting(path, parent), projectDirectory: '/w' })
+    const outcome = await gate().run({ call: overwriting(path, parent), ...beyondTheCall })
     expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
     expect('reason' in outcome ? outcome.reason : '').toContain('read it again')
   })

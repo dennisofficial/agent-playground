@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 
 import {
   compactedThrough,
+  eventBodySchema,
   ECompactionAnchor,
   ECompactionRefusal,
   ERewindRefusal,
@@ -37,6 +38,20 @@ const resulted: EventDraft = {
   name: 'bash',
   output: { ok: true },
 }
+
+const granted: EventDraft = eventBodySchema.parse({
+  type: 'permission-granted',
+  grantId: 'grant-1',
+  dimensions: ['contention'],
+  scope: 'thread',
+  subject: 'worktree:eng-412-sidebar',
+  reason: 'the operator chose to stop being asked about this',
+})
+
+const revoked: EventDraft = eventBodySchema.parse({
+  type: 'permission-revoked',
+  grantId: 'grant-1',
+})
 
 const summarises = (summary: string | null): Summarise => async () => summary
 
@@ -264,5 +279,39 @@ describe('what neither operation will do', () => {
     })
 
     expect(asked).toBe(false)
+  })
+
+  it('spares a grant from a destructive summary and takes the turn beside it', async () => {
+    const threadId = await openThread([said('clean it'), granted, said('and again'), replied('done')])
+
+    const outcome = await summariseTo({ threadId, throughSeq: 3, summary: 'the cleanup' })
+
+    expect(outcome.ok).toBe(true)
+    expect(await shapeOf(threadId)).toEqual([
+      [2, 'permission-granted'],
+      [3, 'history-compacted'],
+      [4, 'assistant-said'],
+    ])
+  })
+
+  it('stands the summary in a seat the range actually vacated, not on a row it spared', async () => {
+    const threadId = await openThread([said('clean it'), granted, revoked, replied('done')])
+
+    await summariseTo({ threadId, throughSeq: 3, summary: 'the cleanup' })
+
+    expect(await shapeOf(threadId)).toEqual([
+      [1, 'history-compacted'],
+      [2, 'permission-granted'],
+      [3, 'permission-revoked'],
+      [4, 'assistant-said'],
+    ])
+  })
+
+  it('counts only the rows it actually replaced, not the grant it spared', async () => {
+    const threadId = await openThread([said('clean it'), granted, said('and again'), replied('done')])
+
+    const outcome = await summariseTo({ threadId, throughSeq: 3, summary: 'the cleanup' })
+
+    expect(outcome.ok === true && outcome.replaced).toBe(2)
   })
 })
