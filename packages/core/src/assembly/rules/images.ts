@@ -4,9 +4,14 @@ import type { ImagePart, TextPart, ToolResultPart } from '../../message/parts'
 import type { AssembledMessage } from '../assembled'
 import { defineRule, type Rule } from '../rule'
 
-export const IMAGES_KEPT_IN_CONTEXT = 2
-
-export type ImagesKeptSource = () => number
+/**
+ * Past twenty image blocks in one request the API applies a stricter per-image dimension limit to
+ * every image in that request, the ones already sent included, and tool-result images count toward
+ * the threshold. Retiring the oldest keeps the newest screenshot at full fidelity rather than
+ * letting the twenty-first quietly degrade the other twenty.
+ * https://platform.claude.com/docs/en/build-with-claude/vision
+ */
+export const MAX_IMAGE_BLOCKS = 20
 
 type VisualPart = TextPart | ImagePart
 
@@ -102,8 +107,8 @@ function downgradedEntry({
 }
 
 export function imagesInContext({
-  keep = () => IMAGES_KEPT_IN_CONTEXT,
-}: { keep?: ImagesKeptSource | undefined } = {}): Rule {
+  limit = MAX_IMAGE_BLOCKS,
+}: { limit?: number | undefined } = {}): Rule {
   return defineRule({
     name: 'imagesInContext',
     apply: (input) => {
@@ -112,7 +117,7 @@ export function imagesInContext({
         0,
       )
 
-      const allowance = total - Math.max(0, keep())
+      const allowance = total - Math.max(0, limit)
       if (allowance <= 0) return input
 
       const budget = downgrades(allowance)

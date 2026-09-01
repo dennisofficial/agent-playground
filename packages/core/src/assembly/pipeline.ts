@@ -2,7 +2,7 @@ import { cacheBreakpoints } from './annotators/cache-breakpoints'
 import type { Annotator, Rule } from './rule'
 import { agentEndingsBlock } from './rules/agent-endings-block'
 import { compactedHistory } from './rules/compacted-history'
-import { imagesInContext, type ImagesKeptSource } from './rules/images'
+import { imagesInContext } from './rules/images'
 import { messagesFromEvents } from './rules/messages-from-events'
 import { runningAgentsBlock, type RunningAgentsSource } from './rules/running-agents-block'
 import { runningShellsBlock, type RunningShellsSource } from './rules/running-shells-block'
@@ -19,20 +19,18 @@ export function defaultRules({
   launchDirectory,
   runningShells,
   runningAgents,
-  imagesKept,
 }: {
   prompt: PromptSource
   launchDirectory: string
   runningShells?: RunningShellsSource | undefined
   runningAgents?: RunningAgentsSource | undefined
-  imagesKept?: ImagesKeptSource | undefined
 }): readonly Rule[] {
   return [
     systemPrompt({ prompt, launchDirectory }),
     messagesFromEvents(),
     agentEndingsBlock(),
     compactedHistory(),
-    imagesInContext({ keep: imagesKept }),
+    imagesInContext(),
     worktreeBlock({ launchDirectory }),
     ...(runningShells === undefined ? [] : [runningShellsBlock({ runningShells })]),
     ...(runningAgents === undefined ? [] : [runningAgentsBlock({ runningAgents })]),
@@ -48,16 +46,14 @@ export function defaultPipeline({
   launchDirectory,
   runningShells,
   runningAgents,
-  imagesKept,
 }: {
   prompt: PromptSource
   launchDirectory: string
   runningShells?: RunningShellsSource | undefined
   runningAgents?: RunningAgentsSource | undefined
-  imagesKept?: ImagesKeptSource | undefined
 }): AssemblyPipeline {
   return {
-    rules: defaultRules({ prompt, launchDirectory, runningShells, runningAgents, imagesKept }),
+    rules: defaultRules({ prompt, launchDirectory, runningShells, runningAgents }),
     annotators: defaultAnnotators(),
   }
 }

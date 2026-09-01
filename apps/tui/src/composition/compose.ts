@@ -14,7 +14,6 @@ import {
   EShellStatus,
   EventLogPort,
   IdPort,
-  IMAGES_KEPT_IN_CONTEXT,
   ModelPort,
   promptContextFor,
   rangeValueOf,
@@ -318,13 +317,6 @@ export async function composeAtlas(args: {
     ...agents.drainNotifications({ threadId }),
   ]
 
-  const imagesKept = (): number =>
-    rangeValueOf({
-      resolution: settings.snapshot().resolution,
-      id: ESettingId.ImagesKept,
-      fallback: IMAGES_KEPT_IN_CONTEXT,
-    })
-
   const turn: TurnDeps = {
     log,
     model: modelPort,
@@ -334,7 +326,6 @@ export async function composeAtlas(args: {
       launchDirectory: config.cwd,
       runningShells,
       runningAgents,
-      imagesKept,
     }),
     launchDirectory: config.cwd,
     tools,
@@ -390,7 +381,6 @@ export async function composeAtlas(args: {
             }),
           launchDirectory: config.cwd,
           runningShells,
-          imagesKept,
         }),
     }),
   })
