@@ -1,0 +1,47 @@
+packages/harness/src/agents/registry/child-runner.ts
+  s_b497bbab0c8dc0::t_40df57c474cba3 65,78-84
+  s_b497bbab0c8dc0::t_6c2ff5f58436dc 10
+apps/tui/src/composition/use-agent-view.ts
+  s_b497bbab0c8dc0::t_bb532d5afc5563 18,123-126,129
+packages/harness/src/agents/registry/__tests__/supervisor.spec.ts
+  s_b497bbab0c8dc0::t_9c9d54d8050958 302-304
+packages/harness/src/tools/builtin/__tests__/read-images.spec.ts
+  s_b497bbab0c8dc0::t_cd23d0faaebc62 102-103
+apps/tui/src/composition/app.tsx
+  s_b497bbab0c8dc0::t_bb532d5afc5563 565-566
+packages/harness/src/agents/registry/__tests__/provenance.spec.ts
+  s_b497bbab0c8dc0::t_09db51b1ab0343 150-154
+  s_b497bbab0c8dc0::t_9c9d54d8050958 163
+  s_4c1e6679f80b43::t_d6c2f1d988ebe6 85-149,155-160,169-179
+packages/harness/src/agents/registry/child-state.ts
+  s_b497bbab0c8dc0::t_6c2ff5f58436dc 2
+  s_b497bbab0c8dc0::t_40df57c474cba3 29,33
+packages/harness/src/agents/registry/__tests__/child-drains.spec.ts
+  s_4c1e6679f80b43::t_0278f58d98a5b8 11
+packages/harness/src/tools/builtin/__tests__/agent-tools.spec.ts
+  s_b497bbab0c8dc0::t_9c9d54d8050958 292-294
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6b4032090f31c9e00a778069c8166bb15fc8c988",
+  "prompts": {},
+  "sessions": {
+    "s_4c1e6679f80b43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "97cfd46d-4786-4324-989c-12f1f3de4869",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b497bbab0c8dc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb584ea0-5857-44a0-8fc5-cb2908572f6c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
