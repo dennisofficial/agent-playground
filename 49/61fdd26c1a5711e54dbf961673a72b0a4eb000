@@ -1,0 +1,79 @@
+packages/core/src/policy/before-tool.ts
+  s_8ae1fa940f8094::t_19212f35225e51 1,11-13,20
+  s_8ae1fa940f8094::t_dfa6405442b17f 54-57,63,67-71,76-80,89
+packages/core/src/policy/classifier/grant.ts
+  s_8ae1fa940f8094::t_97f8087902f47d 1-14
+packages/core/src/events/__tests__/rewind-target.spec.ts
+  s_8ae1fa940f8094::t_11f9f47cb0291e 8-9,113-121,201-220
+packages/harness/src/tools/__tests__/dispatch.spec.ts
+  s_8ae1fa940f8094::t_03c1820fc34f4e 9,11-13,15-17,23,287-292,294-296,298-369,371-490
+  s_8ae1fa940f8094::t_eaf88165d4c822 293,297,370
+packages/harness/src/store/thread-store.ts
+  s_8ae1fa940f8094::t_cf4a6fd1410bb0 247
+  s_8ae1fa940f8094::t_0fe70a85a7a464 356,359
+  s_8ae1fa940f8094::t_329c2b27366690 252,255-256
+  s_8ae1fa940f8094::t_c9b7efe67e7325 360
+  s_8ae1fa940f8094::t_9fe950c99a11e4 249-251
+  s_8ae1fa940f8094::t_b58652d6f813d0 6
+packages/core/src/policy/classifier/verdict.ts
+  s_8ae1fa940f8094::t_5123400d9a132a 1-6
+packages/core/src/events/__tests__/schema.spec.ts
+  s_8ae1fa940f8094::t_dedc433f55e5e5 5-8,65-97,166-225
+packages/harness/src/hooks/__tests__/file-state-wiring.spec.ts
+  s_8ae1fa940f8094::t_b1dfd962d5ae16 99-100,102,276
+packages/core/src/assembly/rules/__tests__/messages-from-events.spec.ts
+  s_8ae1fa940f8094::t_3674ad5dc36886 4-7,233-273
+packages/core/src/hooks/hooks.ts
+  s_8ae1fa940f8094::t_b5c3113f7a5835 4
+  s_8ae1fa940f8094::t_54f4574d24ef6b 37-38
+packages/harness/src/hooks/__tests__/read-before-write.spec.ts
+  s_8ae1fa940f8094::t_b1dfd962d5ae16 89-95
+packages/harness/src/tools/dispatch.ts
+  s_8ae1fa940f8094::t_f2f97d0e05b1ef 11
+  s_8ae1fa940f8094::t_e63fd232bdce52 94-96
+  s_8ae1fa940f8094::t_e625ff28b8a689 70
+  s_8ae1fa940f8094::t_ac0dcf417649b6 163-164,167-171
+  s_8ae1fa940f8094::t_8629a4e217911f 38
+  s_8ae1fa940f8094::t_a1d89cba96db36 184-185,195
+packages/harness/src/store/__tests__/compact.spec.ts
+  s_8ae1fa940f8094::t_8a47d8250bd851 5,42-55,283-296,298-315
+packages/core/src/policy/classifier/triage.ts
+  s_8ae1fa940f8094::t_40c0b2485d70d1 1,3-6,9-11,14-20,22-27
+packages/core/src/hooks/__tests__/hooks.spec.ts
+  s_8ae1fa940f8094::t_99a1ab0e473236 17-22,30,42
+packages/core/src/policy/__tests__/before-tool.spec.ts
+  s_8ae1fa940f8094::t_9d9a1d02b33321 3,159-245
+  s_8ae1fa940f8094::t_e9943f6a887512 21,38,55,70,89
+packages/harness/src/hooks/__tests__/resolve-project-paths.spec.ts
+  s_8ae1fa940f8094::t_b1dfd962d5ae16 46-51
+packages/core/src/policy/classifier/dimension.ts
+  s_8ae1fa940f8094::t_b8379a79488371 1-15
+packages/core/src/compaction/watermark.ts
+  s_8ae1fa940f8094::t_3cca794aeedf23 1
+  s_8ae1fa940f8094::t_94888d3f56bf52 31
+  s_8ae1fa940f8094::t_2241b9db8f31d9 48-50
+packages/core/src/events/schema.ts
+  s_8ae1fa940f8094::t_771de271cacba6 181-200
+  s_8ae1fa940f8094::t_06732f9a60fed7 5-8
+packages/core/src/index.ts
+  s_8ae1fa940f8094::t_1a8737491baf54 97-100
+packages/core/src/events/body.ts
+  s_8ae1fa940f8094::t_8ea3b981a0590a 117-137,142-148
+  s_8ae1fa940f8094::t_cd074182d0c3a1 4-7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "4961fdd26c1a5711e54dbf961673a72b0a4eb000",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
