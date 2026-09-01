@@ -2,6 +2,10 @@ import {
   AccountUsagePort,
   ATLAS_SETTINGS,
   EEffort,
+  EImageTier,
+  catalogOf,
+  findCard,
+  parseRef,
   defaultPipeline,
   EMPTY_PROMPT,
   EFinishReason,
@@ -12,6 +16,8 @@ import {
   toAccountId,
   type Credential,
   type CredentialPort,
+  type EffortMap,
+  type ModelCard,
   type ModelPort,
   type ModelStepResult,
   type SettingsDocument,
@@ -28,6 +34,7 @@ import {
   memoryAccountStore,
   createSettingsService,
   ESkillOrigin,
+  MemorySecretsStore,
   MemorySettingsStore,
   ModelStreamError,
   parseSkill,
@@ -50,7 +57,8 @@ import { userSaidDraft } from '../user-said'
 import type { AtlasApp } from '../compose'
 import type { ActiveConversation } from '../resume-hint'
 import { heldChoice } from '../model-selection'
-import { DEFAULT_MODEL_ID, EOpenMode, type AtlasConfig } from '../config'
+import type { ModelCatalogue } from '../providers'
+import { DEFAULT_MODEL_REF, EOpenMode, type AtlasConfig } from '../config'
 import { fakeAgentRegistry, type FakeAgents } from './fake-agents'
 import {
   fakeThreadStore,
@@ -62,13 +70,87 @@ import {
 } from './fake-backend'
 
 export const FAKE_CONFIG: AtlasConfig = {
-  modelId: 'claude-haiku-4-5-20251001',
-  subagentModelId: undefined,
-  databaseUrl: 'file::memory:',
-  keychainService: undefined,
-  thinkingBudgetTokens: 2048,
+  model: undefined,
   open: { mode: EOpenMode.New },
   cwd: '/workspace/atlas',
+}
+
+const fakeCard = (args: {
+  providerId: string
+  modelId: string
+  label: string
+  price: number
+  effort?: EffortMap | undefined
+}): ModelCard => ({
+  ref: { providerId: args.providerId, modelId: args.modelId },
+  label: args.label,
+  api: 'messages',
+  contextWindow: 200_000,
+  imageTier: EImageTier.HighResolution,
+  cost: { inputPerMillion: 1, outputPerMillion: args.price },
+  ...(args.effort === undefined ? {} : { effort: args.effort }),
+})
+
+const LADDER: EffortMap = {
+  [EEffort.Low]: 'low',
+  [EEffort.Medium]: 'medium',
+  [EEffort.High]: 'high',
+}
+
+/**
+ * Hand-written rather than the shipped catalogue: these are the rows the overlay tests read back,
+ * and a regenerated card list would otherwise rename and reorder them out from under the assertions.
+ */
+const CLAUDE_CARDS: readonly ModelCard[] = [
+  fakeCard({
+    providerId: 'anthropic',
+    modelId: 'claude-opus-5',
+    label: 'opus-5',
+    price: 25,
+    effort: LADDER,
+  }),
+  fakeCard({
+    providerId: 'anthropic',
+    modelId: 'claude-sonnet-5',
+    label: 'sonnet-5',
+    price: 15,
+    effort: LADDER,
+  }),
+  fakeCard({
+    providerId: DEFAULT_MODEL_REF.providerId,
+    modelId: DEFAULT_MODEL_REF.modelId,
+    label: 'haiku-4-5',
+    price: 5,
+    effort: LADDER,
+  }),
+]
+
+const CODEX_CARDS: readonly ModelCard[] = [
+  fakeCard({
+    providerId: 'openai',
+    modelId: 'gpt-5-codex',
+    label: 'gpt-5-codex',
+    price: 10,
+    effort: LADDER,
+  }),
+]
+
+const FAKE_CATALOG = catalogOf([...CLAUDE_CARDS, ...CODEX_CARDS])
+
+/** Anthropic is keyed and OpenAI is not, so the `⚠ no key` row still has something to say. */
+export function fakeCatalogue(): ModelCatalogue {
+  return {
+    providers: [
+      { id: 'anthropic', label: 'Claude Plan', cards: CLAUDE_CARDS },
+      { id: 'openai', label: 'Codex Plan', cards: CODEX_CARDS },
+    ],
+    catalog: FAKE_CATALOG,
+    cardFor: (ref) => findCard({ catalog: FAKE_CATALOG, ref }),
+    adapterFor: () => undefined,
+    reachable: (providerId) => providerId === 'anthropic',
+    subscribed: () => true,
+    observeAccounts: () => {},
+  }
 }
 
 const CREDENTIAL: Credential = {
@@ -78,7 +160,10 @@ const CREDENTIAL: Credential = {
   expiresAt: '2099-01-01T00:00:00.000Z',
 }
 
-export const alwaysAuthorised = (): CredentialPort => ({ read: async () => CREDENTIAL })
+export const alwaysAuthorised = (): CredentialPort => ({
+  read: async () => CREDENTIAL,
+  discard: async () => {},
+})
 
 export const fakeAccounts = (): AccountsService => {
   const clock = new SystemClock()
@@ -396,6 +481,7 @@ export type FakeApp = AtlasApp & {
 export function fakeApp(args: {
   model: ModelPort
   settings?: SettingsDocument
+  secrets?: Record<string, string>
   names?: string | null
   summarises?: string | null
   summariseDelayMs?: number
@@ -433,6 +519,7 @@ export function fakeApp(args: {
     skills: skillRegistry.all(),
     skillRegistry,
     agentTypes: args.agentTypes ?? EMPTY_AGENT_TYPE_CATALOG,
+    pluginSurfaces: [],
     files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),
     openUrl: (url: string) => {
@@ -492,13 +579,21 @@ export function fakeApp(args: {
     pending,
     shells,
     agents,
-    model: heldChoice({ modelId: FAKE_CONFIG.modelId ?? DEFAULT_MODEL_ID, effort: EEffort.Medium }),
+    model: heldChoice({
+      ref: parseRef(FAKE_CONFIG.model ?? '') ?? DEFAULT_MODEL_REF,
+      effort: EEffort.Medium,
+    }),
+    models: fakeCatalogue(),
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,
       user: new MemorySettingsStore({
         label: '~/.atlas/settings.json',
         ...(args.settings === undefined ? {} : { document: args.settings }),
       }),
+    }),
+    secrets: new MemorySecretsStore({
+      label: '~/.atlas/secrets.json',
+      ...(args.secrets === undefined ? {} : { secrets: args.secrets }),
     }),
     close: async () => {},
     runner: {

@@ -8,7 +8,7 @@ import { RAIL, RAIL_HEAD, RAIL_TAIL } from '../borders'
 import { Composer } from '../components/composer'
 import { JumpToBottom, NewDivider } from '../components/new-divider'
 import type { TurnClock } from '../components/transcript'
-import { WorkingLine } from '../components/working-line'
+import { WaitingLine, WorkingLine } from '../components/working-line'
 import type { RetryWait } from '../retry-countdown'
 import { useDraft } from '../hooks/use-draft'
 import { grammarsReady } from '../markdown/__tests__/harness'
@@ -409,6 +409,70 @@ describe('the pieces around the transcript mount', () => {
       await expect(mount(<WorkingLine {...state} />, 60)).resolves.toBeUndefined()
     }
   }, 60_000)
+
+  it('renders the waiting line for every count it can carry', async () => {
+    for (const work of [
+      { agents: 2, shells: 0 },
+      { agents: 0, shells: 1 },
+      { agents: 1, shells: 3 },
+    ]) {
+      await expect(mount(<WaitingLine work={work} />, 60)).resolves.toBeUndefined()
+    }
+  }, 60_000)
+
+  it('waits on what the settled turn left running', async () => {
+    const frame = await frameOf(
+      transcript({ model: SETTLED, width: 80, background: { agents: 2, shells: 1 } }),
+      80,
+    )
+
+    expect(frame).toContain('2 background agents and 1 shell to finish')
+  })
+
+  it('says nothing about the background while the turn is still streaming', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: STREAMING,
+        width: 80,
+        turn: RUNNING,
+        background: { agents: 2, shells: 1 },
+      }),
+      80,
+    )
+
+    expect(frame).not.toContain('background agents')
+  })
+
+  it('keeps waiting on the background after the turn failed', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: FAILED_WITH_A_REASON,
+        width: 80,
+        background: { agents: 1, shells: 0 },
+      }),
+      80,
+    )
+
+    expect(frame).toContain('1 background agent to finish')
+  })
+
+  it('times the wait itself, which starts at nothing the moment the turn settles', async () => {
+    const frame = await frameOf(
+      transcript({ model: SETTLED, width: 80, background: { agents: 0, shells: 1 } }),
+      80,
+    )
+
+    expect(frame).toContain('1 shell to finish · 0s')
+  })
+
+  it('takes no room once the background is empty', async () => {
+    const frame = await frameOf(
+      transcript({ model: SETTLED, width: 80, background: { agents: 0, shells: 0 } }),
+      80,
+    )
+
+    expect(frame).not.toContain('Waiting for')
+  })
 
   it('says what went wrong instead of claiming to be working', async () => {
     const frame = await frameOf(

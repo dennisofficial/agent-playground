@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EPromptAgent, ESkipReason, modelEntry, type PromptContext } from '@dltech/atlas-core'
+import { EPromptAgent, ESkipReason, type PromptContext } from '@dltech/atlas-core'
 
 import { SkillListingFragment } from '../fragments/skills'
 import { InMemoryPromptRegistry } from '../registry'
@@ -10,7 +10,7 @@ import { FakeSkillRegistry, fakeSkill } from './fake-skills'
 const OPUS: PromptContext = {
   agent: EPromptAgent.Main,
   provider: { id: 'anthropic-oauth', modelId: 'claude-opus-5' },
-  model: modelEntry('claude-opus-5'), projectDirectory: '/w'
+  model: { contextWindow: 1_000_000 }, projectDirectory: '/w'
 }
 
 const CORPUS = [
@@ -58,6 +58,19 @@ describe('the skill listing fragment', () => {
     const text = listingOver(new FakeSkillRegistry({ skills: CORPUS }))
 
     expect(text).toContain('skill tool')
+  })
+
+  it('sends the model to the list before it plans, not after it has chosen', () => {
+    const text = listingOver(new FakeSkillRegistry({ skills: CORPUS }))
+
+    expect(text).toContain('before you plan')
+    expect(text).toContain('before you have settled on an approach')
+  })
+
+  it('asks for the skill that fits rather than a speculative sweep of them', () => {
+    const text = listingOver(new FakeSkillRegistry({ skills: CORPUS }))
+
+    expect(text).toContain('not its neighbours')
   })
 
   it('emits nothing when no skill is model-invocable', () => {

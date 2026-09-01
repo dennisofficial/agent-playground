@@ -357,7 +357,8 @@ type BeforeTurn    = (args: { threadId: string }) => Promise<HookOutcome>
 type BeforeStep    = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>  // persists
 type BeforeRequest = (p: ProviderPrompt) => Promise<ProviderPrompt>          // transient, per-provider
 type BeforeTool    = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
-type AfterTool     = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>
+type AfterTool     = (args: { call: ToolCall; result: ToolOutcome; signal: AbortSignal }) => Promise<HookOutcome>
+type AfterShell    = (args: { threadId: string; shell: EndedShell }) => Promise<HookOutcome>  // fired by the shell registry
 type OnChunk       = (c: Chunk) => Promise<Chunk | null>
 type AfterTurn     = (args: { threadId: string }) => Promise<HookOutcome>
 
@@ -380,6 +381,34 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
   turn-taking drafts restarting the loop it closes, a hazard `BeforeTurn` does not have, and a turn
   that goes on to return `Idle` has already had its `BeforeTurn` fire — which costs nothing when the
   hook uses `additionalContext`, since identical content dedupes to the event already in the log.
+- **`AfterShell` is the one phase no turn drives.** A backgrounded shell can end while the session is
+  idle — that is the whole point of the idle wake — so `BunShellRegistry` invokes it from the exit
+  the process reports, not `runTurn`. Two things follow. Its `HookOutcome` drafts have no turn to be
+  appended to, so they ride out with the ending's own notice through `drainNotifications`, which is
+  the only delivery this side of the harness can promise; an ending is therefore queued *after* its
+  hooks resolve rather than beside them, under a five-second budget past which the drafts are
+  forfeit — waiting on the chain is what makes a hook that never settles an ending nobody is told
+  about and a session that never quits, and plugin-provided hooks will forget an `await` long before
+  they throw. And a throwing hook is caught at the registry, unlike every other phase, because the
+  caller underneath it is a dying process rather than a loop that could carry the failure anywhere.
+  `EndedShell` is core-owned for the same reason `EShellStatus` is: the phase must not hand a `core`
+  consumer a `harness` type. The chain reaches the registry as a thunk
+  (`HookChainSourceToken`) — hooks resolve tools, tools resolve the registry — the same cycle break
+  `ChildRunnerDepsToken` makes for the agent supervisor.
+- **Every phase is throw-isolated and time-bounded, at the chain rather than at the call site.**
+  `HookChain` funnels all eight, so one budget lives in one place. A hook that throws, outlives
+  `HOOK_BUDGET_MS`, or returns `undefined` is reported through `onMishap` and degrades by phase kind:
+  a collect phase contributes no drafts, a transform phase passes its value through unchanged, and
+  `BeforeTool` keeps its existing fail-closed `Deny` carrying the reason. `AfterShell` keeps a
+  *second*, chain-wide budget on top, because N well-behaved-but-slow hooks would otherwise stretch
+  teardown to N budgets. The third failure mode is the one worth naming: `BeforeStep`,
+  `BeforeRequest` and `OnChunk` are pipelines whose return value replaces the thing, so a hook
+  written `async () => {}` silently handed the model `undefined` or muted the stream. **`undefined`
+  is not a valid return from any phase**; `null` still means "drop this chunk" and only `OnChunk`
+  may say it.
+- **`AfterTool` carries an `AbortSignal`.** It runs after the tool has already been aborted and it
+  holds the tool-result draft, so without one a hung after-tool hook could not be freed by
+  interrupting — the turn simply never proceeded.
 - **`BeforeStep` and `BeforeRequest` are different seams** — the first persists to the record, the
   second is a transient per-provider rewrite. Adopted from Mastra, whose split proved real.
 - **`BeforeStep` carries the assembly trace.** It runs at the one point where the trace still exists,
@@ -435,7 +464,7 @@ array-literal position. `harness/tools/dispatch.ts` is the only caller of either
 `HookedToolDispatcher` adapter, and it dispatches `BeforeTool` and `AfterTool`. The remaining phases
 are wired elsewhere rather than unwired: `harness/hooks/registry.ts` is a `HookChain` class whose
 `beforeTurn`, `beforeStep`, `beforeRequest`, `onChunk` and `afterTurn` methods are called by
-`LoopTurnRunner` and `AiSdkModelPort`.
+`LoopTurnRunner` and `AiSdkModelPort`, and its `afterShell` method by `BunShellRegistry`.
 
 **`dissenters` is computed and currently discarded.** `tool-denied` carries only `reason`, so the
 "UI can say who blocked what" purpose is unmet until that event grows a field. Recorded so it reads

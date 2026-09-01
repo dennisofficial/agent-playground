@@ -8,6 +8,7 @@ import {
   IdPort,
   ModelPort,
   promptContextFor,
+  type PromptModel,
   type ThreadId,
 } from '@dltech/atlas-core'
 
@@ -31,6 +32,8 @@ import {
 } from '../tokens'
 
 const ROOT = '/workspace/atlas'
+
+const CHILD_MODEL: PromptModel = { contextWindow: 1_000_000 }
 
 const CHILD_REPLY = 'The vault reads its key file exactly once.'
 
@@ -62,7 +65,12 @@ function bindChildRunner({ container }: { container: DependencyContainer }): voi
           assembly: defaultPipeline({
             prompt: () =>
               prompts.compile(
-                promptContextFor({ agent: EPromptAgent.Main, provider: modelPort.identity, projectDirectory: '/w' }),
+                promptContextFor({
+                  agent: EPromptAgent.Main,
+                  provider: modelPort.identity,
+                  model: CHILD_MODEL,
+                  projectDirectory: '/w',
+                }),
               ),
             launchDirectory: ROOT,
           }),
@@ -76,7 +84,13 @@ function bindChildRunner({ container }: { container: DependencyContainer }): voi
         assemblyFor: ({ agentType }) =>
           defaultPipeline({
             prompt: () =>
-              subAgentPrompt({ prompts, agentType, provider: modelPort.identity, projectDirectory: '/w' }),
+              subAgentPrompt({
+                prompts,
+                agentType,
+                provider: modelPort.identity,
+                model: CHILD_MODEL,
+                projectDirectory: '/w',
+              }),
             launchDirectory: ROOT,
           }),
       }

@@ -18,14 +18,18 @@ const CWD = '/Users/dennis/Developer/atlas'
 
 const PANEL_WIDTH = 72
 
+const STARTED_AT = '2026-08-27T12:00:00.000Z'
+
+const NOW = Date.parse(STARTED_AT) + 64_000
+
 const shell = (over: Omit<Partial<ShellSnapshot>, 'shellId'> & { shellId: string }): ShellSnapshot =>
   ({
     command: 'bun test --watch',
     description: 'Watch the tests',
     status: EShellStatus.Running,
     pid: 4242,
-    startedAt: '2026-08-27T12:00:00.000Z',
-    lastOutputAt: '2026-08-27T12:00:00.000Z',
+    startedAt: STARTED_AT,
+    lastOutputAt: STARTED_AT,
     totalCharacters: 0,
     awaitingInput: false,
     ...over,
@@ -55,8 +59,10 @@ const sidebarRows = (shells: readonly ShellSnapshot[]): Promise<string[]> =>
       model={IDLE_SIDEBAR}
       turn={IDLE_TURN}
       now={42_000}
-      cwd={CWD}
+      root={CWD}
+      worktree={null}
       shells={shells}
+      shellNow={NOW}
     />,
   )
 
@@ -69,6 +75,7 @@ const panelRows = (args: {
     <Shells
       width={PANEL_WIDTH}
       shells={args.shells}
+      now={NOW}
       selected={args.selected}
       output={args.output ?? ''}
       onKill={() => undefined}
@@ -128,6 +135,25 @@ describe('what the sidebar says about background shells', () => {
     ])
 
     expect(has(rows, 'exit 2')).toBe(true)
+  })
+
+  it('counts a running shell up from when it started', async () => {
+    const rows = await sidebarRows([shell({ shellId: 'bash_1' })])
+
+    expect(has(rows, 'running · 1m 4s')).toBe(true)
+  })
+
+  it('stops a finished shell at what it took rather than counting past its ending', async () => {
+    const rows = await sidebarRows([
+      shell({
+        shellId: 'bash_1',
+        status: EShellStatus.Exited,
+        exitCode: 0,
+        endedAt: '2026-08-27T12:00:12.000Z',
+      }),
+    ])
+
+    expect(has(rows, 'done · 12s')).toBe(true)
   })
 })
 
@@ -218,6 +244,7 @@ describe('the scrollback the panel keeps', () => {
         <Shells
           width={PANEL_WIDTH}
           shells={[shell({ shellId: 'bash_1' })]}
+          now={NOW}
           selected={shell({ shellId: 'bash_1' })}
           output={loud}
           onKill={() => undefined}

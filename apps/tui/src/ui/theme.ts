@@ -21,8 +21,11 @@ export const SIDE_BY_SIDE_MIN_TERMINAL_WIDTH = 140
 export function formatElapsed(ms: number): string {
   const seconds = Math.floor(ms / 1000)
   if (seconds < 60) return `${seconds}s`
+
   const minutes = Math.floor(seconds / 60)
-  return `${minutes}m ${seconds % 60}s`
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`
+
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
 const MERIDIEM_PIVOT = 12

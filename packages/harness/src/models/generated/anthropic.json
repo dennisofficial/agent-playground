@@ -1,0 +1,296 @@
+[
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-fable-5"
+    },
+    "label": "Claude Fable 5",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "high-resolution",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 10,
+      "outputPerMillion": 50
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-fable-5-1"
+    },
+    "label": "Claude Fable 5.1",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "high-resolution",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 10,
+      "outputPerMillion": 50
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-haiku-4-5"
+    },
+    "label": "Claude Haiku 4.5 (latest)",
+    "api": "anthropic-messages",
+    "contextWindow": 200000,
+    "imageTier": "standard",
+    "maxOutputTokens": 64000,
+    "cost": {
+      "inputPerMillion": 1,
+      "outputPerMillion": 5
+    },
+    "effort": {
+      "low": 1024,
+      "medium": 2048,
+      "high": 16384
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-haiku-4-5-20251001"
+    },
+    "label": "Claude Haiku 4.5",
+    "api": "anthropic-messages",
+    "contextWindow": 200000,
+    "imageTier": "standard",
+    "maxOutputTokens": 64000,
+    "cost": {
+      "inputPerMillion": 1,
+      "outputPerMillion": 5
+    },
+    "effort": {
+      "low": 1024,
+      "medium": 2048,
+      "high": 16384
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-opus-4-5"
+    },
+    "label": "Claude Opus 4.5 (latest)",
+    "api": "anthropic-messages",
+    "contextWindow": 200000,
+    "imageTier": "standard",
+    "maxOutputTokens": 64000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 25
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-opus-4-5-20251101"
+    },
+    "label": "Claude Opus 4.5",
+    "api": "anthropic-messages",
+    "contextWindow": 200000,
+    "imageTier": "standard",
+    "maxOutputTokens": 64000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 25
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-opus-4-6"
+    },
+    "label": "Claude Opus 4.6",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 25
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-opus-4-7"
+    },
+    "label": "Claude Opus 4.7",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "high-resolution",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 25
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-opus-4-8"
+    },
+    "label": "Claude Opus 4.8",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "high-resolution",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 25
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-opus-5"
+    },
+    "label": "Claude Opus 5",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "high-resolution",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 25
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-sonnet-4-5"
+    },
+    "label": "Claude Sonnet 4.5 (latest)",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 64000,
+    "cost": {
+      "inputPerMillion": 3,
+      "outputPerMillion": 15
+    },
+    "effort": {
+      "low": 1024,
+      "medium": 2048,
+      "high": 16384
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-sonnet-4-5-20250929"
+    },
+    "label": "Claude Sonnet 4.5",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 64000,
+    "cost": {
+      "inputPerMillion": 3,
+      "outputPerMillion": 15
+    },
+    "effort": {
+      "low": 1024,
+      "medium": 2048,
+      "high": 16384
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-sonnet-4-6"
+    },
+    "label": "Claude Sonnet 4.6",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 3,
+      "outputPerMillion": 15
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "anthropic",
+      "modelId": "claude-sonnet-5"
+    },
+    "label": "Claude Sonnet 5",
+    "api": "anthropic-messages",
+    "contextWindow": 1000000,
+    "imageTier": "high-resolution",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 2,
+      "outputPerMillion": 10
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  }
+]

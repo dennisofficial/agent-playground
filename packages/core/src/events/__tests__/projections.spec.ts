@@ -263,4 +263,25 @@ describe('whose turn it is', () => {
   it('reads an ending as turn-taking even when it is the only row', () => {
     expect(awaitsReply(eventsFrom([ENDED_CHILD]))).toBe(true)
   })
+
+  it('is the assistant to answer when a background shell watch matches mid-run', () => {
+    const matched: EventDraft = {
+      type: 'background-shell-matched',
+      shellId: 'bash_1',
+      command: 'bun test',
+      pattern: '(fail|error)',
+      lines: '12 fail\n',
+      matchCount: 1,
+    }
+
+    expect(
+      awaitsReply(
+        eventsFrom([
+          { type: 'user-said', text: 'run the suite' },
+          { type: 'assistant-said', parts: [{ type: 'text', text: 'backgrounding it' }] },
+          matched,
+        ]),
+      ),
+    ).toBe(true)
+  })
 })

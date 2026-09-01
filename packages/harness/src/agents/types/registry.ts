@@ -1,10 +1,6 @@
-import {
-  MODEL_CATALOG,
-  modelEntry,
-  resolveShadowing,
-  type EDefinitionOrigin,
-} from '@dltech/atlas-core'
+import { resolveShadowing, type EDefinitionOrigin } from '@dltech/atlas-core'
 
+import { modelsWorthOffering, offerSentence } from './model-offer'
 import {
   AGENT_SPAWN_TOOL_NAME,
   EAgentTypeRefusal,
@@ -34,7 +30,10 @@ export const EMPTY_AGENT_TYPE_CATALOG: AgentTypeCatalog = {
   shadowed: [],
 }
 
-const inCatalog: ModelIsUsable = (modelId) => modelEntry(modelId) !== undefined
+const anyModelWhenNoneWereNamed = (
+  reachableModelIds: readonly string[] | undefined,
+): ModelIsUsable =>
+  reachableModelIds === undefined ? () => true : (modelId) => reachableModelIds.includes(modelId)
 
 const withoutSelfSpawn = (agentType: AgentType): AgentType => ({
   ...agentType,
@@ -42,35 +41,38 @@ const withoutSelfSpawn = (agentType: AgentType): AgentType => ({
   disallowedTools: [...new Set([...(agentType.disallowedTools ?? []), AGENT_SPAWN_TOOL_NAME])],
 })
 
-const reachableModels = (isUsable: ModelIsUsable): readonly string[] =>
-  MODEL_CATALOG.filter((entry) => isUsable(entry.id)).map((entry) => entry.id)
-
-function unusableModelDetail(args: { modelId: string; isUsable: ModelIsUsable }): string {
-  const reachable = reachableModels(args.isUsable)
-
+function unusableModelDetail(args: { modelId: string; reachable: readonly string[] }): string {
   return [
     `model: "${args.modelId}" is not a model this build can run an agent on.`,
-    reachable.length === 0
-      ? 'No model is reachable, so pin none.'
-      : `Pin one of: ${reachable.join(', ')}.`,
+    offerSentence({
+      offer: modelsWorthOffering(args),
+      lead: 'Pin one of:',
+      whenNothingIsReachable: 'No model is reachable, so pin none.',
+    }),
   ].join(' ')
 }
 
-function unusableSubagentModelDetail(args: { modelId: string; isUsable: ModelIsUsable }): string {
-  const reachable = reachableModels(args.isUsable)
-
+function unusableSubagentModelDetail(args: {
+  modelId: string
+  reachable: readonly string[]
+}): string {
   return [
     `ATLAS_SUBAGENT_MODEL="${args.modelId}" is not a model this build can run an agent on,`,
     'and this agent type pins none of its own.',
-    reachable.length === 0
-      ? 'No model is reachable, so unset it and let a child inherit the parent model.'
-      : `Set it to one of: ${reachable.join(', ')}, or unset it to let a child inherit the parent model.`,
+    offerSentence({
+      offer: modelsWorthOffering(args),
+      lead: 'Set it to one of:',
+      whenNothingIsReachable:
+        'No model is reachable, so unset it and let a child inherit the parent model.',
+      then: 'Unset it to let a child inherit the parent model.',
+    }),
   ].join(' ')
 }
 
 function modelRefusal(args: {
   agentType: AgentType
   isUsable: ModelIsUsable
+  reachable: readonly string[]
   subagentModelId: string | undefined
 }): AgentTypeRefusal | undefined {
   const pinned = args.agentType.model
@@ -84,8 +86,8 @@ function modelRefusal(args: {
     origin: args.agentType.origin,
     detail:
       pinned === undefined
-        ? unusableSubagentModelDetail({ modelId, isUsable: args.isUsable })
-        : unusableModelDetail({ modelId, isUsable: args.isUsable }),
+        ? unusableSubagentModelDetail({ modelId, reachable: args.reachable })
+        : unusableModelDetail({ modelId, reachable: args.reachable }),
   }
 }
 
@@ -117,17 +119,24 @@ function shadowedBy({
 
 export async function loadAgentTypes(args: {
   sources: readonly AgentTypeSource[]
+  reachableModelIds?: readonly string[] | undefined
   modelIsUsable?: ModelIsUsable | undefined
   subagentModelId?: string | undefined
 }): Promise<AgentTypeCatalog> {
-  const isUsable = args.modelIsUsable ?? inCatalog
+  const isUsable = args.modelIsUsable ?? anyModelWhenNoneWereNamed(args.reachableModelIds)
+  const reachable = (args.reachableModelIds ?? []).filter(isUsable)
   const read = await Promise.all(args.sources.map((source) => source.load()))
 
   const refusals: AgentTypeRefusal[] = read.flatMap((entry) => [...entry.refusals])
   const usable: AgentType[] = []
 
   for (const agentType of read.flatMap((entry) => entry.types)) {
-    const refused = modelRefusal({ agentType, isUsable, subagentModelId: args.subagentModelId })
+    const refused = modelRefusal({
+      agentType,
+      isUsable,
+      reachable,
+      subagentModelId: args.subagentModelId,
+    })
     if (refused === undefined) usable.push(agentType)
     else refusals.push(refused)
   }

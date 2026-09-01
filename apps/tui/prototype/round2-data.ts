@@ -2,7 +2,13 @@
 
 import { EAgentStatus } from '@dltech/atlas-core'
 
-import { ESidebarTaskState, ESpendReading, IDLE_SIDEBAR, SPEND_UNAVAILABLE, type SidebarModel } from '../src/store'
+import {
+  ESidebarTaskState,
+  ESpendReading,
+  IDLE_SIDEBAR,
+  SPEND_UNAVAILABLE,
+  type SidebarModel,
+} from '../src/store'
 import type { Hint } from '../src/ui/hint-layout'
 
 export const HINTS: readonly Hint[] = [
@@ -15,9 +21,6 @@ export const FED_SIDEBAR: SidebarModel = {
   title: 'Refresh-token rotation',
   turnCount: 14,
   totalTokens: 22_400,
-  git: { branch: 'auth/rotation' },
-  pr: { number: 412, state: 'draft' },
-  ci: { running: 2, passed: 3, failed: 1 },
   todo: [
     { id: 'k1', label: 'Revocation store on jti', state: ESidebarTaskState.Done },
     { id: 'k2', label: 'Issue and rotate a pair', state: ESidebarTaskState.Done },

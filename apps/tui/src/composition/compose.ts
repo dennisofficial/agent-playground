@@ -1,7 +1,11 @@
 import { homedir } from 'node:os'
 
 import {
+  ANTHROPIC_PROVIDER_ID,
   AccountStorePort,
+  AfterShellHook,
+  AfterToolHook,
+  BeforeToolHook,
   BeforeTurnHook,
   ClockPort,
   CredentialPort,
@@ -9,20 +13,29 @@ import {
   DEFAULT_CLASSIFIER_POLICY,
   EAgentStatus,
   EClassifierMode,
+  environmentFor,
   EPromptAgent,
   DEFAULT_WORKTREE_DIRECTORY,
   ESettingId,
+  EWebSearchBackend,
+  backendOf,
   choiceValueOf,
   classifierModeOf,
   EShellStatus,
   EventLogPort,
   IdPort,
+  JudgePort,
   ModelPort,
+  parseRef,
+  PromptFragment,
   promptContextFor,
+  promptModelOf,
   rangeValueOf,
+  textValueOf,
   toThreadId,
   type ThreadId,
   type EventDraft,
+  type SecretsPort,
   type WorkspaceIdentity,
 } from '@dltech/atlas-core'
 import {
@@ -30,8 +43,17 @@ import {
   agentTypeSources,
   AgentRegistryPort,
   AiSdkModelPort,
-  anthropicThinkingOptions,
+  AnthropicAdapter,
+  cardsForProvider,
+  OpenAiAdapter,
+  OPENAI_PROVIDER_ID,
+  OpenRouterAdapter,
+  OPENROUTER_PROVIDER_ID,
+  ProviderAdapter,
   bindAgentTypes,
+  claimWorktree,
+  EWorktreeClaim,
+  releaseWorktree,
   pinnedModelSource,
   ChildRunnerDepsToken,
   subAgentPrompt,
@@ -42,13 +64,22 @@ import {
   createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
+  atlasDatabaseUrl,
   atlasDirectory,
   createSecurityKeychainReader,
   createUrlOpener,
   disposeAll,
+  HaikuJudge,
   HookChainToken,
+  HookMishapReporterToken,
+  type HookMishap,
   LoadInstructionsHook,
+  LoadMemoryHook,
+  memoryDirectoriesFor,
+  MemoryFragment,
+  StampMemoryHook,
   probeWorkspace,
+  remotesOf,
   ClaudeCodeSource,
   ClaudeCodeSourceToken,
   KeychainReaderToken,
@@ -56,6 +87,7 @@ import {
   importClaudeCodeAccount,
   syncEnvironmentAccounts,
   LanguageModelToken,
+  ModelCardSourceToken,
   openAtlasDatabase,
   portToken,
   PrismaClientToken,
@@ -74,11 +106,14 @@ import {
   WorkspaceRoot,
   ClassifierPolicyToken,
   WorktreeDirectoryToken,
+  SecretsStoreToken,
+  WebSearchBackendToken,
   FileBrowser,
   type UrlOpener,
   type AccountUsageService,
   type AgentTypeCatalog,
   type ChildRunnerDeps,
+  type DependencyContainer,
   type TurnDeps,
   type DeltaChannel,
   type DiscoveredSkill,
@@ -91,13 +126,40 @@ import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, rememberSelection } from './model-preference'
 import { faultInjected } from './fault-injection'
-import { modelIsReachable, selectableModel, type ModelChoice } from './model-selection'
+import { selectableModel, type ModelChoice } from './model-selection'
+import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
+import { assemblePlugins } from '../plugins/assemble'
+import { ENoticeTone, notify } from '../ui/notice-store'
+import type { ContributedSurface } from '../plugins/surface'
 import { instructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
 import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
 import { userSaidDraft } from './user-said'
 
 export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
+
+const SESSION_CLAIM_LABEL = 'session'
+
+async function claimLaunchWorktree(args: {
+  container: DependencyContainer
+  workspace: WorkspaceIdentity
+}): Promise<void> {
+  const path = args.workspace.workspace
+  const repo = args.workspace.repo
+  if (repo === null || repo === path) return
+
+  const claimed = await claimWorktree({ cwd: repo, path, label: SESSION_CLAIM_LABEL }).catch(
+    () => undefined,
+  )
+  if (claimed?.claim !== EWorktreeClaim.Owned && claimed?.claim !== EWorktreeClaim.Reclaimed) return
+
+  registerDisposable({
+    container: args.container,
+    close: async () => {
+      await releaseWorktree({ cwd: repo, path })
+    },
+  })
+}
 
 export type AtlasApp = {
   config: AtlasConfig
@@ -118,13 +180,16 @@ export type AtlasApp = {
   shells: ShellRegistryPort
   agents: AgentRegistryPort
   model: ModelChoice
+  models: ModelCatalogue
   settings: SettingsService
+  secrets: SecretsPort
   usage: AccountUsageService
   files: FileBrowser
   openUrl: UrlOpener
   skills: readonly DiscoveredSkill[]
   skillRegistry: SkillRegistryPort
   agentTypes: AgentTypeCatalog
+  pluginSurfaces: readonly ContributedSurface[]
   close: () => Promise<void>
 }
 
@@ -136,12 +201,20 @@ export async function composeAtlas(args: {
   const { config } = args
   const container = createHarnessContainer()
   const workspace = await probeWorkspace({ cwd: config.cwd })
+  await claimLaunchWorktree({ container, workspace })
+
+  const settings = args.settings.service
+  const settled = settings.snapshot().resolution
+  const launchValue = (id: ESettingId): string | undefined => {
+    const held = textValueOf({ resolution: settled, id })
+    return held.length === 0 ? undefined : held
+  }
 
   registerBuiltinPromptFragments({ container })
   container.register(WorkspaceRoot, { useValue: config.cwd })
   container.register(KeychainReaderToken, { useValue: createSecurityKeychainReader() })
 
-  const keychainService = config.keychainService
+  const keychainService = launchValue(ESettingId.KeychainService)
   if (keychainService !== undefined) {
     container.register(ClaudeCodeSourceToken, {
       useFactory: (resolver) =>
@@ -168,7 +241,6 @@ export async function composeAtlas(args: {
     clients: builtinOauthClients({ clock: container.resolve(portToken(ClockPort)) }),
   })
   const usage = createAccountUsageService({ usage: new AnthropicUsageClient({ credentials }) })
-  const settings = args.settings.service
   args.settings.bindTo(container)
 
   container.register(WorktreeDirectoryToken, {
@@ -180,9 +252,24 @@ export async function composeAtlas(args: {
       }),
   })
 
+  const environment = environmentFor({
+    projectDirectory: config.cwd,
+    repoRoot: workspace.repo ?? undefined,
+    worktreeHome:
+      workspace.repo === null
+        ? undefined
+        : `${workspace.repo}/${choiceValueOf({
+            resolution: settled,
+            id: ESettingId.WorktreeDirectory,
+            fallback: DEFAULT_WORKTREE_DIRECTORY,
+          })}`,
+    remotes: await remotesOf({ cwd: config.cwd }),
+  })
+
   container.register(ClassifierPolicyToken, {
     useValue: () => ({
       ...DEFAULT_CLASSIFIER_POLICY,
+      environment,
       mode:
         classifierModeOf(
           choiceValueOf({
@@ -194,24 +281,85 @@ export async function composeAtlas(args: {
     }),
   })
 
+  container.register(portToken(JudgePort), {
+    useValue: new HaikuJudge({
+      model: createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID }),
+    }),
+  })
+
+  container.register(WebSearchBackendToken, {
+    useValue: () =>
+      backendOf(
+        choiceValueOf({
+          resolution: settings.snapshot().resolution,
+          id: ESettingId.WebSearchBackend,
+          fallback: EWebSearchBackend.DuckDuckGo,
+        }),
+      ) ?? EWebSearchBackend.DuckDuckGo,
+  })
+
   container.register(portToken(BeforeTurnHook), {
     useValue: new LoadInstructionsHook({
       source: ({ projectDirectory }) => instructionPlanOf({ settings, projectDirectory }),
     }),
   })
 
+  const memoryDirectories = memoryDirectoriesFor({
+    atlasHome: atlasDirectory(),
+    repoRoot: workspace.repo ?? workspace.workspace,
+  })
+
+  container.register(portToken(PromptFragment), {
+    useValue: new MemoryFragment({ directories: memoryDirectories }),
+  })
+
+  container.register(portToken(BeforeTurnHook), {
+    useValue: new LoadMemoryHook({ directories: memoryDirectories }),
+  })
+
+  container.register(portToken(BeforeToolHook), {
+    useValue: new StampMemoryHook({
+      directories: [memoryDirectories.user, memoryDirectories.project],
+      clock: container.resolve(portToken(ClockPort)),
+    }),
+  })
+
+  const models = modelCatalogue({
+    adapters: [
+      new AnthropicAdapter({ credentials, cards: cardsForProvider(ANTHROPIC_PROVIDER_ID) }),
+      new OpenAiAdapter({ credentials, cards: cardsForProvider(OPENAI_PROVIDER_ID) }),
+      new OpenRouterAdapter({ credentials, cards: cardsForProvider(OPENROUTER_PROVIDER_ID) }),
+    ],
+    accounts: await accountStore.list(),
+  })
+
   const model = selectableModel({
-    credentials,
+    catalogue: models,
     initial: launchSelection({
-      requested: { modelId: config.modelId, thinkingBudgetTokens: config.thinkingBudgetTokens },
-      remembered: settings.snapshot().document,
+      requested: { model: config.model },
+      settled,
+      catalogue: models,
     }),
     remember: (selection) => rememberSelection({ settings, selection }),
   })
 
-  container.register(LanguageModelToken, { useValue: model.model })
+  const answeringCard = () => models.cardFor(model.choice().ref)
 
-  const database = await openAtlasDatabase({ databaseUrl: config.databaseUrl })
+  const cardPinnedTo = (pinned: string | undefined) => {
+    if (pinned === undefined) return answeringCard()
+
+    const ref = parseRef(pinned)
+    return ref === undefined ? undefined : models.cardFor(ref)
+  }
+
+  container.register(LanguageModelToken, { useValue: model.model })
+  container.register(ModelCardSourceToken, {
+    useValue: () => models.cardFor(model.choice().ref),
+  })
+
+  const database = await openAtlasDatabase({
+    databaseUrl: launchValue(ESettingId.DatabaseUrl) ?? atlasDatabaseUrl(),
+  })
   container.register(PrismaClientToken, { useValue: database.prisma })
   registerDisposable({ container, close: database.close })
 
@@ -231,14 +379,33 @@ export async function composeAtlas(args: {
       home: homedir(),
       cwd: config.cwd,
     }),
-    modelIsUsable: modelIsReachable,
-    subagentModelId: config.subagentModelId,
+    reachableModelIds: knownRefs(models),
+    modelIsUsable: (modelId) => {
+      const ref = parseRef(modelId)
+      return ref !== undefined && models.cardFor(ref) !== undefined
+    },
+    subagentModelId: launchValue(ESettingId.SubagentModel),
   })
 
   const log = container.resolve(portToken(EventLogPort))
   const ids = container.resolve(portToken(IdPort))
   const threads = container.resolve(portToken(ThreadStorePort))
   const ledger = container.resolve(portToken(TurnLedgerPort))
+
+  container.register(HookMishapReporterToken, {
+    useValue: (mishap: HookMishap) =>
+      notify({ tone: ENoticeTone.Warn, text: `hook ${mishap.label} ${mishap.detail}` }),
+  })
+
+  const plugins = await assemblePlugins({
+    container,
+    cwd: config.cwd,
+    atlasHome: atlasDirectory(),
+  })
+  for (const refusal of [...plugins.refused, ...plugins.unreadable]) {
+    notify({ tone: ENoticeTone.Warn, text: `plugin refused: ${refusal.id ?? '?'} — ${'reason' in refusal ? refusal.reason : refusal.detail}` })
+  }
+
   const tools = container.resolve(portToken(ToolRegistry)).declarations()
   const modelPort = faultInjected(container.resolve(portToken(ModelPort)))
   const prompts = container.resolve(portToken(PromptRegistry))
@@ -247,6 +414,7 @@ export async function composeAtlas(args: {
       promptContextFor({
         agent: EPromptAgent.Main,
         provider: modelPort.identity,
+        model: promptModelOf(answeringCard()),
         projectDirectory,
       }),
     )
@@ -357,20 +525,23 @@ export async function composeAtlas(args: {
     compact: compactBeforeOverflow,
   }
 
+  const pinnedModel = ({ modelId }: { modelId: string }): ReturnType<ProviderAdapter['model']> => {
+    const ref = parseRef(modelId)
+    const card = ref === undefined ? undefined : models.cardFor(ref)
+    const adapter = ref === undefined ? undefined : models.adapterFor(ref.providerId)
+    if (card === undefined || adapter === undefined)
+      throw new Error(`no provider adapter can answer for ${modelId}`)
+
+    return adapter.model({ card, effort: () => model.choice().effort })
+  }
+
   const modelFor = pinnedModelSource({
-    subagentModelId: config.subagentModelId,
+    subagentModelId: launchValue(ESettingId.SubagentModel),
     inherited: () => modelPort,
     build: ({ modelId }) =>
       faultInjected(
         new AiSdkModelPort({
-          model: createAnthropicOauthModel({
-            credentials,
-            modelId,
-            providerOptions: anthropicThinkingOptions({
-              modelId,
-              effort: model.choice().effort,
-            }),
-          }),
+          model: pinnedModel({ modelId }),
           hooks: container.resolve(HookChainToken),
         }),
       ),
@@ -395,6 +566,9 @@ export async function composeAtlas(args: {
               prompts,
               agentType,
               provider: modelPort.identity,
+              model: promptModelOf(
+                cardPinnedTo(agentType.model ?? launchValue(ESettingId.SubagentModel)),
+              ),
               projectDirectory,
             }),
           launchDirectory: config.cwd,
@@ -413,9 +587,11 @@ export async function composeAtlas(args: {
     titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
     summarise,
     settings,
+    secrets: container.resolve(SecretsStoreToken),
     skills: skillRegistry.all(),
     skillRegistry,
     agentTypes,
+    pluginSurfaces: plugins.surfaces,
     files: new FileBrowser({ root: config.cwd }),
     openUrl: createUrlOpener(),
     credentials,
@@ -430,6 +606,7 @@ export async function composeAtlas(args: {
     shells,
     agents,
     model,
+    models,
     close: async () => {
       usage.dispose()
       await recordTeardownEndings().catch(() => undefined)

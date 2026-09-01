@@ -1,4 +1,4 @@
-import { EContextSlot, type AssistantPart, type CallId, type Event, type EventId, type EventOfType, type SaidImage } from '@dltech/atlas-core'
+import { EContextSlot, quotedShellCommand, type AssistantPart, type CallId, type Event, type EventId, type EventOfType, type SaidImage } from '@dltech/atlas-core'
 
 
 import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
@@ -8,6 +8,21 @@ import { toolRuns, type ToolRun } from './tool-runs'
 import type { TurnSpend } from '@dltech/atlas-harness'
 import { EAuthor, EEntryKind, toolsRanEntry, type TranscriptEntry } from './transcript-model'
 import { turnEndedEntry, turnsBySeq } from './turn-rows'
+
+const shellName = (shell: { command: string; description?: string | undefined }): string => {
+  const description = shell.description?.trim() ?? ''
+  return description === '' ? quotedShellCommand(shell.command) : `"${description}"`
+}
+
+const matchedLineCount = (count: number): string => (count === 1 ? '1 line' : `${count} lines`)
+
+const shellMatchedLine = (event: EventOfType<'background-shell-matched'>): string => {
+  const named = shellName(event)
+  const matched = `matched ${matchedLineCount(event.matchCount)} and is still running`
+  return event.watchDisarmed === true
+    ? `Background shell ${named} ${matched}, but stopped watching`
+    : `Background shell ${named} ${matched}`
+}
 
 type PartRun = { type: AssistantPart['type']; text: string }
 
@@ -158,6 +173,19 @@ export function durableEntries(args: {
           text: shellAwaitingInputLine(event),
           shellId: event.shellId,
           output: event.output,
+        },
+      ]
+    }
+
+    if (event.type === 'background-shell-matched') {
+      return [
+        {
+          kind: EEntryKind.BackgroundShellMatched,
+          author: EAuthor.Model,
+          key: event.id,
+          text: shellMatchedLine(event),
+          shellId: event.shellId,
+          output: event.lines,
         },
       ]
     }

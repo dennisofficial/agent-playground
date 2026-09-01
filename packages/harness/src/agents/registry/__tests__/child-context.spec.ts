@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { defaultPipeline, EMPTY_PROMPT, type ThreadId } from '@dltech/atlas-core'
+import {
+  defaultPipeline,
+  EImageTier,
+  EMPTY_PROMPT,
+  type ModelCard,
+  type ThreadId,
+} from '@dltech/atlas-core'
 
 import { HookChain } from '../../../hooks/registry'
 import { buildHarness } from '../../../loop/build-harness'
@@ -15,6 +21,14 @@ import { agentTypeNamed, openSupervisor, type OpenedSupervisor } from './fixture
 const PROJECT_DIRECTORY = '/w'
 
 const HAIKU_WINDOW = 200_000
+
+const HAIKU_CARD: ModelCard = {
+  ref: { providerId: 'anthropic', modelId: 'claude-haiku-4-5' },
+  label: 'haiku-4-5',
+  api: 'anthropic',
+  contextWindow: HAIKU_WINDOW,
+  imageTier: EImageTier.Standard,
+}
 
 const closers: (() => Promise<void>)[] = []
 
@@ -151,6 +165,7 @@ async function openRealChild(): Promise<RealChild> {
     databaseUrl: temp.databaseUrl,
     model: scriptedModel({ script: [{ text: 'four call sites' }] }),
     identity: { id: 'anthropic', modelId: 'claude-haiku-4-5' },
+    card: HAIKU_CARD,
   })
 
   const assembly = defaultPipeline({

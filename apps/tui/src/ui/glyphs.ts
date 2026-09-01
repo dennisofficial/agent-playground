@@ -13,6 +13,7 @@ export const glyph = {
   seen: '·',
   warning: '⚠',
   failed: '✗',
+  passed: '✓',
   image: '▣',
   copy: '⧉',
   retry: '↻',

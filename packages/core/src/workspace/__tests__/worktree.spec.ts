@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import type { Event } from '../../events/envelope'
 import { EWorktreeExit } from '../../events/body'
-import { activeWorktreeOf, projectDirectoryOf } from '../worktree'
+import { activeWorktreeAfter, activeWorktreeOf, projectDirectoryOf } from '../worktree'
 
 const LAUNCH = '/Users/dev/atlas'
 const TREE = `${LAUNCH}/.atlas/worktrees/eng-327-api-eslint`
@@ -43,6 +43,7 @@ describe('which worktree the session is in', () => {
       path: TREE,
       branch: 'dennis/eng-327',
       base: 'origin/main',
+      adopted: false,
     })
   })
 
@@ -94,5 +95,32 @@ describe('where the project is', () => {
     ]
 
     expect(projectDirectoryOf({ events, launchDirectory: LAUNCH })).toBe(LAUNCH)
+  })
+})
+
+describe('folding drafts that have not been written yet', () => {
+  it('keeps the worktree in hand when no draft moves it', () => {
+    const active = { path: TREE, branch: 'dennis/eng-327', base: 'origin/main', adopted: false }
+
+    expect(activeWorktreeAfter({ drafts: [{ type: 'user-said', text: 'hi' }], active })).toEqual(active)
+  })
+
+  it('takes the last entry in the batch, carrying whether it was adopted', () => {
+    const folded = activeWorktreeAfter({
+      drafts: [
+        { type: 'worktree-entered', path: TREE, branch: 'dennis/eng-327', base: 'origin/main' },
+        { type: 'worktree-entered', path: OTHER, branch: 'by-hand', adopted: true },
+      ],
+      active: undefined,
+    })
+
+    expect(folded).toEqual({ path: OTHER, branch: 'by-hand', base: undefined, adopted: true })
+  })
+
+  it('is in none again once a draft exits', () => {
+    const active = { path: TREE, branch: 'dennis/eng-327', base: 'origin/main', adopted: false }
+    const drafts = [{ type: 'worktree-exited' as const, path: TREE, action: EWorktreeExit.Keep }]
+
+    expect(activeWorktreeAfter({ drafts, active })).toBeUndefined()
   })
 })

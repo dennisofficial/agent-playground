@@ -25,10 +25,12 @@ export enum EToolClass {
  */
 export enum EGather {
   Read = 'read',
+  Recall = 'recall',
   Search = 'search',
   List = 'list',
   Run = 'run',
   Watch = 'watch',
+  Browse = 'browse',
 }
 
 /** Which renderer an opened call gets. One per shape of output Atlas actually produces. */
@@ -46,6 +48,10 @@ export enum EDetail {
   Reason = 'reason',
   Matches = 'matches',
   Paths = 'paths',
+  /** A page that was fetched — where it came from, and the opening of what came back. */
+  Page = 'page',
+  /** What a search turned up — a numbered list of titles over their urls. */
+  Results = 'results',
   Plan = 'plan',
   Tests = 'tests',
 }
@@ -59,10 +65,12 @@ export type Clause = {
 
 export const CLAUSES: Record<EGather, Clause> = {
   [EGather.Read]: { verb: 'read', noun: ['file', 'files'], unit: ['line', 'lines'] },
+  [EGather.Recall]: { verb: 'recalled', noun: ['memory', 'memories'], unit: null },
   [EGather.Search]: { verb: 'searched', noun: ['time', 'times'], unit: ['match', 'matches'] },
   [EGather.List]: { verb: 'listed', noun: ['directory', 'directories'], unit: null },
   [EGather.Run]: { verb: 'ran', noun: ['command', 'commands'], unit: null },
   [EGather.Watch]: { verb: 'checked', noun: ['shell', 'shells'], unit: null },
+  [EGather.Browse]: { verb: 'browsed', noun: ['page', 'pages'], unit: null },
 }
 
 export type Classification = {

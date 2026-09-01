@@ -16,6 +16,7 @@ export enum EEntryKind {
   HistoryCompacted = 'history-compacted',
   BackgroundShellEnded = 'background-shell-ended',
   BackgroundShellAwaitingInput = 'background-shell-awaiting-input',
+  BackgroundShellMatched = 'background-shell-matched',
   AgentEnded = 'agent-ended',
   TurnEnded = 'turn-ended',
 }
@@ -98,6 +99,15 @@ export type BackgroundShellEndedEntry = {
   failed: boolean
 }
 
+export type BackgroundShellMatchedEntry = {
+  kind: EEntryKind.BackgroundShellMatched
+  author: EAuthor.Model
+  key: string
+  text: string
+  shellId: string
+  output: string
+}
+
 export type AgentEndedEntry = {
   kind: EEntryKind.AgentEnded
   author: EAuthor.Model
@@ -127,6 +137,7 @@ export type TranscriptEntry =
   | HistoryCompactedEntry
   | BackgroundShellEndedEntry
   | BackgroundShellAwaitingInputEntry
+  | BackgroundShellMatchedEntry
   | AgentEndedEntry
   | TurnEndedEntry
 

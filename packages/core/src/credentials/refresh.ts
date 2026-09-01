@@ -17,10 +17,13 @@ export function refreshDecision(args: {
   secret: AccountSecret
   now: string
   skewMs?: number
+  revoked?: boolean
 }): ERefresh {
   if (args.secret.kind === EAuthKind.ApiKey) return ERefresh.Fresh
 
   const canRefresh = args.secret.tokens.refreshToken.length > 0
+  if (args.revoked === true) return canRefresh ? ERefresh.Due : ERefresh.Unrefreshable
+
   const nowMillis = millisOf(args.now)
   const expiresAtMillis = millisOf(args.secret.tokens.expiresAt)
 

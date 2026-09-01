@@ -24,6 +24,8 @@ import { TrackWorktreeHook } from '../../../hooks/track-worktree'
 import { EnterWorktreeTool } from '../enter-worktree'
 import { ExitWorktreeTool } from '../exit-worktree'
 
+const NEVER_ABORTED = new AbortController().signal
+
 const made: string[] = []
 
 const git = async (args: readonly string[], cwd: string): Promise<void> => {
@@ -93,7 +95,7 @@ describe('a worktree the whole way round', () => {
     if (!entering.ok) return
 
     const enteredDrafts =
-      (await hook.run({ call: call('enter_worktree'), result: entering })).drafts ?? []
+      (await hook.run({ call: call('enter_worktree'), result: entering , signal: NEVER_ABORTED })).drafts ?? []
     const afterEnter = log([{ type: 'user-said', text: 'go' }, ...enteredDrafts])
 
     const tree = join(root, '.atlas/worktrees/eng-327')
@@ -106,7 +108,7 @@ describe('a worktree the whole way round', () => {
     if (!leaving.ok) return
 
     const exitedDrafts =
-      (await hook.run({ call: call('exit_worktree'), result: leaving })).drafts ?? []
+      (await hook.run({ call: call('exit_worktree'), result: leaving , signal: NEVER_ABORTED })).drafts ?? []
     const afterExit = log([...enteredDrafts, ...exitedDrafts])
 
     expect(projectDirectoryOf({ events: afterExit, launchDirectory: root })).toBe(root)

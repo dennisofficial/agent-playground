@@ -65,7 +65,13 @@ export type EventBody =
   | { type: 'approval-answered'; callId: CallId; decision: EDecision; editedInput?: unknown }
   | { type: 'context-loaded'; slot: string; key: string; content: string; triggeredBy?: string | undefined }
   | { type: 'nudge'; text: string; lifetimeSteps: number }
-  | { type: 'worktree-entered'; path: string; branch: string; base: string }
+  | {
+      type: 'worktree-entered'
+      path: string
+      branch: string
+      base?: string | undefined
+      adopted?: boolean | undefined
+    }
   | { type: 'worktree-exited'; path: string; action: EWorktreeExit }
   | {
       type: 'background-shell-ended'
@@ -87,6 +93,16 @@ export type EventBody =
       output: string
       droppedCharacters: number
       remainingCharacters: number
+    }
+  | {
+      type: 'background-shell-matched'
+      shellId: string
+      command: string
+      description?: string | undefined
+      pattern: string
+      lines: string
+      matchCount: number
+      watchDisarmed?: boolean | undefined
     }
   | {
       type: 'agent-spawned'
@@ -121,6 +137,7 @@ export type EventBody =
       triage: ETriage
       judgment: EJudgment
       dimensions: readonly ERiskDimension[]
+      judgedDimension?: ERiskDimension | undefined
       signalIds: readonly string[]
       reason: string
       consulted: boolean

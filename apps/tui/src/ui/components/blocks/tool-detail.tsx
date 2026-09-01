@@ -30,6 +30,7 @@ import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggl
 import { CodeLines, codeLinesOf } from './tool-code-lines'
 import { ToolCreatedFile } from './tool-created-file'
 import { ToolImage } from './tool-image'
+import { ToolPage, ToolResults } from './tool-web'
 
 const DIFF_CONTEXT = 2
 
@@ -255,6 +256,12 @@ export function ToolDetail(props: {
   }
   if (props.detail === EDetail.Paths) {
     return <Paths call={props.call} inner={props.inner} cwd={props.cwd} expand={expand} />
+  }
+  if (props.detail === EDetail.Page) {
+    return <ToolPage call={props.call} inner={props.inner} expand={expand} />
+  }
+  if (props.detail === EDetail.Results) {
+    return <ToolResults call={props.call} inner={props.inner} expand={expand} />
   }
   if (props.detail === EDetail.Plan) return <Plan call={props.call} inner={props.inner} />
   if (props.detail === EDetail.Tests) {

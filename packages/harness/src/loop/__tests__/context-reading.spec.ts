@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { z } from 'zod'
 
-import { defaultPipeline, EMPTY_PROMPT, EToolEffect, type ToolDefinition } from '@dltech/atlas-core'
+import {
+  defaultPipeline,
+  EImageTier,
+  EMPTY_PROMPT,
+  EToolEffect,
+  type ModelCard,
+  type ToolDefinition,
+} from '@dltech/atlas-core'
 
 import { buildHarness, LoopTurnRunner, type AtlasHarness } from '..'
 import { scriptedModel, type ScriptedStep } from '../../model/testing/scripted-model'
@@ -13,6 +20,14 @@ import { createTempDatabase, type TempDatabase } from './temp-database'
 const PROJECT_DIRECTORY = '/w'
 
 const HAIKU_WINDOW = 200_000
+
+const HAIKU_CARD: ModelCard = {
+  ref: { providerId: 'anthropic', modelId: 'claude-haiku-4-5' },
+  label: 'haiku-4-5',
+  api: 'anthropic',
+  contextWindow: HAIKU_WINDOW,
+  imageTier: EImageTier.Standard,
+}
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -40,6 +55,7 @@ async function readingsOf({ script }: { script: readonly ScriptedStep[] }): Prom
     databaseUrl: temp.databaseUrl,
     model: scriptedModel({ script }),
     identity: { id: 'anthropic', modelId: 'claude-haiku-4-5' },
+    card: HAIKU_CARD,
   })
   opened.push({ harness, temp })
 
@@ -51,11 +67,7 @@ async function readingsOf({ script }: { script: readonly ScriptedStep[] }): Prom
     ids: harness.ids,
     assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
     tools: registry.declarations(),
-    dispatch: new HookedToolDispatcher({
-      approvals: EApprovalRouting.Operator,
-      registry,
-      hooks: new HookChain({}),
-    }),
+    dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
     onContext: (reading) => readings.push(reading),
   })
 

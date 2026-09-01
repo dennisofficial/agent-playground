@@ -19,7 +19,7 @@ import {
 import type { HookChain } from '../hooks/registry'
 import type { TurnLedgerPort } from '../ledger'
 import { PrismaTurnLedger } from '../ledger'
-import { AiSdkModelPort } from '../model/ai-sdk-model-port'
+import { AiSdkModelPort, type ModelCardSource } from '../model/ai-sdk-model-port'
 import { createRawTape } from '../model/raw-tape'
 import type { ToolDispatcher } from '../tools/dispatch'
 import { openAtlasDatabase, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
@@ -43,6 +43,7 @@ export type BuildHarnessArgs = {
   model: LanguageModel
   databaseUrl?: string | undefined
   identity?: ProviderIdentity | undefined
+  card?: ModelCardSource | undefined
   assembly?: AssemblyPipeline | undefined
   prompt?: CompiledPrompt | undefined
   tools?: readonly ToolDeclaration[] | undefined
@@ -69,6 +70,7 @@ export async function buildHarness(args: BuildHarnessArgs): Promise<AtlasHarness
   const model = new AiSdkModelPort({
     model: args.model,
     ...(args.identity === undefined ? {} : { identity: args.identity }),
+    ...(args.card === undefined ? {} : { card: args.card }),
     hooks: args.hooks,
     tape,
   })

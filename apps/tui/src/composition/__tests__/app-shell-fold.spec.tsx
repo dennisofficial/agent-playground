@@ -14,6 +14,8 @@ const WIDE = { width: 150, height: 40 }
 
 const LONG_AGO = '2020-01-01T00:00:00.000Z'
 
+const JUST_NOW = new Date(Date.now() - 12_000).toISOString()
+
 const shellOf = (over: {
   shellId: string
   description: string
@@ -27,7 +29,7 @@ const shellOf = (over: {
   description: over.description,
   status: over.status ?? EShellStatus.Exited,
   pid: 4242,
-  startedAt: LONG_AGO,
+  startedAt: over.status === EShellStatus.Running ? JUST_NOW : LONG_AGO,
   lastOutputAt: LONG_AGO,
   totalCharacters: 24,
   awaitingInput: over.awaitingInput ?? false,

@@ -7,20 +7,23 @@ import {
   type AgentsPickerState,
 } from '../agents-picker-model'
 import { MARK_OF, NAME_INK_OF, STATE_INK_OF } from '../subagent-ink'
-import { fitHints, hintSpans, type Hint } from '../hint-layout'
+import { type Hint } from '../hint-layout'
 import { type PressHandlers, usePress } from '../hooks/use-press'
-import { glyph, theme } from '../theme'
+import { theme } from '../theme'
+import {
+  drawerCells,
+  DrawerHeading,
+  DrawerHints,
+  DrawerLine,
+  DRAWER_INSET,
+  SideDrawer,
+} from './drawer'
 import { clipSpans, spanCells } from './sidebar/cells'
 import { Spans, type Span } from './spans'
 
-const PAD = 2
+export const AGENTS_PICKER_INSET = DRAWER_INSET
 
-const EDGE = 1
-
-export const AGENTS_PICKER_INSET = EDGE + PAD * 2
-
-export const agentsPickerCells = (args: { width: number }): number =>
-  Math.max(0, args.width - AGENTS_PICKER_INSET)
+export const agentsPickerCells = (args: { width: number }): number => drawerCells(args)
 
 export const AGENTS_PICKER_HEADING = 'Sub-agents'
 
@@ -30,36 +33,17 @@ const HINTS: readonly Hint[] = [
   { key: 'esc', label: 'close' },
 ]
 
-function Line(props: {
-  children: React.ReactNode
-  press?: PressHandlers
-  band?: string
-}): React.ReactNode {
-  return (
-    <box
-      height={1}
-      flexShrink={0}
-      paddingLeft={PAD}
-      paddingRight={PAD}
-      {...(props.band === undefined ? {} : { backgroundColor: props.band })}
-      {...(props.press ?? {})}
-    >
-      {props.children}
-    </box>
-  )
-}
-
 function TextLine(props: {
   spans: readonly Span[]
   cells: number
   press?: PressHandlers
 }): React.ReactNode {
   return (
-    <Line {...(props.press === undefined ? {} : { press: props.press })}>
+    <DrawerLine {...(props.press === undefined ? {} : { press: props.press })}>
       <text>
         <Spans spans={clipSpans({ spans: props.spans, cells: props.cells })} />
       </text>
-    </Line>
+    </DrawerLine>
   )
 }
 
@@ -83,7 +67,7 @@ function AgentLine(props: {
   const gap = Math.max(1, props.cells - spanCells([mark, label, right]))
 
   return (
-    <Line {...band} press={props.press}>
+    <DrawerLine {...band} press={props.press}>
       <text>
         <Spans
           spans={clipSpans({
@@ -92,7 +76,7 @@ function AgentLine(props: {
           })}
         />
       </text>
-    </Line>
+    </DrawerLine>
   )
 }
 
@@ -111,46 +95,29 @@ export function AgentsPicker(props: {
   })
 
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
+    <SideDrawer
       width={props.width}
-      backgroundColor={theme.overlayBg}
-      border={['left']}
-      borderColor={theme.rule}
-      paddingTop={1}
-      paddingBottom={1}
-      {...(props.overlay
-        ? { position: 'absolute' as const, top: 0, bottom: 0, right: 0, zIndex: 20 }
-        : {})}
+      overlay={props.overlay === true}
+      footer={<DrawerHints hints={HINTS} cells={cells} onDismiss={props.onDismiss} />}
     >
-      <box flexDirection="column" flexGrow={1} flexShrink={1} gap={1}>
-        <box flexDirection="column" flexShrink={0}>
-          <Line>
-            <text fg={theme.meta}>{AGENTS_PICKER_HEADING.toUpperCase()}</text>
-          </Line>
-          {start === 0 ? null : (
-            <TextLine spans={[{ text: `  ${start} more above`, fg: theme.hint }]} cells={cells} />
-          )}
-          {visible.map((row, offset) => (
-            <AgentLine
-              key={row.agentId}
-              row={row}
-              cells={cells}
-              selected={start + offset === props.state.index}
-              press={press(() => props.onPick(row))}
-            />
-          ))}
-          {below === 0 ? null : (
-            <TextLine spans={[{ text: `  ${below} more below`, fg: theme.hint }]} cells={cells} />
-          )}
-        </box>
+      <box flexDirection="column" flexShrink={0}>
+        <DrawerHeading label={AGENTS_PICKER_HEADING} />
+        {start === 0 ? null : (
+          <TextLine spans={[{ text: `  ${start} more above`, fg: theme.hint }]} cells={cells} />
+        )}
+        {visible.map((row, offset) => (
+          <AgentLine
+            key={row.agentId}
+            row={row}
+            cells={cells}
+            selected={start + offset === props.state.index}
+            press={press(() => props.onPick(row))}
+          />
+        ))}
+        {below === 0 ? null : (
+          <TextLine spans={[{ text: `  ${below} more below`, fg: theme.hint }]} cells={cells} />
+        )}
       </box>
-      <TextLine
-        spans={hintSpans({ hints: fitHints({ hints: HINTS, cells }), keyColour: theme.meta })}
-        cells={cells}
-        press={press(props.onDismiss)}
-      />
-    </box>
+    </SideDrawer>
   )
 }

@@ -2,11 +2,14 @@ import { getErrorMessage } from '@ai-sdk/provider'
 import { stepCountIs, streamText, type LanguageModel } from 'ai'
 
 import {
+  DEFAULT_IMAGE_TIER,
   ModelPort,
   type Assembled,
   type Chunk,
   type ChunkFilter,
+  type ModelCard,
   type ModelStepResult,
+  type ModelTraits,
   type ProviderIdentity,
   type ProviderPrompt,
   type ToolDeclaration,
@@ -92,9 +95,15 @@ export async function runModelStream(args: {
   return accumulator.finish()
 }
 
+export type ModelCardSource = ModelCard | (() => ModelCard | undefined)
+
+const cardOf = (source: ModelCardSource | undefined): ModelCard | undefined =>
+  typeof source === 'function' ? source() : source
+
 export type AiSdkModelPortArgs = {
   model: LanguageModel
   identity?: ProviderIdentity | undefined
+  card?: ModelCardSource | undefined
   hooks?: HookChain | undefined
   tape?: RawTape | undefined
 }
@@ -102,6 +111,7 @@ export type AiSdkModelPortArgs = {
 export class AiSdkModelPort extends ModelPort {
   private readonly model: LanguageModel
   private readonly declaredIdentity: ProviderIdentity | undefined
+  private readonly card: ModelCardSource | undefined
   private readonly hooks: HookChain | undefined
   private readonly tape: RawTape | undefined
 
@@ -109,12 +119,22 @@ export class AiSdkModelPort extends ModelPort {
     super()
     this.model = args.model
     this.declaredIdentity = args.identity
+    this.card = args.card
     this.hooks = args.hooks
     this.tape = args.tape
   }
 
   get identity(): ProviderIdentity {
     return this.declaredIdentity ?? providerIdentityOf(this.model)
+  }
+
+  override traits(): ModelTraits {
+    const card = cardOf(this.card)
+
+    return {
+      imageTier: card?.imageTier ?? DEFAULT_IMAGE_TIER,
+      ...(card === undefined ? {} : { contextWindow: card.contextWindow }),
+    }
   }
 
   async step({

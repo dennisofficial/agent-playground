@@ -6,9 +6,12 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 
 import type { ToolOutcome } from '@dltech/atlas-core'
 
+import { HookChain } from '../../../hooks/registry'
 import { BunShellRegistry } from '../../../shells/shell-registry'
 import { SystemClock } from '../../../store'
 import { BashTool } from '../bash'
+
+const noHooks = () => new HookChain({})
 
 let root = ''
 
@@ -17,7 +20,7 @@ beforeAll(async () => {
 })
 
 const submit = (input: unknown): Promise<ToolOutcome> =>
-  new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
+  new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks)).invoke({
     input,
     signal: new AbortController().signal,
     idempotencyKey: 'bash-1',
@@ -141,7 +144,7 @@ describe('BashTool', () => {
 
   it('abandons a command, and says who stopped it, once the turn is interrupted', async () => {
     const controller = new AbortController()
-    const outcome = new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
+    const outcome = new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks)).invoke({
       input: { command: 'sleep 30', description: 'Idle for a while' },
       signal: controller.signal,
       idempotencyKey: 'bash-2',
@@ -186,7 +189,7 @@ describe('choosing where the command runs', () => {
   it('starts where it is told rather than at the project root', async () => {
     const elsewhere = await mkdtemp(join(tmpdir(), 'atlas-elsewhere-'))
 
-    const outcome = await new BashTool(new BunShellRegistry(root, new SystemClock())).invoke({
+    const outcome = await new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks)).invoke({
       input: { command: 'pwd', description: 'Print the working directory' },
       signal: new AbortController().signal,
       idempotencyKey: 'bash-elsewhere',
@@ -219,5 +222,96 @@ describe('choosing where the command runs', () => {
     const outcome = await invoke({ command: 'cd nested && exit 3' })
 
     expect(outputOf(outcome).exitCode).toBe(3)
+  })
+})
+
+describe('refusing to idle', () => {
+  it('names both ways out of a poll loop that has no end', async () => {
+    const outcome = await invoke({ command: 'while true; do gh pr checks 272; sleep 30; done' })
+
+    expect(outcome.ok).toBe(false)
+    const reason = !outcome.ok ? outcome.reason : ''
+    expect(reason).toContain('this loop has no end')
+    expect(reason).toContain('runInBackground')
+    expect(reason).toContain('gh run watch --exit-status')
+    expect(reason).not.toContain('end the turn and be woken')
+  })
+
+  it('counts the trips a bounded poll loop would make before it names them', async () => {
+    const outcome = await invoke({
+      command: 'for i in $(seq 1 60); do gh api runs; sleep 20; done',
+      timeoutMs: 600_000,
+    })
+
+    expect(outcome.ok).toBe(false)
+    const reason = !outcome.ok ? outcome.reason : ''
+    expect(reason).toContain('600 seconds asleep across 60 iterations')
+    expect(reason).toContain('runInBackground')
+    expect(reason).toContain('gh pr checks --watch')
+  })
+
+  it('still refuses a plain long sleep, and still points somewhere', async () => {
+    const outcome = await invoke({ command: 'sleep 90' })
+
+    expect(outcome.ok).toBe(false)
+    expect(!outcome.ok && outcome.reason).toContain('90 seconds asleep')
+  })
+})
+
+describe('watching a background shell', () => {
+  it('refuses a watch on a foreground command, and says what it needs', async () => {
+    const outcome = await invoke({ command: 'echo hi', watch: 'ERROR' })
+
+    expect(outcome.ok).toBe(false)
+    expect(!outcome.ok && outcome.reason).toContain('runInBackground')
+  })
+
+  it('refuses a pattern that is not a regular expression, before anything starts', async () => {
+    const outcome = await invoke({
+      command: 'echo hi',
+      runInBackground: true,
+      watch: '(unclosed',
+    })
+
+    expect(outcome.ok).toBe(false)
+    expect(!outcome.ok && outcome.reason).toContain('not a regular expression')
+  })
+
+  it('starts a watched shell and says what the watch will and will not do', async () => {
+    const outcome = await invoke({
+      command: 'sleep 30',
+      runInBackground: true,
+      watch: 'ERROR|FAILED',
+    })
+
+    expect(outputOf(outcome)).toMatchObject({ watch: 'ERROR|FAILED' })
+    expect(outcome.ok && outcome.modelText).toContain('Lines matching ERROR|FAILED')
+    expect(outcome.ok && outcome.modelText).toContain('neither consumes nor is consumed')
+  })
+})
+
+describe('giving a background shell a ceiling', () => {
+  it('takes timeoutMs rather than refusing it', async () => {
+    const outcome = await invoke({ command: 'sleep 30', runInBackground: true, timeoutMs: 5_000 })
+
+    expect(outputOf(outcome)).toMatchObject({ timeoutMs: 5_000 })
+    expect(outcome.ok && outcome.modelText).toContain('killed if it outlives 5000 ms')
+  })
+
+  it('says a background shell outlives an interrupt, so nothing needs detaching', async () => {
+    const outcome = await invoke({ command: 'sleep 30', runInBackground: true })
+
+    expect(outcome.ok && outcome.modelText).toContain('outlives an interrupt')
+    expect(outcome.ok && outcome.modelText).toContain('nohup')
+  })
+})
+
+describe('what the tool tells the model about watching', () => {
+  it('warns that a watch on the success marker alone is silent through a crash', () => {
+    const { description } = new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks))
+
+    expect(description).toContain('silence from a watch is indistinguishable from progress')
+    expect(description).toContain('widen the alternation rather than narrow it')
+    expect(description).toContain('Traceback')
   })
 })

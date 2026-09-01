@@ -48,3 +48,24 @@ export async function probeWorkspace({ cwd }: { cwd: string }): Promise<Workspac
       : { commonDir: await canonical(commonDir) }),
   })
 }
+
+const REMOTES = ['git', 'remote', '-v']
+
+export async function remotesOf({ cwd }: { cwd: string }): Promise<readonly string[]> {
+  try {
+    const git = Bun.spawn(REMOTES, { cwd, stdout: 'pipe', stderr: 'ignore', stdin: 'ignore' })
+    const [output, status] = await Promise.all([new Response(git.stdout).text(), git.exited])
+    if (status !== 0) return []
+
+    const named = new Map<string, string>()
+    for (const line of output.split('\n')) {
+      const [name, url] = line.trim().split(/\s+/)
+      if (name === undefined || url === undefined) continue
+      if (!named.has(name)) named.set(name, url)
+    }
+
+    return [...named].map(([name, url]) => `${name} → ${url}`)
+  } catch {
+    return []
+  }
+}

@@ -11,11 +11,12 @@ import { createCliRenderer } from '@opentui/core'
 import {
   collapseUnchanged,
   EEffort,
-  MODEL_CATALOG,
   parseUnifiedDiff,
   sideBySideRows,
   type DiffFile,
+  type ModelRef,
 } from '@dltech/atlas-core'
+import { cardsForProvider, withoutDatedDuplicates } from '@dltech/atlas-harness'
 import { createRoot, useKeyboard, useTerminalDimensions } from '@opentui/react'
 import React, { useState } from 'react'
 
@@ -26,7 +27,12 @@ import { Sidebar } from '../src/ui/components/sidebar'
 import { Switcher } from '../src/ui/components/switcher'
 import { IDLE_TURN } from '../src/ui/components/transcript'
 import { registerGrammars } from '../src/ui/markdown/grammars/index'
-import { openSwitcher } from '../src/ui/switcher-model'
+import {
+  modelCount,
+  openSwitcher,
+  switcherRows,
+  type SwitcherProvider,
+} from '../src/ui/switcher-model'
 import { theme, SIDEBAR_WIDTH } from '../src/ui/theme'
 import { FED_SIDEBAR, PATCH } from './round2-data'
 
@@ -35,6 +41,14 @@ const PAGES = ['sidebar', 'inline diff', 'side-by-side', 'switcher'] as const
 type Page = (typeof PAGES)[number]
 
 const CONTEXT = 1
+
+const ACTIVE_MODEL: ModelRef = { providerId: 'anthropic', modelId: 'claude-haiku-4-5' }
+
+const KEYED = new Set(['anthropic'])
+
+const SWITCHER_PROVIDERS: readonly SwitcherProvider[] = [
+  { id: 'anthropic', label: 'Claude Plan', cards: withoutDatedDuplicates(cardsForProvider('anthropic')) },
+]
 
 const collapsedOf = (file: DiffFile): DiffFile => ({
   ...file,
@@ -63,7 +77,8 @@ function Page(props: { page: Page; width: number }): React.ReactNode {
         model={FED_SIDEBAR}
         turn={IDLE_TURN}
         now={0}
-        cwd={process.cwd()}
+        root={process.cwd()}
+        worktree={null}
       />
     )
   }
@@ -91,15 +106,17 @@ function Page(props: { page: Page; width: number }): React.ReactNode {
   return (
     <Switcher
       width={Math.min(56, props.width)}
-      models={MODEL_CATALOG}
+      rows={switcherRows({ providers: SWITCHER_PROVIDERS, availability: KEYED })}
+      total={modelCount(SWITCHER_PROVIDERS)}
       state={openSwitcher({
-        models: MODEL_CATALOG,
-        activeModelId: 'claude-haiku-4-5',
+        providers: SWITCHER_PROVIDERS,
+        active: ACTIVE_MODEL,
         effort: EEffort.Medium,
+        availability: KEYED,
       })}
-      activeModelId="claude-haiku-4-5"
-      availability={(id) => id.startsWith('claude')}
+      active={ACTIVE_MODEL}
       onPick={() => undefined}
+      onSelect={() => undefined}
       onDismiss={() => undefined}
     />
   )

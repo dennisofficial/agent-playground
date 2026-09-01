@@ -23,3 +23,27 @@ export function tailOfPath(args: { path: string; cells: number }): string {
   const boundary = kept.indexOf('/')
   return boundary === -1 ? `${ELLIPSIS}${kept}` : `${ELLIPSIS}${kept.slice(boundary)}`
 }
+
+const shortenSegment = (segment: string): string => {
+  const glyphs = [...segment]
+  const dotted = glyphs[0] === '.'
+  const kept = glyphs.slice(0, dotted ? 2 : 1).join('')
+  return kept.length < segment.length ? kept : segment
+}
+
+export function compactPath(args: { path: string; cells: number }): string {
+  const segments = args.path.split('/')
+  if (segments.length < 3) return tailOfPath(args)
+
+  const compacted = [...segments]
+  const last = compacted.length - 1
+
+  for (let index = 0; index < last; index += 1) {
+    if ([...compacted.join('/')].length <= args.cells) return compacted.join('/')
+    const segment = segments[index]
+    if (segment !== undefined) compacted[index] = shortenSegment(segment)
+  }
+
+  const shortest = compacted.join('/')
+  return [...shortest].length <= args.cells ? shortest : tailOfPath({ ...args, path: shortest })
+}

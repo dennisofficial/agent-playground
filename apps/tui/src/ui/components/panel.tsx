@@ -129,10 +129,9 @@ function Band(props: { rail?: string; fill: string; children: ReactNode }): Reac
 }
 
 /**
- * The one shape the app is built from. `fill` decides which of the two readings it takes: filled
- * and capped for something bounded, a bare rail for prose that runs on.
- */
-/**
+ * The shape the transcript and the composer stack are built from; a surface that is positioned over
+ * them rather than flowing with them is a drawer instead.
+ *
  * The rail is the operator's mark — the draft and the messages they sent carry one, and nothing
  * else in the app does. `fill` is separate: it raises a slab out of the transcript, capped at both
  * ends by a half row.

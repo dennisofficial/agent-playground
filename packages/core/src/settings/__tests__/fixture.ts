@@ -42,3 +42,14 @@ export const range: SettingDefinition = {
 }
 
 export const DEMO_SETTINGS: readonly SettingDefinition[] = [toggle, choice, range]
+
+export const secret: SettingDefinition = {
+  id: 'demo.secret',
+  page: ESettingPage.General,
+  group: 'Demo',
+  label: 'Demo key',
+  description: 'A key.',
+  kind: ESettingKind.Secret,
+  fallback: '',
+  masked: true,
+}

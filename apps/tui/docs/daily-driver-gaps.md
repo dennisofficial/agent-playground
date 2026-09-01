@@ -3,8 +3,11 @@
 An audit of `apps/tui` + `packages/{core,harness}` against "could I use this instead of Claude Code
 today". Ordered by what stops you, not by size.
 
-Re-verified against the working tree, typecheck and tests green across all three packages. What the
-code has closed since the first pass is listed at the bottom.
+Re-verified against the working tree on 2026-09-01 (second pass). What the code has closed since the
+first pass is listed at the bottom. One caveat for this pass: the tree carries ~350 uncommitted
+files spanning several in-flight slices (the web tools, most of the prompt prose, the provider
+adapters, an effort-ladder rewrite, the approval machinery and the usage meter), so "closed" here
+means "present and wired in the working tree", not necessarily committed.
 
 ## What already works
 
@@ -19,22 +22,19 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
 
 ## P0 — blocks daily driving
 
-1. **No transient-error *automatic* retry.** `model/ai-sdk-model-port.ts:79` turns any stream error
-   into `ModelStreamError` and `loop/model-step.ts:31` ends the turn `Failed`. Manual recovery is
-   there — `ctrl+r` on the error block re-runs the turn with nothing appended, and the resume block
-   covers the interrupt case — but a 429, a 529 overloaded, or a dropped socket still needs a human to
-   press it. No backoff, no rate-limit awareness. The only backoff in the codebase is
-   `store/retry.ts`, for SQLite write conflicts.
+Nothing. The transient-error retry landed (see "Closed").
 
 ## P1 — high friction
 
-6. **The system prompt is four fragments.** The registry landed — `harness/src/prompt/fragments/`,
-   resolved through the container — and it is the right shape. The prose is still identity + project
-   directory + absolute paths + compaction notice. No date, no platform, no shell, no git
-   branch/status, no directory listing, no tone or verbosity rules, no tool-selection guidance
-   ("prefer grep over bash grep", "read before edit", "never commit unless asked"). The plumbing
-   problem is solved; the content problem is untouched, and it is still the cheapest quality win
-   available. `.scratch/prompt-registry/issues/02-the-prose.md` is the open issue.
+6. **The prompt prose landed; what remains is seeing it.** The registry is no longer four fragments
+   but fifteen — `identity`, `workflow`, `scope`, `environment`, `files`, `tools`, `shells`, `plan`,
+   `agents`, `safety`, `output`, `skills`, `memory`, `web` — covering the date/platform/git context,
+   tone rules and tool-selection guidance the first pass called the cheapest quality win. Most of it
+   is uncommitted in the tree. The open prompt-registry issues are `.scratch/prompt-registry/issues/`
+   03 (the two composition roots can still disagree about the compiled prompt — `compose.ts` passes
+   one, `build-harness.ts` does not) and 04 (a `/prompt` command to see what the model was told),
+   which is `ready-for-human`. Issues 01 and 02 are still marked `ready-for-agent` but the code they
+   describe exists — the statuses need walking, not the work.
 
 8. **Sub-agents are built, bar one deliberate omission.** The feature shipped end to end — four
    agent types, five tools, a supervisor, a sidebar roster, a child transcript reachable by `ctrl+g`
@@ -47,29 +47,39 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
    is the model's job, and a human who wants a sub-agent can ask for one in a sentence. `spawn`,
    `resume` and `types` stay model-only; `list`, `say` and `stop` are the three the TUI needs.
 
-9. **No web access.** No `web_fetch`, no `web_search`. Any doc lookup has to go through `bash curl`,
-   which is ungated by design — see "Accepted, not gaps".
+9. **Web access landed.** `WebFetchTool` and `WebSearchTool` are registered
+   (`register-tools.ts:47-48`) and return the page rather than a small model's summary of it —
+   `.scratch/web-tools/spec.md` records the design and why. The slice is uncommitted and ships
+   without `__tests__` of its own, so it is verified by use rather than by suite.
 
-10. **Cost across a session is invisible.** The ledger records four token tiers per turn and
-    `MODEL_CATALOG` carries prices; `ui/switcher-model.ts:83` renders a per-model price, and one
-    conversation now shows what its sub-agents cost as a line at the foot of the transcript
+10. **Cost across a session is invisible.** The ledger records four token tiers per turn, the
+    generated catalogue carries prices, `ui/switcher-model.ts` renders a per-model price, and one
+    conversation shows what its sub-agents cost as a line at the foot of the transcript
     (`readThreadSpend` over `forThreadTree`, tri-state so a failed read says so rather than
     reporting zero). What is still missing is the level above: no `/cost`, no total across
-    conversations, no spend-to-date. The footer shows context pressure only.
+    conversations, no spend-to-date. The footer shows context pressure only. (The uncommitted usage
+    slice — `core/usage/`, `harness/usage/`, an `AnthropicUsageClient` wired through `compose.ts`
+    into the footer — is the *plan-window* meter, what a subscription has left, not a spend total.
+    It answers a different question and does not close this.)
 
 11. **User-authored commands and hooks.** Skills load from embedded + `~/.atlas/skills` + project,
     but there is no `.atlas/commands/*.md` equivalent, and hooks are compiled-in classes only — no
     settings-driven `PreToolUse` / `PostToolUse` shellouts.
 
-12. **No headless mode.** `resolveConfig` understands `--model`, `--new`/`-n` and four env vars.
-    No `-p/--print`, no stdin piping, no `--resume <id>`, no JSON output, so Atlas cannot be
-    scripted or used in CI.
+12. **No headless mode.** `resolveConfig` understands `--model`, `--cwd`, `--resume`, `--continue`
+    and `--new` — and nothing else, now that every configured knob is a setting reached through the
+    layered file and its declared environment variable. No `-p/--print`, no stdin piping, no JSON
+    output, so Atlas cannot be scripted or used in CI.
 
-13. **Only Anthropic is reachable.** `modelIsReachable` hard-codes `EModelVendor.Anthropic`;
-    `gpt-5-codex` sits in the catalog purely to render as unavailable. The credential side is now
-    ready for the others — `PROVIDER_SPECS` declares OpenAI's device-code flow and OpenRouter's API
-    key, and an api-key account already reaches Anthropic through `x-api-key` — but no second
-    `LanguageModelV4` provider is wired, so the model-agnostic claim is still one adapter short.
+13. **Three providers are wired; reachability is now a credential question, not a code question.**
+    The uncommitted `harness/src/providers/` slice lands a `ProviderAdapter` abstraction with
+    `AnthropicAdapter`, `OpenAiAdapter` and `OpenRouterAdapter` all constructed in `compose.ts:329-331`,
+    backed by a generated catalogue (`models/generated-catalogue.ts` + `models/generated/*.json`)
+    covering Anthropic, OpenAI, OpenRouter and inference rows. `modelIsReachable` and its Anthropic
+    hard-code are gone: `providers.ts:66` marks a provider reachable when an account holds a key for
+    it, and the switcher dims what you cannot actually call. What remains is operational, not
+    architectural — signing into a second provider and driving it daily. The model-agnostic claim is
+    no longer one adapter short; it is one login short.
 
 14. **Images work.** Closed. `core/message` carries an `ImagePart`, `read` returns a picture for an
     image file, ctrl+v pulls a screenshot off the macOS clipboard, and `imagesInContext` stops old
@@ -81,24 +91,27 @@ mirroring from `task_write`, and an account vault that refreshes its own logins.
 
 ## Accepted, not gaps
 
-**Filesystem guarding and tool approvals are out of scope for the daily driver.** The working tree
-deletes `WorkspaceBoundaryHook` (`hooks/boundary.ts`, its spec, and
-`tools/__tests__/containment.spec.ts`), leaving `ReadBeforeWriteHook` as the only `BeforeToolHook`,
-which checks staleness rather than location. No hook returns `EBeforeToolDecision.Ask`, nothing
-appends `approval-answered`, and `bash` inherits `TAKES_NO_PATHS`, so every command runs unprompted.
-That is the intended posture: a single trusted operator on a local machine, where a confirmation
-prompt costs more than it buys. The machinery stays where it is —
-`dispatch.ts:94` still emits `approval-requested` and `run-turn.ts:188` still pauses on it — so a
-future sandboxed or multi-tenant deployment can supply a hook and an overlay without reopening the
-loop. Until then, no classifier, no permission lists, no approval UI.
+**The approval posture flipped since the first audit — this section now records what changed rather
+than what was declined.** The first pass said "no classifier, no permission lists, no approval UI,
+and that is intended". The tree now carries exactly that machinery, committed over the last several
+passes: a seven-probe classifier in `core/policy/classifier` (irreversibility, reach, contention,
+shared history, exposure, provenance, blast radius — each raising signals keyed to an exact subject
+so a grant clears the one thing it names), a shell reader that parses a command into segments and
+resolved paths instead of matching substrings, and an approval flow whose answered question settles
+the call rather than re-asking it. The TUI renders the request through `use-approval.ts` and an
+overlay in `app.tsx`. The design intent lives in `.scratch/auto-classifier/spec.md` — a nudge before
+irreversible or cross-agent damage, not a permission wall — and its eleven issues are all still
+marked `ready-for-agent` despite the code existing, so like the prompt-registry they need their
+statuses walked.
 
-One decision is already taken for whenever that changes: **a sub-agent's `Ask` routes to the parent
-agent, never to a human overlay.** A child is managed by the main agent, so the request is something
-the parent answers with a tool call of its own; do not extend the human overlay to render it. The
-honest half of that is already in place — a child whose turn pauses ends as `EAgentStatus.Blocked`
-and the parent is told it is blocked on an approval it cannot answer — but the ending carries no
-`callId`, and `agent_resume` on a blocked child re-enters the turn and pauses again. Answering the
-approval, rather than re-entering, is the approval effort's job.
+The routing decision from the first audit is now live code: **a sub-agent's `Ask` never reaches the
+human overlay.** `tools/approval-routing.ts` gives a child exactly two routings — `Operator` when a
+human is attached, `None` otherwise — and the `None` reason tells the child to report what it wanted
+and let the main thread propose it. Whether the parent can *answer* a blocked child's approval
+(rather than the child declining up front) is the piece the spec leaves to the approval effort.
+
+`ReadBeforeWriteHook` remains the only other `BeforeToolHook`; `WorkspaceBoundaryHook` stays
+deleted, and nothing reintroduces location-based containment.
 
 ## P2 — parity items, deliberately deferred
 
@@ -108,6 +121,26 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 `docs/architecture.md` names most of these; none needs a decision reopened.
 
 ## Closed since the first audit
+
+- **Transient errors retry automatically.** (Was P0 1.) `loop/retrying-step.ts` wraps the model
+  step and is the path `run-turn.ts` takes: `modelFailureOf` classifies the cause out of
+  `model/failure.ts` — status, and seconds out of a `retry-after` header — `planRetry` in
+  `core/models/retry.ts` decides under `DEFAULT_RETRY_POLICY`, and the sleep is abortable so
+  interrupting a waiting turn does not hang. The operator sees the wait as a shimmering countdown in
+  the working line (`ui/retry-countdown.ts`, `working-line.tsx`) naming the attempt, the ceiling and
+  the reason. `model/faulting-model.ts` is a dev-only decorator driven by `ATLAS_FAULT_*` env vars
+  that throws exactly what a live 429/529 would, so the retry path is exercisable without an outage.
+  A failure that is not transient — including a bug in our own code reaching the same catch — is not
+  retried: `modelFailureOf` answers null and the turn fails as before, with `ctrl+r` still the
+  manual recovery.
+
+- **Web access.** (Was P1 9.) See the P1 entry; the tools are registered and the spec is landed.
+
+- **The prompt prose.** (Was P1 6.) See the P1 entry; fifteen fragments, mostly uncommitted, with
+  issues 03/04 still open.
+
+- **A second and third provider.** (Was P1 13.) See the P1 entry; adapters and generated catalogue
+  are in the tree, reachability is keyed on credentials.
 
 - **Sub-agents run.** A child is a real thread Atlas spawned — its own row carrying
   `spawnerThreadId` and `agentType`, its log and brief written in one transaction by
@@ -186,7 +219,8 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
 
 ## Health
 
-- `bun run typecheck` is clean across core, harness and tui.
+- `bun run typecheck` was clean across core, harness and tui at the first audit; it has not been
+  re-run against the current uncommitted tree (see the last item in this section).
 - **The `bash` sleep guard refused commands it should have allowed.** `waitsBySleeping`
   (`core/shells/idling.ts`, added in `2579aa3f`) ran before `timeoutMs` was known, so a command that
   could not outlive its explicit 300 ms ceiling was refused for "spending 32 seconds asleep" — which
@@ -237,17 +271,31 @@ transcript search, and `core/budget/resolveBudget` as the auto-compaction contro
   `app-fixture.frame()` keeps its timed settle deliberately — swapping it cost three failures in
   `app-resume` and `app-undo`, and the comment there now says why.
 - **`act()` warnings** throughout the composition specs.
-- Two files over the 300-line rule: `composition/use-conversation.ts` (551) and
-  `composition/app.tsx` (453).
-- 114 uncommitted files, including an in-flight tool-rendering rewrite (`store/tool-groups.ts` →
-  `store/tool-runs.ts` + `store/tools/`, `tool-group-block.tsx` → `tool-run-block.tsx`) and an
-  unstaged usage-metering slice (`core/usage/`, `harness/usage/`, `account-usage.port.ts`). The
-  boundary-hook and `system-preamble.ts` deletions in there are intended — see "Accepted, not gaps".
+- `composition/use-conversation.ts` is back under the line at 316, but `composition/app.tsx` grew to
+  943 — it is now the worst offender against the 300-line rule by a factor of three, and the
+  approval overlay wiring landed in it.
+- 346 uncommitted files (204 modified, 135 new, 7 deleted) spanning at least six slices: the web
+  tools, the prompt-prose fragments, the provider adapters + generated catalogue, an effort-ladder
+  rewrite (`models/effort.ts` → `effort-ladder.ts`, `anthropic-thinking.ts` → per-provider
+  `*-effort.ts`), the approval machinery, and the usage meter. The slices look coherent, but the
+  tree is one bad `git checkout` away from losing a week, and nothing in "What already works" above
+  has been verified by CI since these landed — typecheck and test status against this exact tree is
+  unconfirmed.
 
 
 ## Suggested order
 
-1. Retry with backoff. (P0 1)
-2. The prompt prose. (P1 6)
-3. `/cost`. (P1 10)
-4. Web fetch. (P1 9)
+The old order is done — retry, prose and web all landed. What remains, re-ordered by what a daily
+driver feels:
+
+1. **Commit the tree.** Not a feature, but 346 files across six working slices is the riskiest
+   thing in the repo right now, and it gates everything below being real. Run typecheck and the
+   suites first — nothing has since these slices landed.
+2. **Walk the issue statuses.** `.scratch/prompt-registry/issues/01-02` and
+   `.scratch/auto-classifier/issues/01-11` describe code that exists; only prompt-registry 03/04 are
+   genuinely open. Stale `ready-for-agent` labels will send the next agent looking for work that is
+   done.
+3. **`/cost`.** (P1 10) The last invisible-everyday-number.
+4. **Headless mode.** (P1 12) What makes Atlas scriptable and CI-able.
+5. **User-authored commands and hooks.** (P1 11)
+6. **Drive a second provider.** (P1 13) A login, not a build.

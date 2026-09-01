@@ -4,10 +4,20 @@ import { atlasDirectory, ATLAS_DIRECTORY_NAME } from '../store/paths'
 
 export const ATLAS_SETTINGS_NAME = 'settings.json'
 
+export const ATLAS_PLUGINS_DIRECTORY_NAME = 'plugins'
+
 export function userSettingsFile(): string {
   return join(atlasDirectory(), ATLAS_SETTINGS_NAME)
 }
 
 export function projectSettingsFile(cwd: string): string {
   return join(cwd, ATLAS_DIRECTORY_NAME, ATLAS_SETTINGS_NAME)
+}
+
+export function userPluginsDirectory(): string {
+  return join(atlasDirectory(), ATLAS_PLUGINS_DIRECTORY_NAME)
+}
+
+export function projectPluginsDirectory(cwd: string): string {
+  return join(cwd, ATLAS_DIRECTORY_NAME, ATLAS_PLUGINS_DIRECTORY_NAME)
 }

@@ -5,13 +5,9 @@ import type { ShellSnapshot } from '@dltech/atlas-harness'
 import type { SidebarCrewFold } from '../../../store/subagent-row'
 import { plural } from '../../../store/tools/reading'
 import { usePress } from '../../hooks/use-press'
-import {
-  AWAITING_INPUT_LABEL,
-  isShellRunning,
-  shellNameLabel,
-  shellStateLabel,
-} from '../../shells-model'
+import { isShellRunning, shellNameLabel, shellReadout } from '../../shells-model'
 import { glyph, theme } from '../../theme'
+import type { Span } from '../spans'
 import { Row, Section } from './row'
 
 const markFor = (shell: ShellSnapshot) => {
@@ -20,12 +16,14 @@ const markFor = (shell: ShellSnapshot) => {
   return { text: glyph.seen, fg: theme.rule }
 }
 
-const valueFor = (shell: ShellSnapshot) => {
-  const label = shellStateLabel(shell)
-  if (shell.awaitingInput) return [{ text: AWAITING_INPUT_LABEL, fg: theme.warn }]
-  if (isShellRunning(shell)) return [{ text: label, fg: theme.hint }]
-  return [{ text: label, fg: theme.meta }]
+const readoutColourFor = (shell: ShellSnapshot): string => {
+  if (shell.awaitingInput) return theme.warn
+  return isShellRunning(shell) ? theme.hint : theme.meta
 }
+
+const valueFor = (args: { shell: ShellSnapshot; now: number }): readonly Span[] => [
+  { text: shellReadout(args), fg: readoutColourFor(args.shell) },
+]
 
 /**
  * What the panel let go of, kept as one line rather than a heading of its own. The reading names
@@ -46,6 +44,7 @@ function RetiredLine(props: { fold: SidebarCrewFold; cells: number }): React.Rea
 
 export function ShellsSection(props: {
   shells: readonly ShellSnapshot[]
+  now: number
   cells: number
   fold?: SidebarCrewFold | undefined
   onOpen?: (shellId: string) => void
@@ -69,7 +68,7 @@ export function ShellsSection(props: {
             labelFg={isShellRunning(shell) ? theme.hover : theme.meta}
             cells={props.cells}
             mark={markFor(shell)}
-            value={valueFor(shell)}
+            value={valueFor({ shell, now: props.now })}
           />
         </box>
       ))}

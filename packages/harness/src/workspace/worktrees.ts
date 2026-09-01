@@ -1,5 +1,6 @@
 import { realpath } from 'node:fs/promises'
 
+import { runGit, type GitRun } from './run-git'
 import { parseStatusPorcelain, parseWorktreePorcelain, type Worktree } from './worktrees-parse'
 
 export type { Worktree } from './worktrees-parse'
@@ -49,11 +50,6 @@ export type WorktreeRemoval = {
   branchDeleted: StepOutcome | undefined
 }
 
-type GitRun = { ok: boolean; stdout: string; stderr: string }
-
-const messageOf = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error)
-
 const readable = (text: string): string => {
   const joined = text
     .split('\n')
@@ -68,25 +64,6 @@ const canonical = async (path: string): Promise<string> => {
     return await realpath(path)
   } catch {
     return path
-  }
-}
-
-const runGit = async ({ args, cwd }: { args: readonly string[]; cwd: string }): Promise<GitRun> => {
-  try {
-    const git = Bun.spawn(['git', ...args], {
-      cwd,
-      stdout: 'pipe',
-      stderr: 'pipe',
-      stdin: 'ignore',
-    })
-    const [stdout, stderr, status] = await Promise.all([
-      new Response(git.stdout).text(),
-      new Response(git.stderr).text(),
-      git.exited,
-    ])
-    return { ok: status === 0, stdout, stderr }
-  } catch (error) {
-    return { ok: false, stdout: '', stderr: messageOf(error) }
   }
 }
 
@@ -181,13 +158,23 @@ export async function fetchOrigin({ cwd }: { cwd: string }): Promise<StepOutcome
   return outcomeOf(await runGit({ args: ['fetch', ORIGIN], cwd }))
 }
 
-const upstreamOf = async ({ cwd }: { cwd: string }): Promise<string | undefined> => {
+export const upstreamOf = async ({ cwd }: { cwd: string }): Promise<string | undefined> => {
   const run = await runGit({
     args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'],
     cwd,
   })
   const name = run.stdout.trim()
   return run.ok && name.length > 0 ? name : undefined
+}
+
+export const behindUpstream = async ({ cwd }: { cwd: string }): Promise<number | undefined> => {
+  const upstream = await upstreamOf({ cwd })
+  if (upstream === undefined) return undefined
+
+  const run = await runGit({ args: ['rev-list', '--count', `HEAD..${upstream}`], cwd })
+  if (!run.ok) return undefined
+  const count = Number.parseInt(run.stdout.trim(), 10)
+  return Number.isNaN(count) ? undefined : count
 }
 
 const commitsAhead = async ({
@@ -261,6 +248,28 @@ export async function removeWorktree({
 
   const deleted = outcomeOf(await runGit({ args: ['branch', '-D', branch], cwd }))
   return { worktreeRemoved: removed, branchDeleted: deleted }
+}
+
+export async function lockWorktree({
+  cwd,
+  path,
+  reason,
+}: {
+  cwd: string
+  path: string
+  reason: string
+}): Promise<StepOutcome> {
+  return outcomeOf(await runGit({ args: ['worktree', 'lock', '--reason', reason, path], cwd }))
+}
+
+export async function unlockWorktree({
+  cwd,
+  path,
+}: {
+  cwd: string
+  path: string
+}): Promise<StepOutcome> {
+  return outcomeOf(await runGit({ args: ['worktree', 'unlock', path], cwd }))
 }
 
 export async function pruneWorktrees({ cwd }: { cwd: string }): Promise<StepOutcome> {

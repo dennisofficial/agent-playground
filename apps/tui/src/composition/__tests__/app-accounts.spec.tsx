@@ -124,8 +124,71 @@ describe('the accounts overlay', () => {
       const frame = setup.captureCharFrame()
 
       expect(frame).toContain('ACCOUNTS')
-      expect(frame).toContain('No accounts yet')
       expect(frame).toContain('Atlas holds no accounts')
+      expect(frame).toContain('Anthropic')
+      expect(frame).toContain('not signed in')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('files an api key under the provider whose row is selected, not the first one', async () => {
+    const setup = await opened({ app: await appWith([]) })
+
+    try {
+      await openOverlay(setup)
+      setup.mockInput.pressArrow('down')
+      await setup.flush()
+      await settle(120)
+      setup.mockInput.pressArrow('down')
+      await setup.flush()
+      await settle(120)
+      setup.mockInput.pressKey('k')
+      await setup.flush()
+      await settle(150)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain('Paste a OpenRouter api key')
+      expect(frame).not.toContain('Paste a Anthropic api key')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('starts the key flow on ⏎ over a provider nothing has signed into', async () => {
+    const setup = await opened({ app: await appWith([]) })
+
+    try {
+      await openOverlay(setup)
+      setup.mockInput.pressEnter()
+      await setup.flush()
+      await settle(150)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('Paste a Anthropic api key')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('says a key is the way in rather than opening a browser flow that does not exist', async () => {
+    const setup = await opened({ app: await appWith([]) })
+
+    try {
+      await openOverlay(setup)
+      setup.mockInput.pressArrow('down')
+      await setup.flush()
+      await settle(120)
+      setup.mockInput.pressArrow('down')
+      await setup.flush()
+      await settle(120)
+      setup.mockInput.pressKey('n')
+      await setup.flush()
+      await settle(150)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('OpenRouter takes an api key')
     } finally {
       await teardown(setup)
     }

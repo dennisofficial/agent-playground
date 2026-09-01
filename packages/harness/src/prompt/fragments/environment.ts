@@ -1,6 +1,9 @@
-import { PromptFragment, type PromptContext } from '@dltech/atlas-core'
+import { PromptFragment, type ClockPort, type PromptContext } from '@dltech/atlas-core'
 
 import { injectable } from '../../container/injection'
+import { SystemClock } from '../../store/clock'
+import { localDayOf, localWeekdayOf } from '../../time/local-day'
+import { VolatilePromptFragment } from '../volatile'
 
 @injectable()
 export class ProjectDirectoryFragment extends PromptFragment {
@@ -11,6 +14,26 @@ export class ProjectDirectoryFragment extends PromptFragment {
       `The project directory is ${ctx.projectDirectory}, and every bash command starts there.`,
       'You are already in it, so never spend a cd returning to it, and run somewhere else by passing that directory as workdir rather than by cd.',
     ].join(' ')
+  }
+}
+
+@injectable()
+export class TodayFragment extends VolatilePromptFragment {
+  readonly id = 'environment.today'
+
+  private readonly clock: ClockPort = new SystemClock()
+
+  stamp(): string {
+    return localDayOf(this.clock.now())
+  }
+
+  text(): string {
+    const instant = this.clock.now()
+    const day = localDayOf(instant)
+    if (day === '') return ''
+
+    const weekday = localWeekdayOf(instant)
+    return `Today is ${weekday === '' ? day : `${weekday}, ${day}`}.`
   }
 }
 

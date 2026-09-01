@@ -99,9 +99,11 @@ const count = (value: number): string => value.toLocaleString('en-US')
  * is the order of consequence: what it learned, then how hard it looked, then what it merely watched.
  */
 const CLAUSE_ORDER: readonly EGather[] = [
+  EGather.Recall,
   EGather.Read,
   EGather.Search,
   EGather.List,
+  EGather.Browse,
   EGather.Run,
   EGather.Watch,
 ]

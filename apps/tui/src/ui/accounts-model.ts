@@ -3,7 +3,9 @@ import {
   EAccountStatus,
   EAuthKind,
   EAuthProvider,
+  ELoginFlow,
   providerSpec,
+  reachableProviders,
   type Account,
   type AccountId,
 } from '@dltech/atlas-core'
@@ -14,10 +16,36 @@ export enum EAccountsView {
   ApiKey = 'api-key',
 }
 
-export type AccountRow = {
-  account: Account
-  active: boolean
+export const ACCOUNT_ROWS = 4
+
+export type AccountsWindow = {
+  start: number
+  visible: readonly AccountRow[]
+  below: number
 }
+
+export enum EAccountRow {
+  Account = 'account',
+  SignedOut = 'signed-out',
+}
+
+/**
+ * A provider Atlas can answer for but nothing has signed into still gets a row, because the sign-in
+ * flows are reached by selecting one. Discriminated rather than optional so every reader that wants
+ * an account id has to say what it does without one.
+ */
+export type AccountRow =
+  | { kind: EAccountRow.Account; account: Account; active: boolean }
+  | { kind: EAccountRow.SignedOut; provider: EAuthProvider; active: false }
+
+export const rowProvider = (row: AccountRow): EAuthProvider =>
+  row.kind === EAccountRow.Account ? row.account.provider : row.provider
+
+export const accountOf = (row: AccountRow): Account | undefined =>
+  row.kind === EAccountRow.Account ? row.account : undefined
+
+export const rowKey = (row: AccountRow): string =>
+  row.kind === EAccountRow.Account ? String(row.account.id) : `signed-out:${row.provider}`
 
 export type AccountsPrompt = {
   provider: EAuthProvider
@@ -41,18 +69,42 @@ const PROVIDER_ORDER: readonly EAuthProvider[] = [
   EAuthProvider.OpenRouter,
 ]
 
-const rank = (account: Account): number => {
-  const at = PROVIDER_ORDER.indexOf(account.provider)
+const rank = (row: AccountRow): number => {
+  const at = PROVIDER_ORDER.indexOf(rowProvider(row))
   return at < 0 ? PROVIDER_ORDER.length : at
 }
+
+const placement = (row: AccountRow): number => (row.kind === EAccountRow.Account ? 0 : 1)
+
+const openedAt = (row: AccountRow): string => accountOf(row)?.createdAt ?? ''
 
 export function accountRows(args: {
   accounts: readonly Account[]
   active: Partial<Record<EAuthProvider, AccountId | undefined>>
 }): readonly AccountRow[] {
-  return [...args.accounts]
-    .sort((left, right) => rank(left) - rank(right) || left.createdAt.localeCompare(right.createdAt))
-    .map((account) => ({ account, active: args.active[account.provider] === account.id }))
+  const held = new Set(args.accounts.map((account) => account.provider))
+
+  const rows: AccountRow[] = [
+    ...args.accounts.map((account) => ({
+      kind: EAccountRow.Account as const,
+      account,
+      active: args.active[account.provider] === account.id,
+    })),
+    ...reachableProviders()
+      .filter((spec) => !held.has(spec.provider))
+      .map((spec) => ({
+        kind: EAccountRow.SignedOut as const,
+        provider: spec.provider,
+        active: false as const,
+      })),
+  ]
+
+  return rows.sort(
+    (left, right) =>
+      rank(left) - rank(right) ||
+      placement(left) - placement(right) ||
+      openedAt(left).localeCompare(openedAt(right)),
+  )
 }
 
 export function openAccounts(args: {
@@ -90,8 +142,7 @@ export function moveSelection(args: { state: AccountsState; delta: number }): Ac
   return { ...args.state, index }
 }
 
-export const selectedRow = (state: AccountsState): AccountRow | undefined =>
-  state.rows[state.index]
+export const selectedRow = (state: AccountsState): AccountRow | undefined => state.rows[state.index]
 
 export function askForCode(args: { state: AccountsState; prompt: AccountsPrompt }): AccountsState {
   return {
@@ -156,9 +207,13 @@ export const originLabel = (account: Account): string | null => {
 export const statusLabel = (account: Account): string | null =>
   account.status === EAccountStatus.Active ? null : account.status
 
+export const availabilityLabel = (account: Account): string | null =>
+  providerSpec(account.provider).reachable ? null : 'no adapter yet'
+
 export function accountDetail(account: Account): string {
   const parts = [
     providerSpec(account.provider).label,
+    availabilityLabel(account),
     kindLabel(account),
     originLabel(account),
     statusLabel(account),
@@ -167,5 +222,46 @@ export function accountDetail(account: Account): string {
   return parts.filter((part): part is string => part !== null).join(' · ')
 }
 
+const FLOW_LABEL: Readonly<Record<ELoginFlow, string>> = {
+  [ELoginFlow.PastedCode]: 'sign in',
+  [ELoginFlow.DeviceCode]: 'sign in',
+  [ELoginFlow.ApiKey]: 'api key',
+}
+
+export const signInFlows = (provider: EAuthProvider): readonly string[] => [
+  ...new Set(providerSpec(provider).logins.map((flow) => FLOW_LABEL[flow])),
+]
+
+export const acceptsApiKey = (provider: EAuthProvider): boolean =>
+  providerSpec(provider).logins.includes(ELoginFlow.ApiKey)
+
+export const acceptsPastedCode = (provider: EAuthProvider): boolean =>
+  providerSpec(provider).logins.includes(ELoginFlow.PastedCode)
+
+const signedOutDetail = (provider: EAuthProvider): string =>
+  ['not signed in', signInFlows(provider).join(' or ')]
+    .filter((part) => part.length > 0)
+    .join(' · ')
+
+export const rowLabel = (row: AccountRow): string =>
+  row.kind === EAccountRow.Account ? row.account.label : providerSpec(row.provider).label
+
+export const rowDetail = (row: AccountRow): string =>
+  row.kind === EAccountRow.Account ? accountDetail(row.account) : signedOutDetail(row.provider)
+
 export const maskedKey = (typed: string): string =>
   typed.length <= 4 ? '•'.repeat(typed.length) : `${'•'.repeat(typed.length - 4)}${typed.slice(-4)}`
+
+/**
+ * A bottom drawer is as tall as its body asks for, and an account costs three rows, so the list
+ * bounds itself rather than growing up the screen. The window follows the mark.
+ */
+export function accountsWindow(args: { state: AccountsState; rows: number }): AccountsWindow {
+  const rows = Math.max(1, Math.trunc(args.rows))
+  const all = args.state.rows
+  if (all.length <= rows) return { start: 0, visible: all, below: 0 }
+
+  const start = Math.min(Math.max(0, args.state.index - rows + 1), all.length - rows)
+
+  return { start, visible: all.slice(start, start + rows), below: all.length - start - rows }
+}

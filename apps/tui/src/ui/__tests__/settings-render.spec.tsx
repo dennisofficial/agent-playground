@@ -3,12 +3,14 @@ import {
   ESettingId,
   ESettingsLayer,
   resolveSettings,
+  type SecretPrompt,
   type SettingsLayerInput,
 } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { Settings, settingsDetailVisible } from '../components/settings'
+import type { Span } from '../components/spans'
 import { cellsOf } from '../hint-layout'
 import { grammarsReady } from '../markdown/__tests__/harness'
 import { OPTION_SEPARATOR, RANGE_HINT, TOGGLE_HINT } from '../settings-format'
@@ -18,7 +20,7 @@ import { CHOSEN, COMPOSER_DRAFT, DIFF_PATH, UNCHOSEN } from '../components/setti
 import { EComposerEdge } from '../composer-edge-store'
 import { EBlockDensity } from '../density-store'
 import { settingsModel, type SettingsState } from '../settings-model'
-import { glyph, SIDEBAR_WIDTH } from '../theme'
+import { glyph, SIDEBAR_WIDTH, theme } from '../theme'
 import { frameOf } from './transcript-fixture'
 
 await grammarsReady()
@@ -35,12 +37,16 @@ const SHIPPED_APPEARANCE: Appearance = {
   composer: EComposerEdge.Slab, imageRows: SHIPPED_IMAGE_ROWS
 }
 
+const SECRETS_ORIGIN = '~/.atlas/secrets.json'
+
 const page = (args: {
   width?: number
   sidebarWidth?: number
   state?: SettingsState
   layers?: readonly SettingsLayerInput[]
   problem?: string
+  prompt?: SecretPrompt
+  secretOf?: (id: string) => Span | undefined
 }): React.ReactNode => {
   const resolution = resolveSettings({ definitions: ATLAS_SETTINGS, layers: args.layers ?? [] })
 
@@ -53,6 +59,9 @@ const page = (args: {
       cwd="/Users/dennis/Developer/atlas"
       origin={ORIGIN}
       appearance={SHIPPED_APPEARANCE}
+      prompt={args.prompt ?? null}
+      secretOf={args.secretOf ?? (() => undefined)}
+      secretOrigin={SECRETS_ORIGIN}
       {...(args.problem === undefined ? {} : { problem: args.problem })}
       onActivate={() => {}}
       onDismiss={() => {}}
@@ -239,5 +248,54 @@ describe('the settings page', () => {
         expect(cellsOf(row.trimEnd())).toBeLessThanOrEqual(width)
       }
     }
+  })
+})
+
+describe('the search key row', () => {
+  const KEY_ROW = stateOf(ESettingId.WebSearchKey)
+
+  it('shows a value the settings layers never held, because a secret is read elsewhere', async () => {
+    const rows = await rowsOf(
+      page({
+        secretOf: (id) =>
+          id === ESettingId.NestedInstructions ? { text: '••••1234', fg: theme.ok } : undefined,
+      }),
+      WIDE,
+    )
+    const shown = rows.find((row) => row.includes('Nested instructions'))
+
+    expect(shown).toContain('••••1234')
+    expect(shown).not.toContain(' on ')
+  })
+
+  it('puts the key row on the settings page, under the backend it belongs to', () => {
+    expect(() => stateOf(ESettingId.WebSearchKey)).not.toThrow()
+    expect(KEY_ROW.pageIndex).toBe(stateOf(ESettingId.WebSearchBackend).pageIndex)
+  })
+
+  it('offers the field instead of the preview band once it is being set', async () => {
+    const prompt: SecretPrompt = {
+      name: 'search.tavily',
+      label: 'Tavily API key',
+      masked: true,
+      typed: 'tvly-abcd1234',
+    }
+    const rows = await rowsOf(page({ state: KEY_ROW, prompt }), WIDE)
+
+    expect(rows.some((row) => row.includes('TAVILY API KEY'))).toBe(true)
+    expect(rows.some((row) => row.includes('•••••••••1234'))).toBe(true)
+    expect(rows.some((row) => row.includes('tvly-abcd'))).toBe(false)
+  })
+
+  it('says where the key is sealed, so nobody expects it in the settings file', async () => {
+    const prompt: SecretPrompt = {
+      name: 'search.tavily',
+      label: 'Tavily API key',
+      masked: true,
+      typed: '',
+    }
+    const rows = await rowsOf(page({ state: KEY_ROW, prompt }), WIDE)
+
+    expect(rows.some((row) => row.includes(SECRETS_ORIGIN))).toBe(true)
   })
 })

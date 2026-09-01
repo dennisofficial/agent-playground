@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import {
   EBeforeToolDecision,
   EClassifierMode,
+  EConsultation,
   EDecision,
   EJudgment,
   EStage,
@@ -127,10 +128,16 @@ describe('a call that trips a probe, in shadow', () => {
     const outcome = await classify({
       hook: hookOver({
         facts: new RecordingFacts(factsInAWorktree()),
-        judge: async () => ({
-          judgment: EJudgment.Check,
-          reason: `contention: ${SIBLING} carries uncommitted work`,
-        }),
+        judge: {
+          consult: async () => ({
+            kind: EConsultation.Judged,
+            verdict: {
+              judgment: EJudgment.Check,
+              reason: `contention: ${SIBLING} carries uncommitted work`,
+            },
+            elapsedMs: 12,
+          }),
+        },
       }),
       call: callTo({ name: 'bash', input: { command: `git worktree remove --force ${SIBLING}` } }),
     })
@@ -138,6 +145,21 @@ describe('a call that trips a probe, in shadow', () => {
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
     expect(judgedIn(outcome).consulted).toBe(true)
     expect(judgedIn(outcome).judgment).toBe(EJudgment.Check)
+  })
+
+  it('records a spent judge budget as a clear, so a runaway turn stops paying for calls', async () => {
+    const outcome = await classify({
+      hook: hookOver({
+        facts: new RecordingFacts(factsInAWorktree()),
+        judge: { consult: async () => ({ kind: EConsultation.Budgeted, calls: 6 }) },
+      }),
+      call: callTo({ name: 'bash', input: { command: `git worktree remove --force ${SIBLING}` } }),
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
+    expect(judgedIn(outcome).triage).toBe(ETriage.Clear)
+    expect(judgedIn(outcome).consulted).toBe(false)
+    expect(judgedIn(outcome).reason).toContain('budget for this turn is spent')
   })
 
   it('asks the workspace only for the realms the deed names', async () => {
@@ -171,8 +193,10 @@ describe('the classifier when the world will not answer', () => {
     const outcome = await classify({
       hook: hookOver({
         facts: new RecordingFacts(factsInAWorktree()),
-        judge: async () => {
-          throw new Error('the judge exploded')
+        judge: {
+          consult: async () => {
+            throw new Error('the judge exploded')
+          },
         },
       }),
       call: callTo({ name: 'bash', input: { command: `git worktree remove --force ${SIBLING}` } }),

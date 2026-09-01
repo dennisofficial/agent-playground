@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { EEntryKind, type PendingRow, type TranscriptModel } from '../../store'
+import { NOTHING_IN_BACKGROUND, type BackgroundWork } from '../background-wait'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
@@ -13,7 +14,7 @@ import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
 import { PeekLine } from './peek-line'
 import type { RetryWait } from '../retry-countdown'
-import { EWorkingVerb, WorkingLine } from './working-line'
+import { EWorkingVerb, WaitingLine, WorkingLine } from './working-line'
 
 export type { RetryWait }
 
@@ -48,6 +49,7 @@ export function Transcript(props: {
   anchorKey?: string | null
   sends?: number
   pending?: readonly PendingRow[]
+  background?: BackgroundWork
   onRetry?: () => void
   onResume?: () => void
   opened?: ReadonlySet<string>
@@ -152,7 +154,7 @@ export function Transcript(props: {
           <ResumeBlock onResume={props.onResume} />
         )}
 
-        {model.failure !== null ? null : model.streaming && turn.startedAt !== null ? (
+        {model.failure === null && model.streaming && turn.startedAt !== null ? (
           <box flexDirection="row" marginTop={1} marginBottom={1}>
             <WorkingLine
               elapsedMs={props.now - turn.startedAt}
@@ -162,7 +164,9 @@ export function Transcript(props: {
               retry={turn.retry}
             />
           </box>
-        ) : null}
+        ) : (
+          <WaitingLine work={props.background ?? NOTHING_IN_BACKGROUND} />
+        )}
 
         <PendingBlock rows={props.pending ?? NOTHING_PENDING} width={props.width} />
       </scrollbox>

@@ -52,12 +52,17 @@ const unreachable = (): ScriptedRefresh =>
 let clock = movableClock()
 let vault: Vault
 
-const portWith = (args: { client: ScriptedRefresh; sinks?: readonly CredentialSink[] }) =>
+const portWith = (args: {
+  client: ScriptedRefresh
+  sinks?: readonly CredentialSink[]
+  sinkTtlMs?: number
+}) =>
   new RefreshingCredentialPort({
     accounts: vault.store,
     clients: { [EAuthProvider.Anthropic]: args.client },
     clock,
     ...(args.sinks === undefined ? {} : { sinks: args.sinks }),
+    ...(args.sinkTtlMs === undefined ? {} : { sinkTtlMs: args.sinkTtlMs }),
   })
 
 const failureOf = async (read: Promise<unknown>): Promise<CredentialError> => {
@@ -151,6 +156,42 @@ describe('RefreshingCredentialPort', () => {
     expect(await statusOf(account.id)).toBe(EAccountStatus.Expired)
   })
 
+  it('takes the pair another Atlas left in the vault rather than retiring over a lost race', async () => {
+    const account = await vault.addAccount({
+      label: 'work',
+      secret: oauthSecret({ expiresAt: minutesFromNow(2) }),
+    })
+
+    const client = new ScriptedRefresh(async () => {
+      await vault.store.replaceSecret({
+        accountId: account.id,
+        secret: oauthSecret({
+          access: 'other-instance-access',
+          refresh: 'other-instance-refresh',
+          expiresAt: minutesFromNow(300),
+        }),
+      })
+      throw new OauthHttpError({ provider: 'Anthropic', status: 400 })
+    })
+
+    expect(await portWith({ client }).read()).toMatchObject({
+      accessToken: 'other-instance-access',
+    })
+    expect(await statusOf(account.id)).toBe(EAccountStatus.Active)
+  })
+
+  it('still retires when the refusal is not a race and nothing else moved', async () => {
+    const account = await vault.addAccount({
+      label: 'work',
+      secret: oauthSecret({ expiresAt: minutesFromNow(2) }),
+    })
+
+    const error = await failureOf(portWith({ client: failing(400) }).read())
+
+    expect(error.failure).toBe(ECredentialFailure.Expired)
+    expect(await statusOf(account.id)).toBe(EAccountStatus.Expired)
+  })
+
   it('rides out a network blip on a token that still has life', async () => {
     await vault.addAccount({ label: 'work', secret: oauthSecret({ expiresAt: minutesFromNow(2) }) })
 
@@ -180,6 +221,50 @@ describe('RefreshingCredentialPort', () => {
 
     await portWith({ client: rotating() }).read()
 
+    expect(await statusOf(account.id)).toBe(EAccountStatus.Active)
+  })
+
+  it('refreshes a token the server refused, whatever its expiry claims', async () => {
+    await vault.addAccount({
+      label: 'work',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+    })
+    const client = rotating()
+    const port = portWith({ client })
+
+    const refused = await port.read()
+    await port.discard(refused)
+
+    expect(await port.read()).toMatchObject({ accessToken: 'access-2' })
+    expect(client.calls).toBe(1)
+  })
+
+  it('goes back to trusting expiry once the refused pair has been replaced', async () => {
+    await vault.addAccount({
+      label: 'work',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+    })
+    const client = rotating()
+    const port = portWith({ client })
+
+    await port.discard(await port.read())
+    await port.read()
+    await port.read()
+
+    expect(client.calls).toBe(1)
+  })
+
+  it('retires an account whose refused token has nothing to refresh with', async () => {
+    const account = await vault.addAccount({
+      label: 'work',
+      secret: oauthSecret({ refresh: '', expiresAt: minutesFromNow(100) }),
+    })
+    const port = portWith({ client: rotating() })
+
+    await port.discard(await port.read())
+
+    const error = await failureOf(port.read())
+    expect(error.failure).toBe(ECredentialFailure.Expired)
     expect(await statusOf(account.id)).toBe(EAccountStatus.Active)
   })
 
@@ -250,21 +335,34 @@ describe('RefreshingCredentialPort', () => {
 })
 
 describe('an imported credential', () => {
-  const sinkHolding = (
-    held: OauthTokens | undefined,
-  ): CredentialSink & { written: OauthTokens[] } => {
+  type Sink = CredentialSink & {
+    written: OauthTokens[]
+    reads: number
+    hold: (tokens: OauthTokens) => void
+  }
+
+  const sinkHolding = (held: OauthTokens | undefined): Sink => {
     let current = held
     const written: OauthTokens[] = []
 
-    return {
+    const sink: Sink = {
       id: 'claude-code',
       written,
-      read: async () => current,
+      reads: 0,
+      hold: (tokens) => {
+        current = tokens
+      },
+      read: async () => {
+        sink.reads += 1
+        return current
+      },
       write: async (rotated) => {
         written.push(rotated)
         current = rotated
       },
     }
+
+    return sink
   }
 
   it('writes the rotated pair back, so the tool it came from keeps working', async () => {
@@ -297,6 +395,108 @@ describe('an imported credential', () => {
     expect(client.calls).toBe(0)
     expect(credential).toMatchObject({ accessToken: 'their-access' })
     expect(sink.written).toEqual([])
+  })
+
+  it('takes up the pair the other tool rotated to, long before its own copy runs out', async () => {
+    await vault.addAccount({
+      label: 'imported',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+      importedFrom: 'claude-code',
+    })
+    const sink = sinkHolding(
+      tokens({ access: 'their-access', refresh: 'their-refresh', expiresAt: minutesFromNow(500) }),
+    )
+    const client = rotating()
+
+    const credential = await portWith({ client, sinks: [sink] }).read()
+
+    expect(client.calls).toBe(0)
+    expect(credential).toMatchObject({ accessToken: 'their-access' })
+  })
+
+  it('keeps the pair it took up, so the vault stops handing out the revoked one', async () => {
+    const account = await vault.addAccount({
+      label: 'imported',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+      importedFrom: 'claude-code',
+    })
+    const sink = sinkHolding(
+      tokens({ access: 'their-access', refresh: 'their-refresh', expiresAt: minutesFromNow(500) }),
+    )
+
+    await portWith({ client: rotating(), sinks: [sink] }).read()
+
+    const stored = await vault.store.read(account.id)
+    expect(stored?.secret).toMatchObject({ tokens: { accessToken: 'their-access' } })
+  })
+
+  it('reads the other store once for a burst of reads on the same pair', async () => {
+    await vault.addAccount({
+      label: 'imported',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+      importedFrom: 'claude-code',
+    })
+    const sink = sinkHolding(tokens({ expiresAt: minutesFromNow(100) }))
+    const port = portWith({ client: rotating(), sinks: [sink], sinkTtlMs: 10_000 })
+
+    await port.read()
+    await port.read()
+    await port.read()
+
+    expect(sink.reads).toBe(1)
+  })
+
+  it('looks again once the cached look has gone stale', async () => {
+    await vault.addAccount({
+      label: 'imported',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+      importedFrom: 'claude-code',
+    })
+    const sink = sinkHolding(tokens({ expiresAt: minutesFromNow(100) }))
+    const port = portWith({ client: rotating(), sinks: [sink], sinkTtlMs: 10_000 })
+
+    await port.read()
+    sink.hold(
+      tokens({ access: 'their-access', refresh: 'their-refresh', expiresAt: minutesFromNow(500) }),
+    )
+    clock.set(minutesFromNow(1))
+
+    expect(await port.read()).toMatchObject({ accessToken: 'their-access' })
+  })
+
+  it('takes the other pair for a refused token instead of spending its own', async () => {
+    await vault.addAccount({
+      label: 'imported',
+      secret: oauthSecret({ expiresAt: minutesFromNow(100) }),
+      importedFrom: 'claude-code',
+    })
+    const sink = sinkHolding(tokens({ expiresAt: minutesFromNow(100) }))
+    const client = rotating()
+    const port = portWith({ client, sinks: [sink] })
+
+    await port.discard(await port.read())
+    sink.hold(
+      tokens({ access: 'their-access', refresh: 'their-refresh', expiresAt: minutesFromNow(500) }),
+    )
+
+    expect(await port.read()).toMatchObject({ accessToken: 'their-access' })
+    expect(client.calls).toBe(0)
+  })
+
+  it('spends the pair it just took up, never the one that pair superseded', async () => {
+    await vault.addAccount({
+      label: 'imported',
+      secret: oauthSecret({ expiresAt: minutesFromNow(2) }),
+      importedFrom: 'claude-code',
+    })
+    const sink = sinkHolding(
+      tokens({ access: 'their-access', refresh: 'their-refresh', expiresAt: minutesFromNow(3) }),
+    )
+    const client = rotating()
+
+    await portWith({ client, sinks: [sink] }).read()
+
+    expect(client.seen).toEqual(['their-refresh'])
   })
 
   it('leaves another account credential in a shared store alone', async () => {

@@ -44,6 +44,31 @@ describe('telling the model it is in a worktree', () => {
     expect(textsOf(assembled).slice(0, -1)).toEqual(['hello', 'much later'])
   })
 
+  it('tells the model an adopted worktree is tracked, not branched, and will not be removed', () => {
+    const assembled = assembleWith(
+      log([
+        { ...entered, base: 'origin/topic', adopted: true },
+        { type: 'user-said', text: 'much later' },
+      ]),
+    )
+    const tail = textsOf(assembled).at(-1) ?? ''
+
+    expect(tail).toContain('which tracks origin/topic')
+    expect(tail).not.toContain('branched from')
+    expect(tail).toContain('will not remove a worktree Atlas did not create')
+  })
+
+  it('says an adopted worktree has no upstream rather than naming a base it does not have', () => {
+    const assembled = assembleWith(
+      log([
+        { type: 'worktree-entered', path: TREE, branch: 'lonely', adopted: true },
+        { type: 'user-said', text: 'much later' },
+      ]),
+    )
+
+    expect(textsOf(assembled).at(-1) ?? '').toContain('which has no upstream')
+  })
+
   it('falls silent once the worktree is exited', () => {
     const assembled = assembleWith(
       log([

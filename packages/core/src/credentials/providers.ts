@@ -30,7 +30,7 @@ export const PROVIDER_SPECS: readonly ProviderSpec[] = [
     kinds: [EAuthKind.Oauth, EAuthKind.ApiKey],
     logins: [ELoginFlow.DeviceCode, ELoginFlow.ApiKey],
     apiKeyVariable: 'OPENAI_API_KEY',
-    reachable: false,
+    reachable: true,
   },
   {
     provider: EAuthProvider.OpenRouter,
@@ -38,7 +38,7 @@ export const PROVIDER_SPECS: readonly ProviderSpec[] = [
     kinds: [EAuthKind.ApiKey],
     logins: [ELoginFlow.ApiKey],
     apiKeyVariable: 'OPENROUTER_API_KEY',
-    reachable: false,
+    reachable: true,
   },
 ]
 

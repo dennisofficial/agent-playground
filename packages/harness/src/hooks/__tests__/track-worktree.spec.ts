@@ -12,6 +12,8 @@ import {
 
 import { TrackWorktreeHook } from '../track-worktree'
 
+const NEVER_ABORTED = new AbortController().signal
+
 const TREE = '/Users/dev/project/.atlas/worktrees/eng-327'
 
 const call: ToolCall = {
@@ -25,7 +27,7 @@ const call: ToolCall = {
 const succeeded = (output: unknown): ToolOutcome => ({ ok: true, output, modelText: 'done' })
 
 const draftsFor = async (result: ToolOutcome): Promise<readonly EventDraft[]> =>
-  (await new TrackWorktreeHook().run({ call, result })).drafts ?? []
+  (await new TrackWorktreeHook().run({ call, result, signal: NEVER_ABORTED })).drafts ?? []
 
 describe('what the hook records about worktrees', () => {
   it('records nothing when the tool moved no worktree', async () => {

@@ -12,6 +12,7 @@ import {
   type Drain,
   type Shell,
 } from './shell-process'
+import { createLineMatcher, type MatchedLines } from './shell-watch'
 
 export { EKilledBy, EShellStatus }
 
@@ -54,8 +55,13 @@ export type BackgroundShellSpec = {
   retainCharacters: number
   overflowCharacters: number
   promptSettleMs: number
+  watch?: RegExp | undefined
+  matchSettleMs: number
+  matchedLinesCap: number
+  timeoutMs?: number | undefined
   onExit: (shell: BackgroundShell) => void
   onAwaitingInput: (shell: BackgroundShell) => void
+  onMatched: (args: { shell: BackgroundShell; matched: MatchedLines }) => void
 }
 
 function stopReading(drains: readonly Drain[]): void {
@@ -86,12 +92,29 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
   let awaitingSettled = false
   let awaitingAnnounced = false
   let promptWatch: ReturnType<typeof setTimeout> | undefined
+  let matchWatch: ReturnType<typeof setTimeout> | undefined
+  let deadline: ReturnType<typeof setTimeout> | undefined
 
   const drains: Drain[] = []
+
+  const matcher =
+    spec.watch === undefined
+      ? undefined
+      : createLineMatcher({ pattern: spec.watch, cap: spec.matchedLinesCap })
 
   const forgetPromptWatch = (): void => {
     if (promptWatch !== undefined) clearTimeout(promptWatch)
     promptWatch = undefined
+  }
+
+  const forgetMatchWatch = (): void => {
+    if (matchWatch !== undefined) clearTimeout(matchWatch)
+    matchWatch = undefined
+  }
+
+  const forgetDeadline = (): void => {
+    if (deadline !== undefined) clearTimeout(deadline)
+    deadline = undefined
   }
 
   const atAPrompt = (): boolean =>
@@ -133,6 +156,37 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     terminate()
   }
 
+  if (spec.timeoutMs !== undefined) {
+    deadline = setTimeout(() => kill(EKilledBy.Timeout), spec.timeoutMs)
+    deadline.unref?.()
+  }
+
+  const deliverMatches = (): void => {
+    matchWatch = undefined
+    if (matcher === undefined || !matcher.pending()) return
+
+    const matched = matcher.take()
+    try {
+      spec.onMatched({ shell: self, matched })
+    } catch {
+      return
+    }
+  }
+
+  /**
+   * The window opens on the first match and is not reset by the ones behind it, so a shell that
+   * matches every line it prints still reports on a cadence rather than never.
+   */
+  const watchForMatches = (chunk: string): void => {
+    if (matcher === undefined) return
+
+    matcher.append(chunk)
+    if (!matcher.pending() || matchWatch !== undefined) return
+
+    matchWatch = setTimeout(deliverMatches, spec.matchSettleMs)
+    matchWatch.unref?.()
+  }
+
   const overflow = (): void => {
     if (status !== EShellStatus.Running) return
     status = EShellStatus.Overflowed
@@ -146,6 +200,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     buffer.append(chunk)
     lastOutputAt = spec.clock.now()
     awaitingSettled = false
+    watchForMatches(chunk)
     if (buffer.totalCharacters() > spec.overflowCharacters) return overflow()
 
     watchForPrompt()
@@ -164,8 +219,11 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     } finally {
       endedAt = spec.clock.now()
       forgetPromptWatch()
+      forgetDeadline()
       awaitingSettled = false
       if (status === EShellStatus.Running) status = EShellStatus.Exited
+      forgetMatchWatch()
+      deliverMatches()
     }
   })()
 

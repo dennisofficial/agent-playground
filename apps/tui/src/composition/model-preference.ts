@@ -1,45 +1,72 @@
-import { EFFORT_ORDER, type EEffort, type SettingsDocument } from '@dltech/atlas-core'
+import {
+  choiceValueOf,
+  clampEffort,
+  DEFAULT_EFFORT,
+  EFFORT_LADDER,
+  ESettingId,
+  parseRef,
+  refKey,
+  textValueOf,
+  type EEffort,
+  type ModelRef,
+  type SettingsResolution,
+} from '@dltech/atlas-core'
 import type { SettingsService } from '@dltech/atlas-harness'
 
-import { DEFAULT_MODEL_ID, DEFAULT_THINKING_BUDGET_TOKENS } from './config'
-import { effortOfBudget } from './effort-budget'
-import { modelIsReachable, type ModelSelection } from './model-selection'
+import { DEFAULT_MODEL_REF } from './config'
+import type { ModelSelection } from './model-selection'
+import { isRefReachable, type ModelCatalogue } from './providers'
 
-export const REMEMBERED_MODEL_ID = 'model.id'
-
-export const REMEMBERED_EFFORT = 'model.effort'
-
-const rememberedModelId = (document: SettingsDocument): string | undefined => {
-  const held = document.values[REMEMBERED_MODEL_ID]
-  return typeof held === 'string' && modelIsReachable(held) ? held : undefined
+const settledRef = (args: {
+  resolution: SettingsResolution
+  catalogue: ModelCatalogue
+}): ModelRef | undefined => {
+  const held = textValueOf({ resolution: args.resolution, id: ESettingId.ModelId })
+  return usableRef({ reference: held, catalogue: args.catalogue })
 }
 
-const rememberedEffort = (document: SettingsDocument): EEffort | undefined =>
-  EFFORT_ORDER.find((effort) => effort === document.values[REMEMBERED_EFFORT])
+const usableRef = (args: {
+  reference: string | undefined
+  catalogue: ModelCatalogue
+}): ModelRef | undefined => {
+  if (args.reference === undefined || args.reference.length === 0) return undefined
+
+  const ref = parseRef(args.reference)
+  if (ref === undefined) return undefined
+
+  return isRefReachable({ catalogue: args.catalogue, ref }) ? ref : undefined
+}
+
+const settledEffort = (resolution: SettingsResolution): EEffort | undefined => {
+  const held = choiceValueOf({ resolution, id: ESettingId.ModelEffort, fallback: DEFAULT_EFFORT })
+  return EFFORT_LADDER.find((effort) => effort === held)
+}
 
 /**
- * A model named on the command line or in the environment is an override for that launch, so it
- * outranks the pair the switcher last wrote — which in turn outranks what Atlas ships with.
+ * A model named on the command line is an override for that launch, so it outranks the pair the
+ * switcher last wrote — which the layers have already merged with the project file and the
+ * environment by the time this reads them.
  */
 export function launchSelection(args: {
-  requested: { modelId: string | undefined; thinkingBudgetTokens: number | undefined }
-  remembered: SettingsDocument
+  requested: { model: string | undefined }
+  settled: SettingsResolution
+  catalogue: ModelCatalogue
 }): ModelSelection {
-  const budget = args.requested.thinkingBudgetTokens
+  const ref =
+    usableRef({ reference: args.requested.model, catalogue: args.catalogue }) ??
+    settledRef({ resolution: args.settled, catalogue: args.catalogue }) ??
+    DEFAULT_MODEL_REF
 
-  return {
-    modelId: args.requested.modelId ?? rememberedModelId(args.remembered) ?? DEFAULT_MODEL_ID,
-    effort:
-      budget !== undefined
-        ? effortOfBudget(budget)
-        : (rememberedEffort(args.remembered) ?? effortOfBudget(DEFAULT_THINKING_BUDGET_TOKENS)),
-  }
+  const asked = settledEffort(args.settled) ?? DEFAULT_EFFORT
+  const offered = args.catalogue.cardFor(ref)?.effort
+
+  return { ref, effort: clampEffort({ map: offered, effort: asked }) ?? asked }
 }
 
 export function rememberSelection(args: {
   settings: SettingsService
   selection: ModelSelection
 }): void {
-  args.settings.set({ id: REMEMBERED_MODEL_ID, value: args.selection.modelId })
-  args.settings.set({ id: REMEMBERED_EFFORT, value: args.selection.effort })
+  args.settings.set({ id: ESettingId.ModelId, value: refKey(args.selection.ref) })
+  args.settings.set({ id: ESettingId.ModelEffort, value: args.selection.effort })
 }

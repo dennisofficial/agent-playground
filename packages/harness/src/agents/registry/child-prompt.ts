@@ -3,6 +3,7 @@ import {
   promptContextFor,
   type CompiledPrompt,
   type ProviderIdentity,
+  type PromptModel,
   type PromptPart,
 } from '@dltech/atlas-core'
 
@@ -15,15 +16,17 @@ export function subAgentPrompt({
   prompts,
   agentType,
   provider,
+  model,
   projectDirectory,
 }: {
   prompts: PromptRegistry
   agentType: AgentType
   provider: ProviderIdentity
+  model: PromptModel
   projectDirectory: string
 }): CompiledPrompt {
   const compiled = prompts.compile(
-    promptContextFor({ agent: EPromptAgent.Sub, provider, projectDirectory }),
+    promptContextFor({ agent: EPromptAgent.Sub, provider, model, projectDirectory }),
   )
   const identity = agentType.prompt.trim()
 

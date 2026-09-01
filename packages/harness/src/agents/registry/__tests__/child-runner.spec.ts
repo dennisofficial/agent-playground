@@ -7,6 +7,7 @@ import {
   EMPTY_PROMPT,
   EToolEffect,
   PromptFragment,
+  type PromptModel,
   type ThreadId,
   type ToolDefinition,
   type ToolOutcome,
@@ -26,6 +27,8 @@ import { AgentSupervisor } from '../supervisor'
 import { agentTypeNamed, fixedModelPort } from './fixtures'
 
 const PROJECT_DIRECTORY = '/w'
+
+const CHILD_MODEL: PromptModel = { contextWindow: 1_000_000 }
 
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
@@ -98,7 +101,14 @@ async function spawn(args: {
         drainNotices: async () => [],
         assemblyFor: ({ agentType }) =>
           defaultPipeline({
-            prompt: () => subAgentPrompt({ prompts, agentType, provider: harness.model.identity, projectDirectory: '/w' }),
+            prompt: () =>
+              subAgentPrompt({
+                prompts,
+                agentType,
+                provider: harness.model.identity,
+                model: CHILD_MODEL,
+                projectDirectory: '/w',
+              }),
             launchDirectory: PROJECT_DIRECTORY,
           }),
         ...(pinned === undefined

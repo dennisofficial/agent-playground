@@ -1,4 +1,5 @@
 import {
+  adjudicate,
   BeforeToolHook,
   EBeforeToolDecision,
   EClassifierMode,
@@ -12,8 +13,8 @@ import {
   type BeforeTool,
   type BeforeToolOutcome,
   type CallEvidence,
-  type CallId,
   type ClassifierPolicy,
+  type Consultation,
   type Event,
   type EventDraft,
   type HookOrder,
@@ -23,18 +24,20 @@ import {
   type ToolCall,
   type ToolDeclaration,
   type Triage,
-  type Verdict,
 } from '@dltech/atlas-core'
 
 import { collectEvidence } from './evidence-collector'
 import { ECandidacy, prefilterOf } from './prefilter'
 import { toolLensFor, type ToolLens } from './tool-lens'
 
-export type JudgeSeam = (args: {
-  evidence: CallEvidence
-  standing: readonly RiskSignal[]
-  signal: AbortSignal
-}) => Promise<Verdict | undefined>
+export type JudgeSeam = {
+  consult(args: {
+    evidence: CallEvidence
+    standing: readonly RiskSignal[]
+    events: readonly Event[]
+    signal: AbortSignal
+  }): Promise<Consultation>
+}
 
 export type ClassifyCallDeps = {
   tools: readonly ToolDeclaration[]
@@ -45,6 +48,8 @@ export type ClassifyCallDeps = {
   judge?: JudgeSeam | undefined
   now?: (() => number) | undefined
 }
+
+type Weighed = { triage: Triage; consultation: Consultation | undefined }
 
 const REASON_LIMIT = 400
 
@@ -65,54 +70,15 @@ function asksSoFarIn({
     .length
 }
 
-function reasonFor({ triage, verdict }: { triage: Triage; verdict: Verdict | undefined }): string {
-  if (verdict !== undefined) return clipped(verdict.reason)
-
-  const fatigue = triage.fatigued ? ' (this thread has spent its interruptions)' : ''
-  if (triage.standing.length > 0) {
-    return clipped(`${triage.standing.map((signal) => signal.detail).join('; ')}${fatigue}`)
-  }
-
-  if (triage.cleared.length > 0) {
-    const subjects = [...new Set(triage.cleared.map((cleared) => cleared.signal.subject))]
-    return clipped(`a standing grant covers ${subjects.join(', ')}`)
-  }
-
-  return 'nothing the probes watch for fired'
-}
-
-function judgedDraft(args: {
-  callId: CallId
-  mode: EClassifierMode
-  triage: Triage
-  verdict: Verdict | undefined
-  elapsedMs: number
-}): EventDraft {
-  const { callId, mode, triage, verdict } = args
-
-  return {
-    type: 'classifier-judged',
-    callId,
-    mode,
-    triage: triage.triage,
-    judgment: verdict?.judgment ?? EJudgment.Proceed,
-    dimensions: [...new Set(triage.standing.map((signal) => signal.dimension))],
-    signalIds: triage.standing.map((signal) => signal.id),
-    reason: reasonFor({ triage, verdict }),
-    consulted: verdict !== undefined,
-    elapsedMs: args.elapsedMs,
-  }
-}
-
 function faultDraft(args: {
-  callId: CallId
+  call: ToolCall
   mode: EClassifierMode
   fault: unknown
   elapsedMs: number
 }): EventDraft {
   return {
     type: 'classifier-judged',
-    callId: args.callId,
+    callId: args.call.callId,
     mode: args.mode,
     triage: ETriage.Clear,
     judgment: EJudgment.Proceed,
@@ -165,25 +131,20 @@ export class ClassifyCallHook extends BeforeToolHook {
       mode = policy.mode
       if (mode === EClassifierMode.Off) return allowing({ call })
 
-      const verdicted = await this.weigh({ call, projectDirectory, events, signal, policy })
-      if (verdicted === undefined) return allowing({ call })
+      const weighed = await this.weigh({ call, projectDirectory, events, signal, policy })
+      if (weighed === undefined) return allowing({ call })
 
-      return allowing({
+      return adjudicate({
         call,
-        drafts: [
-          judgedDraft({
-            callId: call.callId,
-            mode,
-            triage: verdicted.triage,
-            verdict: verdicted.verdict,
-            elapsedMs: this.now() - started,
-          }),
-        ],
+        triage: weighed.triage,
+        consultation: weighed.consultation,
+        policy,
+        elapsedMs: this.now() - started,
       })
     } catch (fault) {
       return allowing({
         call,
-        drafts: [faultDraft({ callId: call.callId, mode, fault, elapsedMs: this.now() - started })],
+        drafts: [faultDraft({ call, mode, fault, elapsedMs: this.now() - started })],
       })
     }
   }
@@ -194,7 +155,7 @@ export class ClassifyCallHook extends BeforeToolHook {
     events: readonly Event[]
     signal: AbortSignal
     policy: ClassifierPolicy
-  }): Promise<{ triage: Triage; verdict: Verdict | undefined } | undefined> {
+  }): Promise<Weighed | undefined> {
     const { call, projectDirectory, events, signal, policy } = args
 
     const reading = this.lens.readingFor({
@@ -230,9 +191,17 @@ export class ClassifyCallHook extends BeforeToolHook {
     })
 
     if (triage.triage !== ETriage.Consult || this.judge === undefined) {
-      return { triage, verdict: undefined }
+      return { triage, consultation: undefined }
     }
 
-    return { triage, verdict: await this.judge({ evidence, standing: triage.standing, signal }) }
+    return {
+      triage,
+      consultation: await this.judge.consult({
+        evidence,
+        standing: triage.standing,
+        events,
+        signal,
+      }),
+    }
   }
 }

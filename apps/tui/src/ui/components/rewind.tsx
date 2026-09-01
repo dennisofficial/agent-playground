@@ -21,20 +21,16 @@ import {
   type RewindState,
 } from '../rewind-model'
 import { glyph, theme } from '../theme'
+import { drawerCells, DrawerLine, DRAWER_INSET, SideDrawer } from './drawer'
 import { clipSpans, truncateCells, wrapCells } from './sidebar/cells'
 import { Row } from './sidebar/row'
 import { Spans, type Span } from './spans'
 
-const PAD = 2
-
-const EDGE = 1
-
 const GUTTER_CELLS = 2
 
-export const REWIND_INSET = EDGE + PAD * 2
+export const REWIND_INSET = DRAWER_INSET
 
-export const rewindCells = (args: { width: number }): number =>
-  Math.max(0, args.width - REWIND_INSET)
+export const rewindCells = (args: { width: number }): number => drawerCells(args)
 
 export const HEADING = 'Rewind'
 
@@ -55,14 +51,6 @@ function budgeted(args: { text: string; cells: number; lines: number }): string[
   return [...kept.slice(0, -1), truncateCells({ text: `${kept.at(-1) ?? ''}…`, cells: args.cells })]
 }
 
-function Line(props: { press?: PressHandlers; children: React.ReactNode }): React.ReactNode {
-  return (
-    <box height={1} flexShrink={0} paddingLeft={PAD} paddingRight={PAD} {...(props.press ?? {})}>
-      {props.children}
-    </box>
-  )
-}
-
 function Rows(props: {
   lines: readonly string[]
   cells: number
@@ -73,7 +61,7 @@ function Rows(props: {
   return (
     <box flexDirection="column" flexShrink={0}>
       {props.lines.map((line, index) => (
-        <Line key={`${String(index)}-${line}`}>
+        <DrawerLine key={`${String(index)}-${line}`}>
           <text>
             <Spans
               spans={clipSpans({
@@ -87,7 +75,7 @@ function Rows(props: {
               })}
             />
           </text>
-        </Line>
+        </DrawerLine>
       ))}
     </box>
   )
@@ -160,7 +148,7 @@ function Footer(props: {
   press: PressHandlers
 }): React.ReactNode {
   return (
-    <Line press={props.press}>
+    <DrawerLine press={props.press}>
       <text>
         <Spans
           spans={clipSpans({
@@ -172,7 +160,7 @@ function Footer(props: {
           })}
         />
       </text>
-    </Line>
+    </DrawerLine>
   )
 }
 
@@ -221,7 +209,7 @@ function Committing(props: {
       <Rows lines={chosen.lines} cells={props.cells} fg={theme.bright} gutter />
       <box flexDirection="column" flexShrink={0}>
         {verbsFor({ state: props.state }).map((verb) => (
-          <Line
+          <DrawerLine
             key={verb}
             press={press(point === null ? undefined : () => props.onPick({ point, verb }))}
           >
@@ -232,7 +220,7 @@ function Committing(props: {
               mark={{ text: verb === props.verb ? glyph.selected : ' ', fg: theme.accent }}
               value={[{ text: verbTally({ state: props.state, verb }), fg: theme.hint }]}
             />
-          </Line>
+          </DrawerLine>
         ))}
       </box>
       <Rows
@@ -262,37 +250,28 @@ export function Rewind(props: {
   const committing = verb !== null && selectedPoint(props.state) !== null
 
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
+    <SideDrawer
       width={props.width}
-      backgroundColor={theme.overlayBg}
-      border={['left']}
-      borderColor={theme.rule}
-      paddingTop={1}
-      paddingBottom={1}
-      {...(props.overlay
-        ? { position: 'absolute' as const, top: 0, bottom: 0, right: 0, zIndex: 20 }
-        : {})}
+      overlay={props.overlay === true}
+      footer={
+        <Footer
+          cells={cells}
+          hints={committing ? COMMITTING : CHOOSING}
+          press={press(props.onDismiss)}
+        />
+      }
     >
-      <box flexDirection="column" flexGrow={1} flexShrink={1} gap={1}>
-        <box flexDirection="column" flexShrink={0}>
-          <Rows lines={[HEADING]} cells={cells} fg={theme.bright} />
-          {committing ? null : (
-            <Rows lines={wrapCells({ text: SUBTITLE, cells })} cells={cells} fg={theme.hint} />
-          )}
-        </box>
-        {verb === null || !committing ? (
-          <Choosing state={props.state} cells={cells} />
-        ) : (
-          <Committing state={props.state} verb={verb} cells={cells} onPick={props.onPick} />
+      <box flexDirection="column" flexShrink={0}>
+        <Rows lines={[HEADING]} cells={cells} fg={theme.bright} />
+        {committing ? null : (
+          <Rows lines={wrapCells({ text: SUBTITLE, cells })} cells={cells} fg={theme.hint} />
         )}
       </box>
-      <Footer
-        cells={cells}
-        hints={committing ? COMMITTING : CHOOSING}
-        press={press(props.onDismiss)}
-      />
-    </box>
+      {verb === null || !committing ? (
+        <Choosing state={props.state} cells={cells} />
+      ) : (
+        <Committing state={props.state} verb={verb} cells={cells} onPick={props.onPick} />
+      )}
+    </SideDrawer>
   )
 }

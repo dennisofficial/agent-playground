@@ -22,6 +22,8 @@ import { InMemoryFileReadState, type FileView } from '../../files/read-state'
 import { ABSENT, inputFieldOf } from '../../tools/declared-paths'
 import { createRecordFileStateHook } from '../record-file-state'
 
+const NEVER_ABORTED = new AbortController().signal
+
 let root = ''
 
 beforeAll(async () => {
@@ -171,8 +173,7 @@ const recordFor = async ({
 }) => {
   const outcome = await createRecordFileStateHook({ seen, tools }).run({
     call: callTo({ name, input, threadId }),
-    result,
-  })
+    result, signal: NEVER_ABORTED })
 
   return { outcome, seen }
 }

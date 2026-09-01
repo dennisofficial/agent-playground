@@ -1,13 +1,15 @@
 import { createAnthropic, type AnthropicProviderSettings } from '@ai-sdk/anthropic'
-import type {
-  LanguageModelV4,
-  LanguageModelV4CallOptions,
-  SharedV4ProviderOptions,
+import {
+  APICallError,
+  type LanguageModelV4,
+  type LanguageModelV4CallOptions,
+  type SharedV4ProviderOptions,
 } from '@ai-sdk/provider'
 
 import {
   ANTHROPIC_PROVIDER_ID,
   EAuthKind,
+  secretOf,
   type AccountId,
   type Credential,
   type CredentialPort,
@@ -16,6 +18,10 @@ import {
 import { withAnthropicSubscriptionAttribution } from './anthropic-subscription-attribution'
 
 export type AnthropicFetch = NonNullable<AnthropicProviderSettings['fetch']>
+
+export type AnthropicProviderOptions =
+  | SharedV4ProviderOptions
+  | (() => SharedV4ProviderOptions | undefined)
 
 type AuthorizedModel = { model: LanguageModelV4; credential: Credential }
 
@@ -26,7 +32,7 @@ export type AnthropicOauthModelArgs = {
   credentials: CredentialPort
   modelId: string
   accountId?: AccountId | undefined
-  providerOptions?: SharedV4ProviderOptions | undefined
+  providerOptions?: AnthropicProviderOptions | undefined
   baseURL?: string | undefined
   fetch?: AnthropicFetch | undefined
 }
@@ -48,6 +54,18 @@ const mergedProviderOptions = (args: {
 // @ai-sdk/anthropic 4.0.41 resolves auth headers lazily, per request, so a provider built with no
 // credential is legal as long as no request is made through it. `supportedUrls` reads pure config.
 const supportedUrlsWithoutACredential = (modelId: string) => createAnthropic()(modelId).supportedUrls
+
+const heldProviderOptions = (
+  held: AnthropicProviderOptions | undefined,
+): SharedV4ProviderOptions | undefined => (typeof held === 'function' ? held() : held)
+
+const REFUSED_STATUSES = [401, 403]
+
+// A pair another holder of the same OAuth lineage has rotated away comes back as 401 "OAuth access
+// token has been revoked." while its own `expiresAt` still reads fresh, so the server's refusal is
+// the only signal that the pair is dead.
+const wasRefused = (error: unknown): boolean =>
+  APICallError.isInstance(error) && REFUSED_STATUSES.includes(error.statusCode ?? 0)
 
 const authOf = (credential: Credential): AnthropicProviderSettings =>
   credential.kind === EAuthKind.Oauth
@@ -72,7 +90,7 @@ export function createAnthropicOauthModel(args: AnthropicOauthModelArgs): Langua
     options: LanguageModelV4CallOptions,
   ): LanguageModelV4CallOptions => {
     const providerOptions = mergedProviderOptions({
-      defaults: args.providerOptions,
+      defaults: heldProviderOptions(args.providerOptions),
       call: options.providerOptions,
     })
 
@@ -93,20 +111,39 @@ export function createAnthropicOauthModel(args: AnthropicOauthModelArgs): Langua
       ? withAnthropicSubscriptionAttribution(withDefaultProviderOptions(options))
       : withDefaultProviderOptions(options)
 
+  const throughACredentialTheServerAccepts = async <TResult>(
+    call: (authorized: AuthorizedModel) => PromiseLike<TResult>,
+  ): Promise<TResult> => {
+    const authorized = await authorizedModel()
+
+    try {
+      return await call(authorized)
+    } catch (error) {
+      if (!wasRefused(error)) throw error
+
+      await args.credentials.discard(authorized.credential)
+
+      const retried = await authorizedModel()
+      if (secretOf(retried.credential) === secretOf(authorized.credential)) throw error
+
+      return await call(retried)
+    }
+  }
+
   return {
     specificationVersion: 'v4',
     provider: ANTHROPIC_PROVIDER_ID,
     modelId: args.modelId,
     supportedUrls: supportedUrlsWithoutACredential(args.modelId),
 
-    doGenerate: async (options) => {
-      const authorized = await authorizedModel()
-      return authorized.model.doGenerate(attributed({ authorized, options }))
-    },
+    doGenerate: (options) =>
+      throughACredentialTheServerAccepts((authorized) =>
+        authorized.model.doGenerate(attributed({ authorized, options })),
+      ),
 
-    doStream: async (options) => {
-      const authorized = await authorizedModel()
-      return authorized.model.doStream(attributed({ authorized, options }))
-    },
+    doStream: (options) =>
+      throughACredentialTheServerAccepts((authorized) =>
+        authorized.model.doStream(attributed({ authorized, options })),
+      ),
   }
 }

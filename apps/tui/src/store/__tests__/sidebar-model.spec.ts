@@ -3,7 +3,8 @@ import { describe, expect, it } from 'bun:test'
 
 import { IDLE_TURN } from '../../ui/components/transcript'
 import { SIDEBAR_WIDTH } from '../../ui/theme'
-import { deriveSidebar, IDLE_SIDEBAR } from '../sidebar-model'
+import { ESidebarPlace } from '../../ui/sidebar-section'
+import { deriveSidebar, IDLE_SIDEBAR, withSections } from '../sidebar-model'
 import { log } from './fixture'
 
 const CALL_ONE = toCallId('call-1')
@@ -30,9 +31,7 @@ describe('approvals', () => {
 
     const model = deriveSidebar({ events, turn: IDLE_TURN })
 
-    expect(model.approvals).toEqual([
-      { callId: CALL_ONE, reason: 'runs a shell command' },
-    ])
+    expect(model.approvals).toEqual([{ callId: CALL_ONE, reason: 'runs a shell command' }])
   })
 
   it('clears the approval once it is answered', () => {
@@ -155,9 +154,6 @@ describe('the sections no producer feeds yet', () => {
 
     const model = deriveSidebar({ events, turn: turnOf({ startedAt: 1000, outputTokens: 12 }) })
 
-    expect(model.git).toBeUndefined()
-    expect(model.pr).toBeUndefined()
-    expect(model.ci).toBeUndefined()
     expect(model.todo).toBeUndefined()
     expect(model.subagents).toBeUndefined()
     expect(model.teammates).toBeUndefined()
@@ -168,5 +164,35 @@ describe('the sections no producer feeds yet', () => {
     expect(IDLE_SIDEBAR.turnCount).toBe(0)
     expect(IDLE_SIDEBAR.totalTokens).toBe(0)
     expect(IDLE_SIDEBAR.todo).toBeUndefined()
+  })
+})
+
+describe('withSections', () => {
+  const section = (id: string, place: ESidebarPlace) => ({
+    id,
+    place,
+    rows: [{ id: `${id}-row`, spans: [{ text: id }] }],
+  })
+
+  it('carries what plugins contributed, facts first', () => {
+    const model = withSections({
+      model: IDLE_SIDEBAR,
+      sections: [section('panel', ESidebarPlace.Panels), section('repo', ESidebarPlace.Facts)],
+    })
+
+    expect(model.sections?.map((found) => found.id)).toEqual(['repo', 'panel'])
+  })
+
+  it('leaves the model untouched when no plugin contributed a section', () => {
+    expect(withSections({ model: IDLE_SIDEBAR, sections: [] })).toBe(IDLE_SIDEBAR)
+  })
+
+  it('keeps everything the model already carried', () => {
+    const model = withSections({
+      model: { ...IDLE_SIDEBAR, title: 'a thread' },
+      sections: [section('repo', ESidebarPlace.Facts)],
+    })
+
+    expect(model.title).toBe('a thread')
   })
 })

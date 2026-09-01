@@ -51,9 +51,13 @@ const paddedLabel = (args: { label: string; cells: number }): string => {
   return `${kept}${' '.repeat(Math.max(0, args.cells - cellsOf(kept)))}`
 }
 
-function readOut(args: { setting: ResolvedSetting; cells: number }): Span[] {
+function readOut(args: {
+  setting: ResolvedSetting
+  cells: number
+  override?: Span | undefined
+}): Span[] {
   const { definition, value } = args.setting
-  const shown: Span = {
+  const shown: Span = args.override ?? {
     text: valueLabel({ definition, value }),
     fg: valueColour({ definition, value }),
   }
@@ -72,6 +76,7 @@ export function SettingLine(props: {
   setting: ResolvedSetting
   cells: number
   selected: boolean
+  override?: Span | undefined
   press?: PressHandlers
 }): React.ReactNode {
   const labelCells = labelColumn(props.cells)
@@ -89,6 +94,7 @@ export function SettingLine(props: {
     ...readOut({
       setting: props.setting,
       cells: props.cells - MARK_CELLS - labelCells - GAP,
+      override: props.override,
     }),
   ]
 

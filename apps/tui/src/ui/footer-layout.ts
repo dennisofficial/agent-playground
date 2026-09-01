@@ -1,19 +1,35 @@
+import type { EEffort } from '@dltech/atlas-core'
+
 import { COMPACT_COMMAND, isContextWarning } from './context-bar'
+import { EFFORT_ABBREVIATION } from './effort-label'
+import { footerItemCells, itemLadder, NO_FOOTER_ITEMS, type FooterItem } from './footer-item'
 import { cellsOf, HINT_SEPARATOR } from './hint-layout'
-import { formatTokens } from './theme'
+import { formatTokens, glyph } from './theme'
 import type { FooterMeter } from './usage-meters'
 
 export const FOOTER_GUTTER = 3
 
-export type FooterEffort = 'low' | 'medium' | 'high'
+export type FooterEffort = EEffort
 
 export type FooterContext = {
   percent: number
   tokensUsed?: number
   meters?: readonly FooterMeter[]
+  /** Named where the meters would be, for a provider that meters nothing. */
+  provider?: string
+  measured?: boolean
 }
 
-export type FooterReadout = { full: boolean; text: string; meters: readonly FooterMeter[] }
+export const UNMEASURED_CONTEXT = 'ctx ?'
+
+export const isMeasured = (context: FooterContext): boolean => context.measured !== false
+
+export type FooterReadout = {
+  full: boolean
+  text: string
+  meters: readonly FooterMeter[]
+  provider?: string
+}
 
 export function meterText(meter: FooterMeter): string {
   return `${meter.label} ${meter.text}`
@@ -22,6 +38,7 @@ export function meterText(meter: FooterMeter): string {
 export type FooterInstruments = {
   model: string | null
   effort: string | null
+  items: readonly FooterItem[]
   context: FooterReadout | null
 }
 
@@ -30,20 +47,41 @@ export type FooterLayout = {
   instrumentCells: number
 }
 
-const EFFORT_LABEL: Record<FooterEffort, string> = { low: 'low', medium: 'med', high: 'high' }
-
 export function effortSegment(effort: FooterEffort): string {
-  return EFFORT_LABEL[effort]
+  return EFFORT_ABBREVIATION[effort]
 }
 
 export function readouts(context: FooterContext): readonly FooterReadout[] {
   const percent = `${Math.round(context.percent)}%`
   const meters = context.meters ?? []
+  const provider = meters.length > 0 ? undefined : context.provider
+
+  /**
+   * The provider name is a rung of its own rather than part of the reading, so a terminal too
+   * narrow for both sheds the name and keeps the number.
+   */
+  const named = (readout: FooterReadout): readonly FooterReadout[] =>
+    provider === undefined ? [] : [{ ...readout, provider }]
+
+  /**
+   * A window nothing measured is a standing condition, not a reading, so the slot says so rather
+   * than going blank — an absent meter reads as a layout choice and a zero reads as real data.
+   */
+  if (!isMeasured(context)) {
+    const spelled = `${glyph.warning} ${UNMEASURED_CONTEXT}`
+    return [
+      ...(meters.length === 0 ? [] : [{ full: true, text: spelled, meters }]),
+      ...named({ full: true, text: spelled, meters: [] }),
+      { full: true, text: spelled, meters: [] },
+      { full: false, text: UNMEASURED_CONTEXT, meters: [] },
+    ]
+  }
 
   if (isContextWarning(context.percent)) {
     const spelled = `context ${percent} — ${COMPACT_COMMAND} to compact`
     return [
       ...(meters.length === 0 ? [] : [{ full: true, text: spelled, meters }]),
+      ...named({ full: true, text: spelled, meters: [] }),
       { full: true, text: spelled, meters: [] },
       { full: false, text: spelled, meters: [] },
       { full: false, text: `context ${percent}`, meters: [] },
@@ -61,6 +99,8 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
 
   return [
     ...withMeters,
+    ...(used === null ? [] : named({ full: true, text: head, meters: [] })),
+    ...named({ full: false, text: percent, meters: [] }),
     ...(used === null ? [] : [{ full: true, text: head, meters: [] }]),
     { full: false, text: percent, meters: [] },
   ]
@@ -71,14 +111,20 @@ export function readoutCells(args: { readout: FooterReadout }): number {
     (total, meter) => total + cellsOf(HINT_SEPARATOR) + cellsOf(meterText(meter)),
     0,
   )
-  return cellsOf(args.readout.text) + meters
+  const provider =
+    args.readout.provider === undefined
+      ? 0
+      : cellsOf(HINT_SEPARATOR) + cellsOf(args.readout.provider)
+
+  return cellsOf(args.readout.text) + meters + provider
 }
 
 export function instrumentCells(args: { instruments: FooterInstruments }): number {
-  const { model, effort, context } = args.instruments
+  const { model, effort, items, context } = args.instruments
   const segments = [
     ...(model === null ? [] : [cellsOf(model)]),
     ...(effort === null ? [] : [cellsOf(effort)]),
+    ...items.map(footerItemCells),
     ...(context === null ? [] : [readoutCells({ readout: context })]),
   ]
   if (segments.length === 0) return 0
@@ -88,7 +134,12 @@ export function instrumentCells(args: { instruments: FooterInstruments }): numbe
 
 type Facts = { model: string; effort: string | null }
 
-const BARE: FooterInstruments = { model: null, effort: null, context: null }
+const BARE: FooterInstruments = {
+  model: null,
+  effort: null,
+  items: NO_FOOTER_ITEMS,
+  context: null,
+}
 
 /**
  * Widest first, each rung strictly narrower than the one above it: the read-out gives up its tail
@@ -96,7 +147,7 @@ const BARE: FooterInstruments = { model: null, effort: null, context: null }
  * warning outranks both facts — what it says is why the footer is worth reading at all — so the
  * forms are split at the first one that has dropped its meter, and the facts leave in between.
  */
-function dropLadder(args: {
+function instrumentLadder(args: {
   facts: Facts
   context: FooterContext | null
 }): readonly FooterInstruments[] {
@@ -105,13 +156,34 @@ function dropLadder(args: {
   const kept = forms.slice(0, bareIndex + 1)
   const shortened = forms.slice(bareIndex + 1)
   const narrowest = kept[kept.length - 1] ?? null
+  const items = NO_FOOTER_ITEMS
 
   return [
-    ...kept.map((context) => ({ ...args.facts, context })),
-    { model: args.facts.model, effort: null, context: narrowest },
-    { model: null, effort: null, context: narrowest },
-    ...shortened.map((context) => ({ model: null, effort: null, context })),
+    ...kept.map((context) => ({ ...args.facts, items, context })),
+    { model: args.facts.model, effort: null, items, context: narrowest },
+    { model: null, effort: null, items, context: narrowest },
+    ...shortened.map((context) => ({ model: null, effort: null, items, context })),
     BARE,
+  ]
+}
+
+/**
+ * Items hang off the widest rung alone, so the row sheds every pill before any instrument degrades.
+ * The model is therefore always spelled beside a pill and the renderer never has to draw a leading
+ * item; the effort and the read-out ride along only when the caller supplied them at all.
+ */
+function dropLadder(args: {
+  facts: Facts
+  items: readonly FooterItem[]
+  context: FooterContext | null
+}): readonly FooterInstruments[] {
+  const rungs = instrumentLadder({ facts: args.facts, context: args.context })
+  const [widest, ...narrower] = rungs
+  if (widest === undefined) return [BARE]
+
+  return [
+    ...itemLadder(args.items).map((items) => ({ ...widest, items })),
+    ...narrower.map((instruments) => ({ ...instruments, items: NO_FOOTER_ITEMS })),
   ]
 }
 
@@ -119,13 +191,16 @@ export function footerLayout(args: {
   width: number
   model: string
   effort?: FooterEffort | null
+  items?: readonly FooterItem[]
   context?: FooterContext | null
 }): FooterLayout {
   const inner = Math.max(0, args.width - FOOTER_GUTTER * 2)
-  const effort = args.effort === undefined || args.effort === null ? null : effortSegment(args.effort)
+  const effort =
+    args.effort === undefined || args.effort === null ? null : effortSegment(args.effort)
 
   const ladder = dropLadder({
     facts: { model: args.model, effort },
+    items: args.items ?? NO_FOOTER_ITEMS,
     context: args.context ?? null,
   })
   const cellsFor = (instruments: FooterInstruments): number => instrumentCells({ instruments })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EKilledBy, EShellStatus } from '../../../shells/status'
-import { backgroundShellBlock } from '../background-shell-block'
+import { backgroundShellBlock, backgroundShellMatchedBlock } from '../background-shell-block'
 
 const ended = (over: Partial<Parameters<typeof backgroundShellBlock>[0]> = {}) =>
   ({
@@ -92,5 +92,86 @@ describe('handing a finished background shell to the model', () => {
 
     expect(block.startsWith('<background-shell-ended>')).toBe(true)
     expect(block.endsWith('</background-shell-ended>')).toBe(true)
+  })
+})
+
+const matched = (over: Partial<Parameters<typeof backgroundShellMatchedBlock>[0]> = {}) =>
+  ({
+    id: 'evt_2',
+    seq: 2,
+    threadId: 'br_1',
+    runId: 'run_1',
+    depth: 0,
+    at: '2026-08-27T12:00:00.000Z',
+    type: 'background-shell-matched',
+    shellId: 'bash_1',
+    command: 'bun test',
+    pattern: '(fail|error)',
+    lines: '12 fail\n',
+    matchCount: 1,
+    ...over,
+  }) as Parameters<typeof backgroundShellMatchedBlock>[0]
+
+describe('handing a running background shell watch match to the model', () => {
+  it('names the shell and hands over the lines that matched', () => {
+    const block = backgroundShellMatchedBlock(
+      matched({ description: 'Run full TUI suite', lines: '12 fail\n13 fail\n', matchCount: 2 }),
+    )
+
+    expect(block).toContain('bash_1')
+    expect(block).toContain('"Run full TUI suite"')
+    expect(block).toContain('`bun test`')
+    expect(block).toContain('2 lines')
+    expect(block).toContain('12 fail')
+    expect(block).toContain('13 fail')
+  })
+
+  it('counts a lone match in the singular', () => {
+    expect(backgroundShellMatchedBlock(matched())).toContain('1 line')
+  })
+
+  it('says the shell is still running, so a match does not read as an ending', () => {
+    const block = backgroundShellMatchedBlock(matched())
+
+    expect(block).toContain('still running')
+    expect(block).toContain('has not ended')
+    expect(block).not.toContain('shell_output')
+  })
+
+  it('says the lines are only what the pattern covers, so silence proves nothing', () => {
+    const block = backgroundShellMatchedBlock(matched())
+
+    expect(block).toContain('/(fail|error)/')
+    expect(block).toContain('Silence from this watch is not evidence')
+  })
+
+  it('says a disarmed watch stopped and the shell did not', () => {
+    const block = backgroundShellMatchedBlock(matched({ watchDisarmed: true }))
+
+    expect(block).toContain('The watch has stopped')
+    expect(block).toContain('The shell itself did NOT stop')
+    expect(block).toContain('its ending will still arrive')
+  })
+
+  it('renders the disarm notice even with no lines to show', () => {
+    const block = backgroundShellMatchedBlock(
+      matched({ watchDisarmed: true, lines: '', matchCount: 200 }),
+    )
+
+    expect(block).toContain('It carried no lines with it.')
+    expect(block).toContain('The watch has stopped')
+    expect(block).toContain('The shell itself did NOT stop')
+    expect(block).toContain('still running')
+  })
+
+  it('says nothing about a disarmed watch while the watch is still armed', () => {
+    expect(backgroundShellMatchedBlock(matched())).not.toContain('The watch has stopped')
+  })
+
+  it('wraps the block so the model can tell it from something a human typed', () => {
+    const block = backgroundShellMatchedBlock(matched())
+
+    expect(block.startsWith('<background-shell-matched>')).toBe(true)
+    expect(block.endsWith('</background-shell-matched>')).toBe(true)
   })
 })

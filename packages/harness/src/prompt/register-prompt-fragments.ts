@@ -1,10 +1,36 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
 import { instanceCachingFactory, portToken, type DependencyContainer } from '../container/injection'
-import { ProjectDirectoryFragment, RelativePathsFragment } from './fragments/environment'
-import { ReadBeforeWriteFragment } from './fragments/files'
+import { DelegationFragment } from './fragments/agents'
+import {
+  ProjectDirectoryFragment,
+  RelativePathsFragment,
+  TodayFragment,
+} from './fragments/environment'
+import { ReadBeforeWriteFragment, ReadWideFragment } from './fragments/files'
 import { AtlasIdentityFragment } from './fragments/identity'
+import {
+  CiteFileAndLineFragment,
+  CutOrderFragment,
+  LeadWithOutcomeFragment,
+  OutputShapeFragment,
+  ReadableBeatsTerseFragment,
+} from './fragments/output'
+import { TaskListFragment } from './fragments/plan'
+import { DestructiveActionsFragment, GitEtiquetteFragment } from './fragments/safety'
+import {
+  ConcernThenBuildFragment,
+  DeliverWhatWasAskedFragment,
+  RequestLadderFragment,
+} from './fragments/scope'
+import { BackgroundShellsFragment } from './fragments/shells'
 import { SkillListingFragment } from './fragments/skills'
+import {
+  NoRereadAfterWriteFragment,
+  ParallelToolCallsFragment,
+  PreferDedicatedToolsFragment,
+} from './fragments/tools'
+import { UntrustedWebContentFragment, WebResearchFragment } from './fragments/web'
 import { CompactionNoticeFragment } from './fragments/workflow'
 import { InMemoryPromptRegistry, PromptRegistry } from './registry'
 
@@ -13,12 +39,38 @@ export function registerBuiltinPromptFragments({
 }: {
   container: DependencyContainer
 }): void {
-  container.register(portToken(PromptFragment), { useClass: AtlasIdentityFragment })
-  container.register(portToken(PromptFragment), { useClass: CompactionNoticeFragment })
-  container.register(portToken(PromptFragment), { useClass: ProjectDirectoryFragment })
-  container.register(portToken(PromptFragment), { useClass: RelativePathsFragment })
-  container.register(portToken(PromptFragment), { useClass: ReadBeforeWriteFragment })
-  container.register(portToken(PromptFragment), { useClass: SkillListingFragment })
+  const fragments = [
+    AtlasIdentityFragment,
+    CompactionNoticeFragment,
+    RequestLadderFragment,
+    DeliverWhatWasAskedFragment,
+    ConcernThenBuildFragment,
+    TodayFragment,
+    ProjectDirectoryFragment,
+    RelativePathsFragment,
+    ReadBeforeWriteFragment,
+    ReadWideFragment,
+    PreferDedicatedToolsFragment,
+    ParallelToolCallsFragment,
+    NoRereadAfterWriteFragment,
+    BackgroundShellsFragment,
+    TaskListFragment,
+    DelegationFragment,
+    DestructiveActionsFragment,
+    GitEtiquetteFragment,
+    LeadWithOutcomeFragment,
+    ReadableBeatsTerseFragment,
+    OutputShapeFragment,
+    CutOrderFragment,
+    CiteFileAndLineFragment,
+    SkillListingFragment,
+    WebResearchFragment,
+    UntrustedWebContentFragment,
+  ]
+
+  for (const useClass of fragments) {
+    container.register(portToken(PromptFragment), { useClass })
+  }
 
   container.register(portToken(PromptRegistry), {
     useFactory: instanceCachingFactory((resolver) => resolver.resolve(InMemoryPromptRegistry)),

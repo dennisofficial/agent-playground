@@ -10,7 +10,8 @@ import {
 
 import { inject, injectable, portToken } from '../../container/injection'
 import { EShellStatus, type ShellSnapshot } from '../../shells/background-shell'
-import { ShellRegistryPort, type ShellDelta } from '../../shells/shell-registry'
+import { ShellRegistryPort } from '../../shells/shell-registry'
+import type { ShellDelta } from '../../shells/notice-queue'
 
 const inputSchema = z.strictObject({
   shellId: z.string().min(1),

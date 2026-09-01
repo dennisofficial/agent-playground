@@ -29,6 +29,8 @@ export {
   outputOf,
   reasonOf,
   records,
+  num,
+  hostOf,
   relativise,
   strings,
   targetOf,

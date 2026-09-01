@@ -16,6 +16,8 @@ import {
 import { InvalidateFactsHook } from '../invalidate-facts'
 import { PrewarmFactsHook } from '../prewarm-facts'
 
+const NEVER_ABORTED = new AbortController().signal
+
 class SpyFacts extends WorkspaceFactsPort {
   readonly warmed: FactWarming[] = []
   invalidations = 0
@@ -48,7 +50,7 @@ describe('the hooks that keep the workspace facts fresh', () => {
     const facts = new SpyFacts()
     const hook = new InvalidateFactsHook(facts)
 
-    await hook.run({ call: callWith({ effect: EToolEffect.Read }), result: OK })
+    await hook.run({ call: callWith({ effect: EToolEffect.Read }), result: OK, signal: NEVER_ABORTED })
 
     expect(facts.invalidations).toBe(0)
   })
@@ -57,8 +59,8 @@ describe('the hooks that keep the workspace facts fresh', () => {
     const facts = new SpyFacts()
     const hook = new InvalidateFactsHook(facts)
 
-    await hook.run({ call: callWith({ effect: EToolEffect.Write }), result: OK })
-    await hook.run({ call: callWith({ effect: EToolEffect.Destructive }), result: OK })
+    await hook.run({ call: callWith({ effect: EToolEffect.Write }), result: OK, signal: NEVER_ABORTED })
+    await hook.run({ call: callWith({ effect: EToolEffect.Destructive }), result: OK, signal: NEVER_ABORTED })
 
     expect(facts.invalidations).toBe(2)
   })
@@ -69,8 +71,7 @@ describe('the hooks that keep the workspace facts fresh', () => {
 
     await hook.run({
       call: callWith({ effect: EToolEffect.Destructive }),
-      result: { ok: false, reason: 'interrupted' },
-    })
+      result: { ok: false, reason: 'interrupted' }, signal: NEVER_ABORTED })
 
     expect(facts.invalidations).toBe(1)
   })

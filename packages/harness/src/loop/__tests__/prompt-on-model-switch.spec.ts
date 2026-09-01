@@ -3,13 +3,14 @@ import { describe, expect, it } from 'bun:test'
 import {
   assemble,
   defaultPipeline,
+  CONTEXT_WINDOW_WHEN_THE_MODEL_IS_UNKNOWN,
   EPromptAgent,
-  EThinkingControl,
   estimateTokens,
   PromptFragment,
   promptContextFor,
   toThreadId,
   type PromptContext,
+  type PromptModel,
   type ProviderIdentity,
 } from '@dltech/atlas-core'
 
@@ -25,15 +26,15 @@ class IdentityFragment extends PromptFragment {
   }
 }
 
-class BudgetThinkingFragment extends PromptFragment {
-  readonly id = 'fixture.thinking-budget'
+class NarrowContextFragment extends PromptFragment {
+  readonly id = 'fixture.narrow-context'
 
   override applies(ctx: PromptContext): boolean {
-    return ctx.model?.thinkingControl === EThinkingControl.Budget
+    return ctx.model.contextWindow <= CONTEXT_WINDOW_WHEN_THE_MODEL_IS_UNKNOWN
   }
 
   text(): string {
-    return 'Ask for thinking with a token budget.'
+    return 'Spend the window carefully; there is not much of it.'
   }
 }
 
@@ -56,13 +57,24 @@ const ctxFor = (provider: ProviderIdentity) => ({
   countTokens: estimateTokens,
 })
 
+const OPUS_WINDOW: PromptModel = { contextWindow: 1_000_000 }
+const HAIKU_WINDOW: PromptModel = { contextWindow: 200_000 }
+
 const systemFor = (args: {
   registry: InMemoryPromptRegistry
   provider: ProviderIdentity
+  model: PromptModel
 }): readonly string[] => {
   const pipeline = defaultPipeline({
     prompt: () =>
-      args.registry.compile(promptContextFor({ agent: EPromptAgent.Main, provider: args.provider, projectDirectory: '/w' })),
+      args.registry.compile(
+        promptContextFor({
+          agent: EPromptAgent.Main,
+          provider: args.provider,
+          model: args.model,
+          projectDirectory: '/w',
+        }),
+      ),
     launchDirectory: PROJECT_DIRECTORY,
   })
 
@@ -71,21 +83,26 @@ const systemFor = (args: {
 
 describe('a model switch, seen through the pipeline the composition root built once', () => {
   it('emits the fragments the newly selected model calls for, without a new pipeline', () => {
-    const registry = new InMemoryPromptRegistry([new IdentityFragment(), new BudgetThinkingFragment()])
+    const registry = new InMemoryPromptRegistry([new IdentityFragment(), new NarrowContextFragment()])
     let provider: ProviderIdentity = { id: 'anthropic', modelId: 'claude-opus-5' }
+    let model: PromptModel = OPUS_WINDOW
 
     const pipeline = defaultPipeline({
-      prompt: () => registry.compile(promptContextFor({ agent: EPromptAgent.Main, provider })),
+      prompt: ({ projectDirectory }) =>
+        registry.compile(
+          promptContextFor({ agent: EPromptAgent.Main, provider, model, projectDirectory }),
+        ),
       launchDirectory: PROJECT_DIRECTORY,
     })
 
     const onOpus = assemble({ ...pipeline, ctx: ctxFor(provider) }).assembled.system
     provider = { id: 'anthropic', modelId: 'claude-haiku-4-5' }
+    model = HAIKU_WINDOW
     const onHaiku = assemble({ ...pipeline, ctx: ctxFor(provider) }).assembled.system
 
     expect(onOpus.map((block) => block.text)).toEqual(['You are Atlas.'])
     expect(onHaiku.map((block) => block.text)).toEqual([
-      'You are Atlas.\n\nAsk for thinking with a token budget.',
+      'You are Atlas.\n\nSpend the window carefully; there is not much of it.',
     ])
   })
 
@@ -95,32 +112,14 @@ describe('a model switch, seen through the pipeline the composition root built o
     const opus: ProviderIdentity = { id: 'anthropic', modelId: 'claude-opus-5' }
     const haiku: ProviderIdentity = { id: 'anthropic', modelId: 'claude-haiku-4-5' }
 
-    systemFor({ registry, provider: opus })
-    systemFor({ registry, provider: opus })
-    systemFor({ registry, provider: opus })
+    systemFor({ registry, provider: opus, model: OPUS_WINDOW })
+    systemFor({ registry, provider: opus, model: OPUS_WINDOW })
+    systemFor({ registry, provider: opus, model: OPUS_WINDOW })
 
     expect(counting.calls).toBe(1)
 
-    systemFor({ registry, provider: haiku })
+    systemFor({ registry, provider: haiku, model: HAIKU_WINDOW })
 
     expect(counting.calls).toBe(2)
-  })
-
-  it('resolves the model entry from the id the provider reports, so the two cannot disagree', () => {
-    const ctx = promptContextFor({
-      agent: EPromptAgent.Main,
-      provider: { id: 'anthropic', modelId: 'claude-haiku-4-5' },
-    })
-
-    expect(ctx.model?.thinkingControl).toBe(EThinkingControl.Budget)
-  })
-
-  it('leaves the model undefined for an id outside the catalogue, rather than guessing', () => {
-    const ctx = promptContextFor({
-      agent: EPromptAgent.Main,
-      provider: { id: 'gateway', modelId: 'some-model-nobody-catalogued' },
-    })
-
-    expect(ctx.model).toBeUndefined()
   })
 })

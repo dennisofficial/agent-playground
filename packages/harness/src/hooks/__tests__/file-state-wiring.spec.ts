@@ -25,6 +25,8 @@ import { WriteTool } from '../../tools/builtin/write'
 import type { HookChain, RegisteredHook } from '../registry'
 import { resolveHookChain } from '../resolve-hooks'
 
+const NEVER_ABORTED = new AbortController().signal
+
 let root = ''
 let container: DependencyContainer
 let chain: HookChain
@@ -122,8 +124,7 @@ const havingRead = async (
 
   await scribe().run({
     call: callTo({ name: 'read', input, effect: EToolEffect.Read, threadId }),
-    result,
-  })
+    result, signal: NEVER_ABORTED })
 }
 
 const grepTool = new GrepTool()
@@ -143,8 +144,7 @@ const havingSearched = async (
 
   await scribe().run({
     call: callTo({ name: 'grep', input, effect: EToolEffect.Read, threadId }),
-    result,
-  })
+    result, signal: NEVER_ABORTED })
 }
 
 const writeTool = new WriteTool()
@@ -164,8 +164,7 @@ const havingWritten = async (
 
   await scribe().run({
     call: callTo({ name: 'write', input, effect: EToolEffect.Write, threadId }),
-    result,
-  })
+    result, signal: NEVER_ABORTED })
 }
 
 const linesNumbering = (count: number): string =>

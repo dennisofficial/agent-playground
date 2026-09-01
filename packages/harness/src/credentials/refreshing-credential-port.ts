@@ -1,15 +1,14 @@
 import {
-  adoptionOf,
   chooseAccount,
   CredentialPort,
   EAccountChoice,
   EAccountStatus,
-  EAdoption,
   EAuthKind,
   EAuthProvider,
   ENoAccountReason,
   ERefresh,
   isExpired,
+  isSamePair,
   providerSpec,
   refreshDecision,
   type AccountId,
@@ -22,8 +21,9 @@ import {
 } from '@dltech/atlas-core'
 
 import { CredentialError, ECredentialFailure } from './credential-error'
-import { sinkFor, type CredentialSink } from './credential-sink'
+import type { CredentialSink } from './credential-sink'
 import { clientFor, isHardAuthFailure, type RefreshClients } from './oauth'
+import { SinkReconciler } from './sink-reconciler'
 
 const SIGN_IN = 'Sign in with /auth.'
 
@@ -44,10 +44,11 @@ export class RefreshingCredentialPort extends CredentialPort {
   private readonly accounts: AccountStorePort
   private readonly clients: RefreshClients
   private readonly clock: ClockPort
-  private readonly sinks: readonly CredentialSink[]
+  private readonly reconciler: SinkReconciler
   private readonly defaultProvider: EAuthProvider
   private readonly skewMs: number | undefined
   private readonly refreshing = new Map<AccountId, Promise<StoredAccount>>()
+  private readonly rejected = new Map<AccountId, string>()
 
   constructor(args: {
     accounts: AccountStorePort
@@ -56,30 +57,50 @@ export class RefreshingCredentialPort extends CredentialPort {
     sinks?: readonly CredentialSink[]
     defaultProvider?: EAuthProvider
     skewMs?: number | undefined
+    sinkTtlMs?: number | undefined
   }) {
     super()
     this.accounts = args.accounts
     this.clients = args.clients
     this.clock = args.clock
-    this.sinks = args.sinks ?? []
+    this.reconciler = new SinkReconciler({
+      accounts: args.accounts,
+      sinks: args.sinks ?? [],
+      clock: args.clock,
+      ttlMs: args.sinkTtlMs,
+    })
     this.defaultProvider = args.defaultProvider ?? EAuthProvider.Anthropic
     this.skewMs = args.skewMs
   }
 
   async read(request?: CredentialRequest): Promise<Credential> {
     const provider = request?.provider ?? this.defaultProvider
-    const stored = await this.chosenAccount({ provider, accountId: request?.accountId })
+    const chosen = await this.chosenAccount({ provider, accountId: request?.accountId })
+    const { account: stored } = await this.reconciler.adopt({ stored: chosen })
 
-    const decision = refreshDecision({
-      secret: stored.secret,
-      now: this.clock.now(),
-      ...(this.skewMs === undefined ? {} : { skewMs: this.skewMs }),
-    })
+    const decision = this.decisionFor(stored)
 
     if (decision === ERefresh.Fresh) return credentialOf(stored)
     if (decision === ERefresh.Unrefreshable) throw this.expired(stored)
 
     return credentialOf(await this.sharedRefresh(stored))
+  }
+
+  async discard(credential: Credential): Promise<void> {
+    if (credential.kind !== EAuthKind.Oauth) return
+    this.rejected.set(credential.accountId, credential.accessToken)
+  }
+
+  private decisionFor(stored: StoredAccount): ERefresh {
+    const held = tokensOf(stored)
+    const revoked = held !== undefined && this.rejected.get(stored.id) === held.accessToken
+
+    return refreshDecision({
+      secret: stored.secret,
+      now: this.clock.now(),
+      revoked,
+      ...(this.skewMs === undefined ? {} : { skewMs: this.skewMs }),
+    })
   }
 
   private async chosenAccount(args: {
@@ -113,13 +134,24 @@ export class RefreshingCredentialPort extends CredentialPort {
     return work
   }
 
-  private async refresh(stored: StoredAccount): Promise<StoredAccount> {
+  /**
+   * A refresh token is single-use, so spending it is the one step that cannot be taken back. The
+   * other tool may have rotated since the cached look, and its store is free to read — and if it
+   * has, the pair to spend is that one. Ours is already scrap.
+   */
+  private async refresh(held: StoredAccount): Promise<StoredAccount> {
+    const { account: stored, adopted } = await this.reconciler.adopt({
+      stored: held,
+      bypassCache: true,
+    })
+
+    if (adopted) {
+      this.rejected.delete(stored.id)
+      if (this.decisionFor(stored) === ERefresh.Fresh) return stored
+    }
+
     const tokens = tokensOf(stored)
     if (tokens === undefined) return stored
-
-    const sink = sinkFor({ sinks: this.sinks, importedFrom: stored.importedFrom })
-    const adopted = await this.adoptFromSink({ stored, tokens, sink })
-    if (adopted !== undefined) return adopted
 
     const client = clientFor({ clients: this.clients, provider: stored.provider })
 
@@ -128,14 +160,13 @@ export class RefreshingCredentialPort extends CredentialPort {
       const secret = { kind: EAuthKind.Oauth, tokens: rotated } as const
 
       await this.accounts.replaceSecret({ accountId: stored.id, secret })
-      await this.writeBack({ sink, rotated, previous: tokens })
+      const next: StoredAccount = { ...stored, secret, status: EAccountStatus.Active }
+      await this.reconciler.writeBack({ stored: next, rotated, previous: tokens })
+      this.rejected.delete(stored.id)
 
-      return { ...stored, secret, status: EAccountStatus.Active }
+      return next
     } catch (error) {
-      if (isHardAuthFailure(error)) {
-        await this.accounts.setStatus({ accountId: stored.id, status: EAccountStatus.Expired })
-        throw this.expired(stored)
-      }
+      if (isHardAuthFailure(error)) return this.afterRefusal(stored)
       if (isExpired({ secret: stored.secret, now: this.clock.now() })) throw this.unreachable(error)
 
       return stored
@@ -143,69 +174,35 @@ export class RefreshingCredentialPort extends CredentialPort {
   }
 
   /**
-   * The tool the credential was imported from refreshes it too. If its pair is the newer one, taking
-   * it up costs no network call and avoids spending our refresh token on a race we have lost.
+   * A refused refresh means the token was already spent, which is exactly what another Atlas
+   * sharing this vault looks like — it rotated, and the pair it left behind is live. Retiring the
+   * account over a race we lost is how one bad refresh used to cost a working login.
    */
-  private async adoptFromSink(args: {
-    stored: StoredAccount
-    tokens: OauthTokens
-    sink: CredentialSink | undefined
-  }): Promise<StoredAccount | undefined> {
-    if (args.sink === undefined) return undefined
+  private async afterRefusal(stored: StoredAccount): Promise<StoredAccount> {
+    const rotatedElsewhere = await this.pairAnotherHolderLeft(stored)
+    if (rotatedElsewhere === undefined) return this.retire(stored)
 
-    const observed = await args.sink.read().catch(() => undefined)
-    if (observed === undefined) return undefined
+    this.rejected.delete(stored.id)
 
-    const adoption = adoptionOf({
-      observed,
-      stored: args.tokens,
-      others: await this.otherTokens(args.stored),
-    })
-    if (adoption !== EAdoption.Adopt) return undefined
-
-    const secret = { kind: EAuthKind.Oauth, tokens: observed } as const
-    await this.accounts.replaceSecret({ accountId: args.stored.id, secret })
-
-    const next: StoredAccount = { ...args.stored, secret, status: EAccountStatus.Active }
-    const decision = refreshDecision({
-      secret,
-      now: this.clock.now(),
-      ...(this.skewMs === undefined ? {} : { skewMs: this.skewMs }),
-    })
-
-    return decision === ERefresh.Fresh ? next : undefined
+    return rotatedElsewhere
   }
 
-  private async writeBack(args: {
-    sink: CredentialSink | undefined
-    rotated: OauthTokens
-    previous: OauthTokens
-  }): Promise<void> {
-    if (args.sink === undefined) return
+  private async pairAnotherHolderLeft(stored: StoredAccount): Promise<StoredAccount | undefined> {
+    const spent = tokensOf(stored)
+    if (spent === undefined) return undefined
 
-    const held = await args.sink.read().catch(() => undefined)
-    const adoption = adoptionOf({
-      observed: args.rotated,
-      stored: held ?? args.previous,
-      others: [],
-    })
-    if (adoption !== EAdoption.Adopt) return
+    const current = await this.accounts.read(stored.id)
+    if (current === undefined) return undefined
 
-    await args.sink.write(args.rotated).catch(() => undefined)
+    const now = tokensOf(current)
+    if (now === undefined || isSamePair(now, spent)) return undefined
+
+    return current
   }
 
-  private async otherTokens(stored: StoredAccount): Promise<readonly OauthTokens[]> {
-    const siblings = (await this.accounts.list()).filter(
-      (account) => account.provider === stored.provider && account.id !== stored.id,
-    )
-
-    const secrets = await Promise.all(siblings.map((account) => this.accounts.read(account.id)))
-
-    return secrets.flatMap((sibling) => {
-      if (sibling === undefined) return []
-      const tokens = tokensOf(sibling)
-      return tokens === undefined ? [] : [tokens]
-    })
+  private async retire(stored: StoredAccount): Promise<never> {
+    await this.accounts.setStatus({ accountId: stored.id, status: EAccountStatus.Expired })
+    throw this.expired(stored)
   }
 
   private expired(stored: StoredAccount): CredentialError {

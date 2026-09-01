@@ -10,6 +10,7 @@ import { defineRule, type Rule } from '../rule'
 import {
   backgroundShellAwaitingInputBlock,
   backgroundShellBlock,
+  backgroundShellMatchedBlock,
 } from './background-shell-block'
 import { nudgeBlock } from './nudge-block'
 
@@ -180,6 +181,18 @@ function walkEvents(events: readonly Event[]): Walk {
         message: {
           role: 'user',
           content: [{ type: 'text', text: backgroundShellAwaitingInputBlock(event) }],
+        },
+        origin: originOf(event),
+      })
+      openAssistant = undefined
+      continue
+    }
+
+    if (event.type === 'background-shell-matched') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: backgroundShellMatchedBlock(event) }],
         },
         origin: originOf(event),
       })

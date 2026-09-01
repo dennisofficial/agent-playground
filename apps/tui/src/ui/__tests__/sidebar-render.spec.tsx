@@ -1,15 +1,19 @@
+import { homedir } from 'node:os'
+
 import { EAgentStatus, ERetryReason, toCallId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
-import React from 'react'
+import React, { act } from 'react'
 
 import { ESpendReading, SPEND_UNAVAILABLE } from '../../store/agent-spend'
 import { ESidebarTaskState, IDLE_SIDEBAR, type SidebarModel } from '../../store/sidebar-model'
 import { type SidebarSubagent } from '../../store/subagent-row'
+import type { SidebarSection } from '../sidebar-section'
 import { Sidebar } from '../components/sidebar'
 import { SIDEBAR_GUTTER } from '../components/sidebar/cells'
 import { IDLE_TURN, type TurnClock } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
+import { ESidebarPlace } from '../sidebar-section'
 import { glyph, SPINNER_FRAMES, SIDEBAR_WIDTH } from '../theme'
 
 const TERMINAL_WIDTH = 80
@@ -43,6 +47,27 @@ const TASKS = [
   { id: 'k5', label: 'Drop the old column', state: ESidebarTaskState.Pending },
 ] as const
 
+const PR_URL = 'https://github.com/o/r/pull/412'
+
+const opened: string[] = []
+
+const githubSection = (args: { pullRequest: boolean; checks: boolean }): SidebarSection => ({
+  id: 'github',
+  place: ESidebarPlace.Facts,
+  rows: [
+    { id: 'branch', spans: [{ text: 'auth/rotation' }] },
+    {
+      id: 'pull-request',
+      spans: [
+        ...(args.pullRequest ? [{ text: '#412 draft' }] : []),
+        ...(args.pullRequest && args.checks ? [{ text: '  ' }] : []),
+        ...(args.checks ? [{ text: `${SPINNER_FRAMES[0]} 2 running  3 ✓  1 ✗` }] : []),
+      ],
+      onActivate: () => opened.push(PR_URL),
+    },
+  ],
+})
+
 const FED: SidebarModel = {
   title: 'Refresh-token rotation',
   turnCount: 14,
@@ -51,9 +76,7 @@ const FED: SidebarModel = {
   lastActivity: null,
   liveOutputTokens: 1_280,
   lastTurnOutputTokens: null,
-  git: { branch: 'auth/rotation' },
-  pr: { number: 412, state: 'draft' },
-  ci: { running: 2, passed: 3, failed: 1 },
+  sections: [githubSection({ pullRequest: true, checks: true })],
   todo: TASKS,
   subagents: [
     {
@@ -111,16 +134,20 @@ async function rowsOf(args: {
   model: SidebarModel
   turn?: TurnClock
   height?: number
+  root?: string
+  worktree?: string | null
+  width?: number
 }): Promise<string[]> {
   const height = args.height ?? HEIGHT
   const setup = await testRender(
     <box flexDirection="row" width={TERMINAL_WIDTH} height={height}>
       <Sidebar
-        width={SIDEBAR_WIDTH}
+        width={args.width ?? SIDEBAR_WIDTH}
         model={args.model}
         turn={args.turn ?? RUNNING}
         now={42_000}
-        cwd={CWD}
+        root={args.root ?? CWD}
+        worktree={args.worktree ?? null}
       />
     </box>,
     { width: TERMINAL_WIDTH, height },
@@ -133,6 +160,11 @@ async function rowsOf(args: {
     await teardown(setup)
   }
 }
+
+const without = (fact: 'pullRequest' | 'checks'): SidebarModel => ({
+  ...FED,
+  sections: [githubSection({ pullRequest: fact !== 'pullRequest', checks: fact !== 'checks' })],
+})
 
 const rowWith = (args: { rows: readonly string[]; text: string }): string =>
   args.rows.find((row) => row.includes(args.text)) ?? ''
@@ -229,20 +261,119 @@ describe('what the sidebar says', () => {
     const rows = await rowsOf({ model: FED })
     const git = rowWith({ rows, text: 'auth/rotation' })
 
-    expect(git.trimStart().startsWith('git')).toBe(true)
+    expect(git.trimStart().startsWith('auth/rotation')).toBe(true)
     expect(written(git).trimEnd().endsWith('auth/rotation')).toBe(true)
     expect(written(git).trimEnd().length).toBe(CONTENT_END)
   }, 30_000)
 
-  it('spells the pull request and what its checks are doing', async () => {
+  it('spells the pull request and its checks on one unlabelled line', async () => {
     const rows = await rowsOf({ model: FED })
+    const repository = rowWith({ rows, text: '#412 draft' })
 
-    expect(rowWith({ rows, text: '#412' })).toContain('draft')
+    expect(repository).toContain('2 running')
+    expect(repository).toContain('3 ✓')
+    expect(repository).toContain('1 ✗')
+    expect(rowWith({ rows, text: '3 ✓' })).toBe(repository)
+  }, 30_000)
 
-    const ci = rowWith({ rows, text: 'running' })
-    expect(ci).toContain('2 running')
-    expect(ci).toContain('3 ✓')
-    expect(ci).toContain('1 ✗')
+  it('carries no pr or ci label, and sets the line against the right edge', async () => {
+    const rows = await rowsOf({ model: FED })
+    const repository = written(rowWith({ rows, text: '#412 draft' }))
+
+    expect(repository.trimStart().startsWith('#412')).toBe(true)
+    expect(repository.trimEnd().length).toBe(CONTENT_END)
+  }, 30_000)
+
+  it('keeps the whole line at the width the sidebar actually ships with', async () => {
+    const rows = await rowsOf({ model: FED })
+    const repository = rowWith({ rows, text: '#412 draft' })
+
+    expect(repository).toContain('2 running')
+    expect(repository).toContain('1 ✗')
+  }, 30_000)
+
+  it('shows the pull request alone when nothing has reported a check', async () => {
+    const rows = await rowsOf({ model: without('checks') })
+    const repository = rowWith({ rows, text: '#412 draft' })
+
+    expect(repository).toContain('draft')
+    expect(repository).not.toContain('✓')
+  }, 30_000)
+
+  it('shows the checks alone if they ever arrive without a pull request', async () => {
+    const rows = await rowsOf({ model: without('pullRequest') })
+    const checks = rowWith({ rows, text: '3 ✓' })
+
+    expect(checks).toContain('1 ✗')
+    expect(checks).not.toContain('#')
+  }, 30_000)
+
+  it('opens the pull request when its row is clicked', async () => {
+    opened.length = 0
+    const setup = await testRender(
+      <box flexDirection="row" width={TERMINAL_WIDTH} height={HEIGHT}>
+        <Sidebar
+          width={SIDEBAR_WIDTH}
+          model={FED}
+          turn={RUNNING}
+          now={42_000}
+          root={CWD}
+          worktree={null}
+        />
+      </box>,
+      { width: TERMINAL_WIDTH, height: HEIGHT },
+    )
+
+    try {
+      await setup.flush()
+      const rows = setup.captureCharFrame().split('\n')
+      const row = rows.findIndex((line) => line.includes('#412 draft'))
+      const column = (rows[row] ?? '').indexOf('#412')
+
+      expect(row).toBeGreaterThanOrEqual(0)
+
+      await act(async () => {
+        await setup.mockMouse.click(column, row)
+      })
+      await setup.flush()
+
+      expect(opened).toEqual([PR_URL])
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('leaves the branch alone, which has nothing to open', async () => {
+    opened.length = 0
+    const setup = await testRender(
+      <box flexDirection="row" width={TERMINAL_WIDTH} height={HEIGHT}>
+        <Sidebar
+          width={SIDEBAR_WIDTH}
+          model={FED}
+          turn={RUNNING}
+          now={42_000}
+          root={CWD}
+          worktree={null}
+        />
+      </box>,
+      { width: TERMINAL_WIDTH, height: HEIGHT },
+    )
+
+    try {
+      await setup.flush()
+      const rows = setup.captureCharFrame().split('\n')
+      const row = rows.findIndex((line) => line.includes('auth/rotation'))
+      const column = (rows[row] ?? '').indexOf('auth/rotation')
+
+      await act(async () => {
+        await setup.mockMouse.click(column, row)
+      })
+      await setup.flush()
+
+      expect(opened).toEqual([])
+    } finally {
+      await teardown(setup)
+    }
   }, 30_000)
 
   it('counts the plan off and marks each task by its state', async () => {
@@ -435,7 +566,8 @@ function Beside(props: { handle: OverlayHandle }): React.ReactNode {
         model={FED}
         turn={RUNNING}
         now={42_000}
-        cwd={CWD}
+        root={CWD}
+        worktree={null}
         overlay={overlay}
       />
     </box>
@@ -483,4 +615,67 @@ describe('the column beside the sidebar', () => {
       await teardown(setup)
     }
   }, 30_000)
+})
+
+describe('the footer', () => {
+  const REPOSITORY = `${homedir()}/Developer/comp-v3`
+
+  it('names the repository alone when the session is not in a worktree', async () => {
+    const rows = await rowsOf({ model: IDLE_SIDEBAR, root: REPOSITORY })
+    const mark = rows.findIndex((row) => row.includes('● atlas'))
+
+    expect(written(rows[mark - 1] ?? '').trim()).toBe('~/Developer/comp-v3')
+  }, 30_000)
+
+  it('hangs the worktree under the repository, relative to it', async () => {
+    const rows = await rowsOf({
+      model: IDLE_SIDEBAR,
+      root: REPOSITORY,
+      worktree: `${REPOSITORY}/.claude/worktrees/portal-auth-url`,
+    })
+    const mark = rows.findIndex((row) => row.includes('● atlas'))
+
+    expect(written(rows[mark - 2] ?? '').trim()).toBe('~/Developer/comp-v3')
+    expect(written(rows[mark - 1] ?? '').trim()).toBe('.claude/worktrees/portal-auth-url')
+  }, 30_000)
+
+  it('compacts a long path by segment rather than cutting its head off', async () => {
+    const rows = await rowsOf({
+      model: IDLE_SIDEBAR,
+      root: `${homedir()}/Developer/organisation/platform/services/gateway`,
+    })
+    const mark = rows.findIndex((row) => row.includes('● atlas'))
+    const shown = written(rows[mark - 1] ?? '').trim()
+
+    expect(shown).toBe('~/D/o/platform/services/gateway')
+    expect(shown).not.toContain('…')
+  }, 30_000)
+})
+
+describe('a section a plugin contributed', () => {
+  it('draws its rows where the plugin placed them', async () => {
+    const rows = await rowsOf({
+      model: {
+        ...IDLE_SIDEBAR,
+        title: 'Refresh-token rotation',
+        sections: [
+          {
+            id: 'deploys',
+            place: ESidebarPlace.Panels,
+            label: 'deploys',
+            rows: [{ id: 'staging', spans: [{ text: 'staging green' }] }],
+          },
+        ],
+      },
+    })
+
+    expect(rowWith({ rows, text: 'DEPLOYS' })).toContain('DEPLOYS')
+    expect(rowWith({ rows, text: 'staging green' })).toContain('staging green')
+  })
+
+  it('draws nothing at all when no plugin contributed one', async () => {
+    const rows = await rowsOf({ model: { ...IDLE_SIDEBAR, title: 'Refresh-token rotation' } })
+
+    expect(rows.some((row) => row.includes('DEPLOYS'))).toBe(false)
+  })
 })

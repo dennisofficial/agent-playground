@@ -4,42 +4,26 @@ import { homedir } from 'node:os'
 
 import { atlasDatabaseUrl } from '@dltech/atlas-harness'
 
-import {
-  DEFAULT_MODEL_ID,
-  DEFAULT_THINKING_BUDGET_TOKENS,
-  EOpenMode,
-  resolveConfig,
-  type AtlasConfig,
-} from '../config'
+import { refKey } from '@dltech/atlas-core'
 
-const DEV_URL = 'file:/tmp/atlas-dev.db'
+import { DEFAULT_MODEL_REF, EOpenMode, resolveConfig, type AtlasConfig } from '../config'
 
-const resolve = (args: {
-  argv?: readonly string[]
-  env?: Record<string, string | undefined>
-}): AtlasConfig =>
+const resolve = (args: { argv?: readonly string[]; home?: string }): AtlasConfig =>
   resolveConfig({
     argv: args.argv ?? [],
-    env: args.env ?? {},
     cwd: '/work',
-    defaultDatabaseUrl: DEV_URL,
+    home: args.home,
   })
 
 describe('the launch configuration', () => {
   it('names no model unless the launch asked for one, so a remembered pick can answer', () => {
-    expect(resolve({}).modelId).toBeUndefined()
-    expect(DEFAULT_MODEL_ID).toBe('claude-haiku-4-5-20251001')
+    expect(resolve({}).model).toBeUndefined()
+    expect(refKey(DEFAULT_MODEL_REF)).toBe('anthropic/claude-haiku-4-5')
   })
 
   it('never falls back to the operator database when it was launched from source', () => {
-    expect(resolve({}).databaseUrl).toBe(DEV_URL)
     expect(atlasDatabaseUrl()).toContain('/.atlas-home/')
     expect(atlasDatabaseUrl()).not.toContain(`${homedir()}/.atlas/`)
-  })
-
-  it('names no thinking budget unless the environment asked for one', () => {
-    expect(resolve({}).thinkingBudgetTokens).toBeUndefined()
-    expect(DEFAULT_THINKING_BUDGET_TOKENS).toBeGreaterThan(0)
   })
 
   it('opens a new conversation unless the launch asked to come back to one', () => {
@@ -72,28 +56,17 @@ describe('the launch configuration', () => {
     })
   })
 
-  it('takes the model from the command line ahead of the environment', () => {
-    expect(resolve({ argv: ['--model', 'claude-sonnet-5'], env: { ATLAS_MODEL: 'x' } }).modelId).toBe(
-      'claude-sonnet-5',
-    )
-    expect(resolve({ env: { ATLAS_MODEL: 'claude-opus-5' } }).modelId).toBe('claude-opus-5')
+  it('takes the model from the command line, the one thing a launch still overrides', () => {
+    expect(resolve({ argv: ['--model', 'claude-sonnet-5'] }).model).toBe('claude-sonnet-5')
   })
 
   it('ignores a --model with no model after it', () => {
-    expect(resolve({ argv: ['--model'] }).modelId).toBeUndefined()
-    expect(resolve({ argv: ['--model', '--new'] }).modelId).toBeUndefined()
+    expect(resolve({ argv: ['--model'] }).model).toBeUndefined()
+    expect(resolve({ argv: ['--model', '--new'] }).model).toBeUndefined()
   })
 
-  it('takes an explicit database url from the environment', () => {
-    expect(resolve({ env: { ATLAS_DATABASE_URL: 'file:/tmp/other.db' } }).databaseUrl).toBe(
-      'file:/tmp/other.db',
-    )
-  })
-
-  it('ignores a thinking budget that is not a positive integer', () => {
-    expect(resolve({ env: { ATLAS_THINKING_BUDGET: 'lots' } }).thinkingBudgetTokens).toBeUndefined()
-    expect(resolve({ env: { ATLAS_THINKING_BUDGET: '0' } }).thinkingBudgetTokens).toBeUndefined()
-    expect(resolve({ env: { ATLAS_THINKING_BUDGET: '4096' } }).thinkingBudgetTokens).toBe(4096)
+  it('reads nothing out of the environment, because every such knob is a setting', () => {
+    expect(Object.keys(resolve({}))).toEqual(['model', 'open', 'cwd'])
   })
 
   it('carries the working directory through, because the empty transcript names it', () => {
@@ -110,10 +83,10 @@ describe('the launch configuration', () => {
   })
 
   it('expands a leading ~ itself, because a quoted argument reaches it unexpanded', () => {
-    expect(resolve({ argv: ['--cwd', '~/dev/comp'], env: { HOME: '/Users/ada' } }).cwd).toBe(
+    expect(resolve({ argv: ['--cwd', '~/dev/comp'], home: '/Users/ada' }).cwd).toBe(
       '/Users/ada/dev/comp',
     )
-    expect(resolve({ argv: ['--cwd', '~'], env: { HOME: '/Users/ada' } }).cwd).toBe('/Users/ada')
+    expect(resolve({ argv: ['--cwd', '~'], home: '/Users/ada' }).cwd).toBe('/Users/ada')
   })
 
   it('drops a trailing separator, because the workspace root anchors path comparisons', () => {
@@ -123,33 +96,5 @@ describe('the launch configuration', () => {
   it('stays where it was launched when --cwd names no directory', () => {
     expect(resolve({ argv: ['--cwd'] }).cwd).toBe('/work')
     expect(resolve({ argv: ['--cwd', '--continue'] }).cwd).toBe('/work')
-  })
-
-  it('lets every child inherit the parent model unless a subagent model is named', () => {
-    expect(resolve({}).subagentModelId).toBeUndefined()
-    expect(resolve({ env: { ATLAS_SUBAGENT_MODEL: '' } }).subagentModelId).toBeUndefined()
-  })
-
-  it('takes the model every child runs on from the environment', () => {
-    expect(resolve({ env: { ATLAS_SUBAGENT_MODEL: 'claude-haiku-4-5' } }).subagentModelId).toBe(
-      'claude-haiku-4-5',
-    )
-  })
-
-  it('keeps the subagent model apart from the model the parent runs on', () => {
-    const config = resolve({
-      argv: ['--model', 'claude-opus-5'],
-      env: { ATLAS_SUBAGENT_MODEL: 'claude-haiku-4-5' },
-    })
-
-    expect(config.modelId).toBe('claude-opus-5')
-    expect(config.subagentModelId).toBe('claude-haiku-4-5')
-  })
-
-  it('leaves the keychain service to the backend unless one is named', () => {
-    expect(resolve({}).keychainService).toBeUndefined()
-    expect(resolve({ env: { ATLAS_KEYCHAIN_SERVICE: 'Atlas-test' } }).keychainService).toBe(
-      'Atlas-test',
-    )
   })
 })

@@ -3,6 +3,7 @@ import { z, type ZodType } from 'zod'
 import { EWorktreeExit } from '../events/body'
 import type { CallId, ThreadId } from '../events/ids'
 import type { ImagePart, TextPart } from '../message/parts'
+import type { ActiveWorktree } from '../workspace/worktree'
 
 export enum EToolEffect {
   Read = 'read',
@@ -55,7 +56,12 @@ export type ToolOutcome =
     }
   | { ok: false; reason: string }
 
-export type WorktreeEntry = { path: string; branch: string; base: string }
+export type WorktreeEntry = {
+  path: string
+  branch: string
+  base?: string | undefined
+  adopted?: boolean | undefined
+}
 
 export type WorktreeEntered = { enteredWorktree: WorktreeEntry }
 
@@ -67,11 +73,18 @@ export function enteredWorktreeOf(output: unknown): WorktreeEntry | undefined {
   const entered = (output as Partial<WorktreeEntered>).enteredWorktree
   if (entered === undefined) return undefined
 
-  const { path, branch, base } = entered
+  const { path, branch, base, adopted } = entered
   if (typeof path !== 'string' || path.length === 0) return undefined
-  if (typeof branch !== 'string' || typeof base !== 'string') return undefined
+  if (typeof branch !== 'string' || branch.length === 0) return undefined
+  if (base !== undefined && (typeof base !== 'string' || base.length === 0)) return undefined
+  if (adopted !== undefined && typeof adopted !== 'boolean') return undefined
 
-  return { path, branch, base }
+  return {
+    path,
+    branch,
+    ...(base === undefined ? {} : { base }),
+    ...(adopted === undefined ? {} : { adopted }),
+  }
 }
 
 export function exitedWorktreeOf(output: unknown): WorktreeExited['exitedWorktree'] | undefined {
@@ -107,6 +120,7 @@ export type ToolInvocation = {
   signal: AbortSignal
   idempotencyKey: string
   projectDirectory: string
+  activeWorktree?: ActiveWorktree | undefined
   threadId: ThreadId
 }
 
@@ -115,6 +129,7 @@ export type ToolRun<TSchema extends ZodType> = {
   signal: AbortSignal
   idempotencyKey: string
   projectDirectory: string
+  activeWorktree: ActiveWorktree | undefined
   threadId: ThreadId
 }
 
@@ -141,6 +156,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
     signal,
     idempotencyKey,
     projectDirectory,
+    activeWorktree,
     threadId,
   }: ToolInvocation): Promise<ToolOutcome> {
     const parsed = this.inputSchema.safeParse(input)
@@ -153,6 +169,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
       signal,
       idempotencyKey,
       projectDirectory,
+      activeWorktree,
       threadId,
     })
   }

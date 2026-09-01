@@ -16,8 +16,12 @@ export const TIER_LIMITS: Readonly<Record<EImageTier, TierLimits>> = {
   [EImageTier.HighResolution]: { maxEdge: 2576, maxVisualTokens: 4784 },
 }
 
-/** Claude 4.7 and later read at the high-resolution tier; everything else reads at standard. */
-export const DEFAULT_IMAGE_TIER = EImageTier.HighResolution
+/**
+ * Claude 4.7 and later read at the high-resolution tier; everything else reads at standard, so an
+ * uncatalogued model is assumed standard. A model that reads high-resolution still accepts a
+ * standard-sized image; one that reads standard rejects or rescales an oversized one.
+ */
+export const DEFAULT_IMAGE_TIER = EImageTier.Standard
 
 /** An image costs one token per 28×28 patch, padded up to the next whole patch on each edge. */
 const PATCH_EDGE = 28

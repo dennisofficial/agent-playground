@@ -1,14 +1,17 @@
 import { resolve } from 'node:path'
 
+import type { ModelRef } from '@dltech/atlas-core'
+
 import { expandHome } from '../ui/paths'
 
-export const DEFAULT_MODEL_ID = 'claude-haiku-4-5-20251001'
+export const DEFAULT_MODEL_REF: ModelRef = {
+  providerId: 'anthropic',
+  modelId: 'claude-haiku-4-5',
+}
 
 export const TITLER_MODEL_ID = 'claude-haiku-4-5-20251001'
 
 export const SUMMARISER_MODEL_ID = 'claude-sonnet-5'
-
-export const DEFAULT_THINKING_BUDGET_TOKENS = 2048
 
 export enum EOpenMode {
   New = 'new',
@@ -21,12 +24,13 @@ export type OpenRequest =
   | { mode: EOpenMode.Continue }
   | { mode: EOpenMode.Resume; threadId: string }
 
+/**
+ * What a launch decides for itself and nothing that outlives it. Anything a run configures is a
+ * setting, reachable through the layered file and the environment variable that setting declares,
+ * so what is left here is the flags that mean "for this launch" and would be wrong to persist.
+ */
 export type AtlasConfig = {
-  modelId: string | undefined
-  subagentModelId: string | undefined
-  databaseUrl: string
-  keychainService: string | undefined
-  thinkingBudgetTokens: number | undefined
+  model: string | undefined
   open: OpenRequest
   cwd: string
 }
@@ -38,12 +42,6 @@ const RESUME_FLAG = '--resume'
 const MODEL_FLAG = '--model'
 
 const DIRECTORY_FLAG = '--cwd'
-
-const positiveInteger = (value: string | undefined): number | undefined => {
-  if (value === undefined) return undefined
-  const parsed = Number.parseInt(value, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
-}
 
 const valueAfter = ({
   argv,
@@ -90,22 +88,14 @@ const directoryFromArgv = (args: {
   return resolve(args.cwd, expandHome({ path: named, home: args.home ?? '' }))
 }
 
-const nonEmpty = (value: string | undefined): string | undefined =>
-  value === undefined || value.length === 0 ? undefined : value
-
 export function resolveConfig(args: {
-  env: Record<string, string | undefined>
   argv: readonly string[]
   cwd: string
-  defaultDatabaseUrl: string
+  home: string | undefined
 }): AtlasConfig {
   return {
-    modelId: modelFromArgv(args.argv) ?? nonEmpty(args.env.ATLAS_MODEL),
-    subagentModelId: nonEmpty(args.env.ATLAS_SUBAGENT_MODEL),
-    databaseUrl: nonEmpty(args.env.ATLAS_DATABASE_URL) ?? args.defaultDatabaseUrl,
-    keychainService: nonEmpty(args.env.ATLAS_KEYCHAIN_SERVICE),
-    thinkingBudgetTokens: positiveInteger(args.env.ATLAS_THINKING_BUDGET),
+    model: modelFromArgv(args.argv),
     open: openFromArgv(args.argv),
-    cwd: directoryFromArgv({ argv: args.argv, cwd: args.cwd, home: args.env.HOME }),
+    cwd: directoryFromArgv({ argv: args.argv, cwd: args.cwd, home: args.home }),
   }
 }

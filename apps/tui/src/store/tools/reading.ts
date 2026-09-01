@@ -156,3 +156,17 @@ export const lineCount = (text: string): number => (text.length === 0 ? 0 : text
  */
 export const standing = (args: { verb: string; target: string | undefined }): { alone?: string } =>
   args.target === undefined ? {} : { alone: `${args.verb} ${args.target}` }
+
+/**
+ * A page is named by its host and path, never by its scheme or its query. The scheme is the same on
+ * every row and the query is usually longer than everything around it.
+ */
+export function hostOf(url: string): string {
+  try {
+    const parsed = new URL(url)
+    const path = parsed.pathname === '/' ? '' : parsed.pathname.replace(/\/$/, '')
+    return `${parsed.hostname.replace(/^www\./, '')}${path}`
+  } catch {
+    return url
+  }
+}

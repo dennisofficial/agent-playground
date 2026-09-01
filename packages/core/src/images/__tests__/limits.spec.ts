@@ -14,7 +14,7 @@ import {
   visualTokens,
   webpSize,
 } from '../limits'
-import { projectedSize } from '../projection'
+import { EImageTier, projectedSize } from '../projection'
 
 const bytes = (...values: number[]): Uint8Array => new Uint8Array(values)
 
@@ -181,7 +181,10 @@ describe('visual tokens', () => {
   })
 
   test('a retina screenshot is expensive, not incidental', () => {
-    expect(visualTokens({ byteLength: 0, width: 3024, height: 1964 })).toBeGreaterThan(4000)
+    const retina = { byteLength: 0, width: 3024, height: 1964 }
+
+    expect(visualTokens({ ...retina, tier: EImageTier.HighResolution })).toBeGreaterThan(4000)
+    expect(visualTokens(retina)).toBeGreaterThan(1000)
   })
 
   test('is null when the image could not be measured', () => {

@@ -108,10 +108,10 @@ describe('projectedSize', () => {
     expect(projectedSize({ size: once, tier: hi })).toEqual(once)
   })
 
-  test('defaults to the high-resolution tier', () => {
+  test('defaults to the standard tier, which every model accepts', () => {
     const size = { width: 3840, height: 2160 }
 
-    expect(projectedSize({ size })).toEqual(projectedSize({ size, tier: hi }))
+    expect(projectedSize({ size })).toEqual(projectedSize({ size, tier: std }))
   })
 
   test('costs more on the high-resolution tier than on the standard one', () => {

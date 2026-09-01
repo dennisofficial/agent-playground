@@ -26,6 +26,8 @@ class StubCredentials extends CredentialPort {
   read(): Promise<Credential> {
     return this.answer()
   }
+
+  async discard(): Promise<void> {}
 }
 
 const respondingWith = (body: unknown, status = 200): typeof globalThis.fetch =>

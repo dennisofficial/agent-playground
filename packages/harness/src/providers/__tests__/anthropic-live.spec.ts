@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { EEffort } from '@dltech/atlas-core'
+import { EEffort, findCard } from '@dltech/atlas-core'
 
 import {
   ClaudeCodeSource,
@@ -17,10 +17,19 @@ import { ETurnStatus, buildHarness, type AtlasHarness } from '../../loop'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { SystemClock } from '../../store'
 import { createAnthropicOauthModel } from '../anthropic-oauth'
-import { anthropicThinkingOptions } from '../anthropic-thinking'
+import { generatedCatalogue } from '../../models/generated-catalogue'
+import { anthropicEffortOptions } from '../anthropic-effort'
 import { bodyOnlyRecordingPassthroughFetch, type BodyOnlyRecordingFetch } from './recording-fetch'
 
 export const LIVE_ANTHROPIC_FLAG = 'ATLAS_LIVE_ANTHROPIC'
+
+const LIVE_CATALOGUE = generatedCatalogue()
+
+const liveEffortOptions = (modelId: string) => {
+  const card = findCard({ catalog: LIVE_CATALOGUE, ref: { providerId: 'anthropic', modelId } })
+  if (card === undefined) return undefined
+  return anthropicEffortOptions({ card, effort: EEffort.High })
+}
 
 const liveCredentials = async (): Promise<RefreshingCredentialPort> => {
   const clock = new SystemClock()
@@ -63,7 +72,7 @@ async function openLiveHarness(
     model: createAnthropicOauthModel({
       credentials: await liveCredentials(),
       modelId,
-      providerOptions: anthropicThinkingOptions({ modelId, effort: EEffort.High }),
+      providerOptions: liveEffortOptions(modelId),
       fetch: recorder.fetch,
     }),
   })

@@ -17,11 +17,13 @@ export class AgentTypesNotBound extends Error {
 export async function bindAgentTypes(args: {
   container: DependencyContainer
   sources: readonly AgentTypeSource[]
+  reachableModelIds?: readonly string[] | undefined
   modelIsUsable?: ModelIsUsable | undefined
   subagentModelId?: string | undefined
 }): Promise<AgentTypeCatalog> {
   const catalog = await loadAgentTypes({
     sources: args.sources,
+    reachableModelIds: args.reachableModelIds,
     modelIsUsable: args.modelIsUsable,
     subagentModelId: args.subagentModelId,
   })

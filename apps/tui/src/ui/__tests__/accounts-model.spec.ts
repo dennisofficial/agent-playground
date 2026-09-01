@@ -5,6 +5,7 @@ import {
   EAccountStatus,
   EAuthKind,
   EAuthProvider,
+  reachableProviders,
   toAccountId,
   type Account,
 } from '@dltech/atlas-core'
@@ -12,6 +13,10 @@ import {
 import {
   accountDetail,
   accountRows,
+  EAccountRow,
+  rowDetail,
+  rowLabel,
+  rowProvider,
   askForApiKey,
   askForCode,
   backspace,
@@ -51,11 +56,20 @@ const rowsOf = (accounts: readonly Account[], activeId?: string) =>
     active: activeId === undefined ? {} : { [EAuthProvider.Anthropic]: toAccountId(activeId) },
   })
 
+/**
+ * List mechanics are about clamping an index, not about which providers ship reachable today, so
+ * they run over the account rows alone — a flipped `reachable` flag must not move them.
+ */
+const signedInRows = (accounts: readonly Account[], activeId?: string) =>
+  rowsOf(accounts, activeId).filter((row) => row.kind === EAccountRow.Account)
+
+const reachable = (): readonly EAuthProvider[] => reachableProviders().map((spec) => spec.provider)
+
 describe('accountRows', () => {
   it('marks the account that answers for its provider', () => {
-    const rows = rowsOf([account({ id: 'work' }), account({ id: 'personal' })], 'personal')
+    const rows = signedInRows([account({ id: 'work' }), account({ id: 'personal' })], 'personal')
 
-    expect(rows.map((row) => [String(row.account.id), row.active])).toEqual([
+    expect(rows.map((row) => [rowLabel(row), row.active])).toEqual([
       ['work', false],
       ['personal', true],
     ])
@@ -71,7 +85,73 @@ describe('accountRows', () => {
       active: {},
     })
 
-    expect(rows.map((row) => String(row.account.id))).toEqual(['first', 'second', 'openrouter'])
+    expect(rows.filter((row) => row.kind === EAccountRow.Account).map(rowLabel)).toEqual([
+      'first',
+      'second',
+      'openrouter',
+    ])
+  })
+})
+
+describe('a provider with no account yet', () => {
+  const signedOut = (rows: readonly ReturnType<typeof accountRows>[number][]) =>
+    rows.flatMap((row) => (row.kind === EAccountRow.SignedOut ? [row.provider] : []))
+
+  it('offers a row for every reachable provider nothing is signed into', () => {
+    const rows = accountRows({ accounts: [], active: {} })
+
+    expect([...signedOut(rows)].sort()).toEqual([...reachable()].sort())
+  })
+
+  it('drops the placeholder once that provider has an account', () => {
+    const rows = accountRows({ accounts: [account({ id: 'work' })], active: {} })
+
+    expect(signedOut(rows)).not.toContain(EAuthProvider.Anthropic)
+    expect(signedOut(rows).length).toBe(reachable().length - 1)
+  })
+
+  it('never offers a provider with no adapter behind it', () => {
+    const rows = accountRows({ accounts: [], active: {} })
+
+    for (const provider of signedOut(rows)) expect(reachable()).toContain(provider)
+  })
+
+  it('ranks placeholders with the accounts, not in a clump at the end', () => {
+    const rows = accountRows({
+      accounts: [account({ id: 'openrouter', provider: EAuthProvider.OpenRouter })],
+      active: {},
+    })
+
+    expect(rows.map(rowProvider).at(-1)).toBe(EAuthProvider.OpenRouter)
+    expect(rows.at(-1)?.kind).toBe(EAccountRow.Account)
+    expect(rows[0]?.kind).toBe(EAccountRow.SignedOut)
+  })
+
+  it('names the provider and says how to sign in, without crying wolf', () => {
+    const [row] = accountRows({ accounts: [], active: {} })
+    if (row === undefined) throw new Error('expected a row')
+
+    expect(rowLabel(row)).toBe('Anthropic')
+    expect(rowDetail(row)).toContain('not signed in')
+    expect(rowDetail(row)).not.toContain('⚠')
+  })
+
+  it('offers only the flows that provider actually accepts', () => {
+    const rows = accountRows({ accounts: [], active: {} })
+    const openrouter = rows.find((row) => rowProvider(row) === EAuthProvider.OpenRouter)
+    const anthropic = rows.find((row) => rowProvider(row) === EAuthProvider.Anthropic)
+    if (openrouter === undefined || anthropic === undefined) throw new Error('expected both')
+
+    expect(rowDetail(openrouter)).toContain('api key')
+    expect(rowDetail(openrouter)).not.toContain('sign in ')
+    expect(rowDetail(anthropic)).toContain('sign in')
+    expect(rowDetail(anthropic)).toContain('api key')
+  })
+
+  it('is never the active row, because nothing is answering for it', () => {
+    const rows = accountRows({ accounts: [], active: {} })
+
+    expect(rows.every((row) => !row.active)).toBe(true)
   })
 })
 
@@ -93,7 +173,7 @@ describe('openAccounts', () => {
 })
 
 describe('moving through the list', () => {
-  const state = openAccounts({ rows: rowsOf([account({ id: 'a' }), account({ id: 'b' })]) })
+  const state = openAccounts({ rows: signedInRows([account({ id: 'a' }), account({ id: 'b' })]) })
 
   it('stops at each end rather than wrapping', () => {
     expect(moveSelection({ state, delta: -1 }).index).toBe(0)
@@ -108,10 +188,16 @@ describe('moving through the list', () => {
   })
 
   it('keeps the selection inside a list that shrank under it', () => {
-    const removed = withRows({ state: moveSelection({ state, delta: 1 }), rows: rowsOf([account({ id: 'a' })]) })
+    const removed = withRows({
+      state: moveSelection({ state, delta: 1 }),
+      rows: signedInRows([account({ id: 'a' })]),
+    })
+
+    const picked = selectedRow(removed)
+    if (picked === undefined) throw new Error('expected a row')
 
     expect(removed.index).toBe(0)
-    expect(String(selectedRow(removed)?.account.id)).toBe('a')
+    expect(rowLabel(picked)).toBe('a')
   })
 })
 
@@ -174,5 +260,13 @@ describe('accountDetail', () => {
 
   it('says nothing about the status of an account that is fine', () => {
     expect(accountDetail(account({ id: 'a' }))).toBe('Anthropic · subscription')
+  })
+
+  it('says nothing about adapters for a provider that has one', () => {
+    expect(
+      accountDetail(
+        account({ id: 'a', provider: EAuthProvider.OpenRouter, kind: EAuthKind.ApiKey }),
+      ),
+    ).toBe('OpenRouter · api key')
   })
 })

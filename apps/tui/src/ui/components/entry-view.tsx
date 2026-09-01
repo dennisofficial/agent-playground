@@ -14,6 +14,10 @@ const SHELL_OUTPUT_HINT = '↵ output'
 
 const PRINTED_NOTHING = 'printed nothing'
 
+const MATCHED_LINES_HINT = '↵ matches'
+
+const MATCHED_NOTHING = 'matched nothing'
+
 const AGENT_REPORT_HINT = '↵ report'
 
 const REPORTED_NOTHING = 'reported nothing'
@@ -106,6 +110,20 @@ export function EntryView(props: {
           width={props.width}
           openHint={SHELL_OUTPUT_HINT}
           silentNote={PRINTED_NOTHING}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
+    case EEntryKind.BackgroundShellMatched:
+      return (
+        <NoticeBlock
+          text={entry.text}
+          body={entry.output}
+          failed={false}
+          width={props.width}
+          openHint={MATCHED_LINES_HINT}
+          silentNote={MATCHED_NOTHING}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
         />

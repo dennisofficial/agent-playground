@@ -1,6 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { ECompactionAnchor, type ClockPort, type ThreadId } from '@dltech/atlas-core'
+import {
+  ECompactionAnchor,
+  EImageTier,
+  type ClockPort,
+  type ModelCard,
+  type ThreadId,
+} from '@dltech/atlas-core'
 
 import { buildHarness, ETurnStatus, type AtlasHarness } from '..'
 import { scriptedModel } from '../../model/testing/scripted-model'
@@ -9,6 +15,14 @@ import { createTempDatabase, type TempDatabase } from './temp-database'
 const opened: { harness: AtlasHarness; temp: TempDatabase }[] = []
 
 const HAIKU_WINDOW = 200_000
+
+const HAIKU_CARD: ModelCard = {
+  ref: { providerId: 'anthropic', modelId: 'claude-haiku-4-5' },
+  label: 'haiku-4-5',
+  api: 'anthropic',
+  contextWindow: HAIKU_WINDOW,
+  imageTier: EImageTier.Standard,
+}
 
 const HUGE = 'x'.repeat(4 * (HAIKU_WINDOW + 10_000))
 
@@ -29,6 +43,7 @@ async function openWith(args?: {
     databaseUrl: temp.databaseUrl,
     model: scriptedModel({ script: [{ text: 'done' }] }),
     identity: { id: 'anthropic', modelId: 'claude-haiku-4-5' },
+    card: HAIKU_CARD,
     autoCompactAtPercent: () => args?.atPercent ?? 90,
     ...(args?.compact === undefined ? {} : { compact: args.compact }),
     ...(args?.clock === undefined ? {} : { clock: args.clock }),

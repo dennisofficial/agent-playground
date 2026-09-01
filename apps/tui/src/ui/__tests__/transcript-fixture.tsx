@@ -10,6 +10,7 @@ import {
   type TranscriptModel,
   type TurnEndedEntry,
 } from '../../store'
+import type { BackgroundWork } from '../background-wait'
 import { Transcript, type TurnClock } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
 import { frameSettled } from './waiting'
@@ -208,6 +209,7 @@ export function transcript(args: {
   anchorKey?: string
   sends?: number
   pending?: readonly PendingRow[]
+  background?: BackgroundWork
   onRetry?: () => void
 }): React.ReactNode {
   return (
@@ -220,6 +222,7 @@ export function transcript(args: {
       {...(args.anchorKey ? { anchorKey: args.anchorKey } : {})}
       {...(args.sends === undefined ? {} : { sends: args.sends })}
       {...(args.pending ? { pending: args.pending } : {})}
+      {...(args.background ? { background: args.background } : {})}
       {...(args.onRetry ? { onRetry: args.onRetry } : {})}
     />
   )

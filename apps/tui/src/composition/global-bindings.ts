@@ -5,6 +5,7 @@ export type GlobalHandlers = {
   onSubmit: () => void
   onShortcuts: () => void
   onTakeBackPending: () => boolean
+  onEnterFooterStrip: () => boolean
   onInterrupt: () => void
   onOpenSwitcher: () => void
   onAttachImage: () => boolean
@@ -55,6 +56,13 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       describe: 'take the last queued message back into the draft',
       group: EKeyGroup.Composer,
       run: () => handlers.draftIsEmpty() && handlers.onTakeBackPending(),
+    }),
+    global({
+      chord: 'down',
+      hint: 'chrome',
+      describe: 'step into the row under the composer from the last line of the draft',
+      group: EKeyGroup.Composer,
+      run: handlers.onEnterFooterStrip,
     }),
     global({
       chord: 'ctrl+v',

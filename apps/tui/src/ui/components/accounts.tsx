@@ -3,26 +3,34 @@ import React from 'react'
 import { providerSpec } from '@dltech/atlas-core'
 
 import {
-  accountDetail,
+  ACCOUNT_ROWS,
+  accountsWindow,
   EAccountsView,
   maskedKey,
+  rowDetail,
+  rowKey,
+  rowLabel,
   type AccountRow,
   type AccountsState,
 } from '../accounts-model'
-import { fitHints, hintSpans, type Hint } from '../hint-layout'
+import { type Hint } from '../hint-layout'
 import { type PressHandlers, usePress } from '../hooks/use-press'
 import { glyph, theme } from '../theme'
 import { clipSpans } from './sidebar/cells'
+import {
+  BottomDrawer,
+  drawerCells,
+  DrawerGap,
+  DrawerHeading,
+  DrawerHints,
+  DrawerLine,
+  DRAWER_INSET,
+} from './drawer'
 import { Spans, type Span } from './spans'
 
-const PAD = 2
+export const ACCOUNTS_INSET = DRAWER_INSET
 
-const EDGE = 1
-
-export const ACCOUNTS_INSET = EDGE + PAD * 2
-
-export const accountsCells = (args: { width: number }): number =>
-  Math.max(0, args.width - ACCOUNTS_INSET)
+export const accountsCells = (args: { width: number }): number => drawerCells(args)
 
 export const ACCOUNTS_HEADING = 'Accounts'
 
@@ -43,26 +51,8 @@ const PROMPT_HINTS: readonly Hint[] = [
   { key: 'esc', label: 'cancel' },
 ]
 
-export const OPEN_URL_HINT = 'Opened in your browser. Approve, then paste the code. Click to reopen:'
-
-function Line(props: {
-  children: React.ReactNode
-  press?: PressHandlers
-  band?: string
-}): React.ReactNode {
-  return (
-    <box
-      height={1}
-      flexShrink={0}
-      paddingLeft={PAD}
-      paddingRight={PAD}
-      {...(props.band === undefined ? {} : { backgroundColor: props.band })}
-      {...(props.press ?? {})}
-    >
-      {props.children}
-    </box>
-  )
-}
+export const OPEN_URL_HINT =
+  'Opened in your browser. Approve, then paste the code. Click to reopen:'
 
 function TextLine(props: {
   spans: readonly Span[]
@@ -70,19 +60,11 @@ function TextLine(props: {
   press?: PressHandlers
 }): React.ReactNode {
   return (
-    <Line {...(props.press === undefined ? {} : { press: props.press })}>
+    <DrawerLine {...(props.press === undefined ? {} : { press: props.press })}>
       <text>
         <Spans spans={clipSpans({ spans: props.spans, cells: props.cells })} />
       </text>
-    </Line>
-  )
-}
-
-function Header(props: { label: string }): React.ReactNode {
-  return (
-    <Line>
-      <text fg={theme.meta}>{props.label.toUpperCase()}</text>
-    </Line>
+    </DrawerLine>
   )
 }
 
@@ -97,7 +79,7 @@ function AccountLine(props: {
 
   return (
     <>
-      <Line {...band} press={props.press}>
+      <DrawerLine {...band} press={props.press}>
         <text>
           <Spans
             spans={clipSpans({
@@ -107,7 +89,7 @@ function AccountLine(props: {
                   fg: props.row.active ? theme.accent : theme.hint,
                 },
                 {
-                  text: props.row.account.label,
+                  text: rowLabel(props.row),
                   fg: props.selected ? theme.bright : theme.hover,
                 },
               ],
@@ -115,22 +97,29 @@ function AccountLine(props: {
             })}
           />
         </text>
-      </Line>
-      <Line {...band} press={props.press}>
+      </DrawerLine>
+      <DrawerLine {...band} press={props.press}>
         <text>
           <Spans
             spans={clipSpans({
-              spans: [
-                { text: `  ${accountDetail(props.row.account)}`, fg: theme.hint },
-                ...(props.meters.length === 0
-                  ? []
-                  : [{ text: '  ', fg: theme.hint }, ...props.meters]),
-              ],
+              spans: [{ text: `  ${rowDetail(props.row)}`, fg: theme.hint }],
               cells: props.cells,
             })}
           />
         </text>
-      </Line>
+      </DrawerLine>
+      {props.meters.length === 0 ? null : (
+        <DrawerLine {...band} press={props.press}>
+          <text>
+            <Spans
+              spans={clipSpans({
+                spans: [{ text: '  ', fg: theme.hint }, ...props.meters],
+                cells: props.cells,
+              })}
+            />
+          </text>
+        </DrawerLine>
+      )}
     </>
   )
 }
@@ -165,9 +154,12 @@ function Wrapped(props: {
   return (
     <>
       {lines.map((line, index) => (
-        <Line key={`${index}-${line}`} {...(props.press ?? {})}>
+        <DrawerLine
+          key={`${index}-${line}`}
+          {...(props.press === undefined ? {} : { press: props.press })}
+        >
           <text fg={props.fg}>{line}</text>
-        </Line>
+        </DrawerLine>
       ))}
     </>
   )
@@ -185,7 +177,9 @@ function Prompt(props: {
 
   return (
     <box flexDirection="column" flexShrink={0}>
-      <Header label={state.view === EAccountsView.ApiKey ? 'Paste the api key' : 'Sign in'} />
+      <DrawerHeading
+        label={state.view === EAccountsView.ApiKey ? 'Paste the api key' : 'Sign in'}
+      />
       {state.view === EAccountsView.ApiKey ? (
         <TextLine
           spans={[{ text: `Paste a ${provider ?? ''} api key and press enter.`, fg: theme.hint }]}
@@ -233,60 +227,58 @@ export function Accounts(props: {
   const press = usePress()
   const prompting = props.state.view !== EAccountsView.List
 
+  const { start, visible, below } = accountsWindow({ state: props.state, rows: ACCOUNT_ROWS })
+
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
-      width={props.width}
-      backgroundColor={theme.overlayBg}
-      border={['left']}
-      borderColor={theme.rule}
-      paddingTop={1}
-      paddingBottom={1}
-      {...(props.overlay
-        ? { position: 'absolute' as const, top: 0, bottom: 0, right: 0, zIndex: 20 }
-        : {})}
+    <BottomDrawer
+      overlay={props.overlay === true}
+      footer={
+        <>
+          <DrawerGap />
+          <DrawerHints
+            hints={prompting ? PROMPT_HINTS : LIST_HINTS}
+            cells={cells}
+            onDismiss={props.onDismiss}
+          />
+        </>
+      }
     >
-      <box flexDirection="column" flexGrow={1} flexShrink={1} gap={1}>
-        <box flexDirection="column" flexShrink={0}>
-          <Header label={ACCOUNTS_HEADING} />
-          {props.state.rows.length === 0 ? (
-            <TextLine spans={[{ text: NO_ACCOUNTS, fg: theme.hint }]} cells={cells} />
-          ) : (
-            props.state.rows.map((row, index) => (
+      <box flexDirection="column" flexShrink={0}>
+        <DrawerHeading label={ACCOUNTS_HEADING} />
+        {props.state.rows.length === 0 ? (
+          <TextLine spans={[{ text: NO_ACCOUNTS, fg: theme.hint }]} cells={cells} />
+        ) : (
+          <>
+            {start === 0 ? null : (
+              <TextLine spans={[{ text: `  ${start} more above`, fg: theme.hint }]} cells={cells} />
+            )}
+            {visible.map((row, offset) => (
               <AccountLine
-                key={row.account.id}
+                key={rowKey(row)}
                 row={row}
                 cells={cells}
                 meters={props.meters === undefined ? [] : props.meters(row)}
-                selected={index === props.state.index && !prompting}
+                selected={start + offset === props.state.index && !prompting}
                 press={press(() => props.onPick(row))}
               />
-            ))
-          )}
-        </box>
-        {prompting ? (
-          <Prompt state={props.state} cells={cells} onOpenUrl={props.onOpenUrl} />
-        ) : null}
-        {props.state.notice === null ? null : (
-          <box flexDirection="column" flexShrink={0}>
-            <Wrapped text={props.state.notice} cells={cells} fg={theme.hint} />
-          </box>
-        )}
-        {props.state.failure === null ? null : (
-          <box flexDirection="column" flexShrink={0}>
-            <Wrapped text={props.state.failure} cells={cells} fg={theme.warn} />
-          </box>
+            ))}
+            {below === 0 ? null : (
+              <TextLine spans={[{ text: `  ${below} more below`, fg: theme.hint }]} cells={cells} />
+            )}
+          </>
         )}
       </box>
-      <TextLine
-        spans={hintSpans({
-          hints: fitHints({ hints: prompting ? PROMPT_HINTS : LIST_HINTS, cells }),
-          keyColour: theme.meta,
-        })}
-        cells={cells}
-        press={press(props.onDismiss)}
-      />
-    </box>
+      {prompting ? <Prompt state={props.state} cells={cells} onOpenUrl={props.onOpenUrl} /> : null}
+      {props.state.notice === null ? null : (
+        <box flexDirection="column" flexShrink={0}>
+          <Wrapped text={props.state.notice} cells={cells} fg={theme.hint} />
+        </box>
+      )}
+      {props.state.failure === null ? null : (
+        <box flexDirection="column" flexShrink={0}>
+          <Wrapped text={props.state.failure} cells={cells} fg={theme.warn} />
+        </box>
+      )}
+    </BottomDrawer>
   )
 }

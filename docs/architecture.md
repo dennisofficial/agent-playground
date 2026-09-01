@@ -746,6 +746,57 @@ in charge of what the model sees and give Atlas a prompt it cannot re-derive fro
 against the two rules. `clear_tool_uses_20250919` is cheap to reimplement as a pure rule if it is ever
 wanted, and would then work on every provider.
 
+## Memory
+
+Memory is markdown files and nothing else. Two directories, both under the Atlas home so nothing lands
+in the repository:
+
+| Directory | Holds |
+| --- | --- |
+| `<atlasHome>/projects/<sanitised-repo>/memory/` | what is true of this repository |
+| `<atlasHome>/memory/` | what stays true when the repository changes |
+
+**Project memory is keyed on the repository, never the working directory.** `projectDirectoryOf` returns
+the *worktree* path, and that is what a `BeforeTurn` hook is handed — keying memory on it would give every
+worktree its own empty memory. The key is `WorkspaceIdentity.repo`, derived from `git rev-parse
+--git-common-dir` in `probeWorkspace` and therefore identical across every worktree of a repository.
+Claude Code hit this exact bug and fixed it the same way (anthropics/claude-code#24382).
+
+Each directory holds a `MEMORY.md` index — one line per memory, pointing at a file — plus one file per
+memory carrying `name`, `description` and `type` frontmatter. The four types (`user`, `feedback`,
+`project`, `reference`) are the whole taxonomy; anything derivable from the code, the git history or the
+instruction files is not a memory.
+
+**The filename is the memory's identity.** A memory named for the claim it makes (`bun-deflate-is-raw-not-zlib.md`)
+can be superseded by rewriting that one file. This is the cheap version of a result from the shared-memory
+literature: contradictions are on average *more* similar to the original than duplicates are, so no
+similarity threshold separates "restates" from "overturns" — you need a stable identity key instead, and a
+filename is one.
+
+**Nothing new is a tool.** The model writes memories with the file tools it already has. The read half is
+`LoadMemoryHook`, a `BeforeTurnHook` that emits the index as a `context-loaded` event in the `memory` slot,
+bounded to 200 lines and 25KB with a warning appended when it truncates — memory that vanishes silently is
+worse than none, because the operator believes it is loaded.
+
+**The instructions and the content are split deliberately.** `MemoryFragment` is a plain `PromptFragment`:
+it names the directories and never changes, so it stays inside the cached prefix. The volatile index goes
+in as an event instead. A volatile fragment would break the cache on every write, and worse — a rewritten
+memory gets a fresh seq, so `compactedHistory` would splice it *below* the compaction summary and strand it
+among the live turns for the rest of the session.
+
+**Sub-agents read but never write.** Children share the parent's `HookChain`, so the load hook fires for
+them too; that is a bounded index and harmless. `MemoryFragment.applies` withholds the *instructions* from
+`EPromptAgent.Sub`, so several children finishing at once cannot become concurrent writers to one directory.
+
+Memory is data, not instruction. The `memory` slot's provenance line says so in as many words, because the
+failure mode is not only a poisoned file — a benign memory recalled out of context will happily dictate
+tool calls it was never meant to.
+
+Not built: extraction at turn end. `AfterTurnHook` is wired and has no implementations, and it fires only
+on cleanly Completed turns — never on an interrupt, which is exactly where corrective feedback lives. Nor
+is there a relevance selector; `titleFor` and `summaryFor` show the shape an out-of-band call would take,
+and a Haiku model is already provisioned, so the seam is there when the index stops being enough.
+
 ## Three timelines
 
 | Timeline | Owner | Restored by |
@@ -810,6 +861,48 @@ allowed to: `systemPrompt` folds the log and hands the compiled prompt the effec
 directory, so the system block follows the move — one cache miss, paid once, for a deliberate act
 that reshapes the whole session. `worktreeBlock` rides the message tail for what is genuinely live
 about a worktree — the branch, and the checkout it was cut from.
+
+**A worktree is either created or adopted, and the difference outlives the entry.** `enter_worktree`
+takes `name` or `path`. `name` cuts a new branch from a freshly fetched origin default and is Atlas's
+to dispose of. `path` adopts one that already exists — including one the developer made by hand, and
+including a switch straight from another worktree — so there is no base it was cut from, only an
+upstream it may track, and the entry reports what it walked into: the branch, that upstream, and what
+is uncommitted or unpushed there. Adoption also refuses what is not a checkout to work in: the
+repository's own main checkout, a bare worktree, a prunable one, a detached HEAD.
+
+`worktree-entered` therefore carries `adopted`, and `base` is optional because an adopted worktree
+may have neither an upstream nor a base. That flag is the whole point of recording it: `exit_worktree`
+will not remove a worktree Atlas did not create, whatever action it is asked for, because a clean
+fully-pushed checkout passes the uncommitted-work guard and would otherwise be deleted along with its
+branch. Tools learn it the same way they learn the project directory — `settle-pending` folds the log
+into an `ActiveWorktree` and hands it down with each dispatch, so rewind and fork agree about
+ownership as they already agree about location.
+
+That fold is also what makes the removal guard honest. "Commits you would lose" is unanswerable from
+the worktree alone: with no upstream set, counting `<branch>..HEAD` compares the branch against
+itself and always yields zero, so a branch cut from a local `main` in a repository with no origin
+reported clean and was deleted with its commits. The ref the branch was cut from is only knowable at
+creation, which is exactly what `worktree-entered.base` recorded and had no way to reach the exit
+until the fold carried it there.
+
+**Two sessions cannot work the same worktree.** Entering claims it with `git worktree lock`, whose
+reason is a legible ownership token — `atlas thread <id> (pid <n> start <t>)`. The start time is
+load-bearing: a pid alone is reusable, so a recycled pid would read as a live owner forever. Reading
+it back is a four-way verdict rather than a flag check, and only the pure part lives in `core`
+(`worktreeLockHolder`) with the process probing in `harness`, because "is that pid alive" is I/O and
+"what does this reason mean" is not.
+
+A lock this session already holds is ours. A lock naming a live process refuses the entry outright.
+A lock naming a process that is gone, or whose start time no longer matches, is stale and gets
+cleared and retaken. Anything that does not parse as an Atlas token is a person's own
+`git worktree lock`, which is left exactly where it is while the session works in the worktree as a
+guest — the same as when the registry cannot be read at all. Refusing to enter is reserved for the
+one case where another agent is actually there.
+
+Leaving releases the lock, and so does switching straight to another worktree, so the one being left
+does not stay wedged. Removal releases first because git will not remove a locked worktree — which
+is also the cost of this scheme: a session that dies takes its lock with it, and the checkout stays
+locked until some later Atlas session reclaims it or the developer runs `git worktree unlock`.
 
 It is a rule over the log rather than a `context-loaded` event on purpose. An event renders at its own
 seq, so a move at seq 13 of a 133-event thread scrolls away and the model is left inferring its own

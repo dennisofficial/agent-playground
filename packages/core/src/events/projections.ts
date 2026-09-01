@@ -78,6 +78,7 @@ const TURN_TAKING: readonly EventType[] = [
   'nudge',
   'background-shell-ended',
   'background-shell-awaiting-input',
+  'background-shell-matched',
   'agent-ended',
 ]
 

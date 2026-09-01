@@ -91,6 +91,11 @@ export function choiceValueOf(args: {
   return typeof held?.value === 'string' ? held.value : args.fallback
 }
 
+export function textValueOf(args: { resolution: SettingsResolution; id: string }): string {
+  const held = args.resolution.settings.get(args.id)
+  return typeof held?.value === 'string' ? held.value : ''
+}
+
 export function rangeValueOf(args: {
   resolution: SettingsResolution
   id: string

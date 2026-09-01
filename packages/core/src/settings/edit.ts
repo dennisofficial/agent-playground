@@ -24,6 +24,10 @@ export function activateSetting(args: {
     return typeof current === 'boolean' ? !current : !definition.fallback
   }
 
+  if (definition.kind === ESettingKind.Text || definition.kind === ESettingKind.Secret) {
+    return typeof current === 'string' ? current : definition.fallback
+  }
+
   if (definition.kind === ESettingKind.Choice) {
     const next = wrapped({
       index: optionIndex({ options: definition.options, value: current }) + 1,
@@ -48,6 +52,10 @@ export function adjustSetting(args: {
   if (definition.kind === ESettingKind.Toggle) {
     if (delta === 0) return typeof current === 'boolean' ? current : definition.fallback
     return delta > 0
+  }
+
+  if (definition.kind === ESettingKind.Text || definition.kind === ESettingKind.Secret) {
+    return typeof current === 'string' ? current : definition.fallback
   }
 
   if (definition.kind === ESettingKind.Choice) {

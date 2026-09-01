@@ -1,9 +1,9 @@
-import { MODEL_CATALOG } from '../models/registry'
 import type { EPromptAgent } from './agent'
 import type { PromptContext } from './context'
 import type { PromptFragment } from './fragment'
+import { PROMPT_MODEL_SAMPLES, type PromptModel } from './model'
 
-export const MODEL_ID_OUTSIDE_THE_CATALOGUE = 'uncatalogued-model'
+export type ModelTraitProbe = { key: string; model: PromptModel }
 
 export function reachablePromptContexts(args: {
   agents: readonly EPromptAgent[]
@@ -13,20 +13,14 @@ export function reachablePromptContexts(args: {
   const { projectDirectory } = args
 
   return args.agents.flatMap((agent) =>
-    args.providerIds.flatMap((id) => [
-      ...MODEL_CATALOG.map((model) => ({
+    args.providerIds.flatMap((id) =>
+      PROMPT_MODEL_SAMPLES.map((model) => ({
         agent,
-        provider: { id, modelId: model.id },
+        provider: { id, modelId: `sampled-${model.contextWindow}` },
         model,
         projectDirectory,
       })),
-      {
-        agent,
-        provider: { id, modelId: MODEL_ID_OUTSIDE_THE_CATALOGUE },
-        model: undefined,
-        projectDirectory,
-      },
-    ]),
+    ),
   )
 }
 
@@ -37,4 +31,29 @@ export function deadFragmentIds(args: {
   return args.fragments
     .filter((fragment) => !args.contexts.some((ctx) => fragment.applies(ctx)))
     .map((fragment) => fragment.id)
+}
+
+const renderOf = (args: {
+  fragments: readonly PromptFragment[]
+  ctx: PromptContext
+}): string =>
+  args.fragments
+    .filter((fragment) => fragment.applies(args.ctx))
+    .map((fragment) => `${fragment.id}\n${fragment.text(args.ctx)}`)
+    .join('\n\n')
+
+export function unreadModelTraits(args: {
+  fragments: readonly PromptFragment[]
+  base: PromptContext
+  probes: readonly ModelTraitProbe[]
+}): readonly string[] {
+  const baseline = renderOf({ fragments: args.fragments, ctx: args.base })
+
+  return args.probes
+    .filter(
+      (probe) =>
+        renderOf({ fragments: args.fragments, ctx: { ...args.base, model: probe.model } }) ===
+        baseline,
+    )
+    .map((probe) => probe.key)
 }

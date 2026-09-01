@@ -13,6 +13,7 @@ import {
   type ThreadRow,
   type ThreadsState,
 } from '../ui/threads-model'
+import { isPrintable } from '../ui/keys/printable'
 import type { AtlasApp } from './compose'
 
 export type ThreadsControl = {
@@ -23,15 +24,8 @@ export type ThreadsControl = {
   handleKey: (key: KeyEvent) => void
 }
 
-const CONTROL_CHARACTER = /[\u0000-\u001f]/
-
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : 'the conversations could not be listed'
-
-const isPrintable = (key: KeyEvent): boolean => {
-  const sequence = key.sequence ?? ''
-  return sequence.length > 0 && !key.ctrl && !key.meta && !CONTROL_CHARACTER.test(sequence)
-}
 
 /**
  * OpenTUI parses a whole input burst before React re-renders, so a typed run of keys would all read

@@ -3,12 +3,7 @@ export { bootAtlas } from './boot'
 export { bootStepLabel, createBootProgress, EBootStep, type BootProgress } from './boot-progress'
 export { BootScreen } from './boot-screen'
 export { composeAtlas, type AtlasApp } from './compose'
-export {
-  DEFAULT_MODEL_ID,
-  DEFAULT_THINKING_BUDGET_TOKENS,
-  resolveConfig,
-  type AtlasConfig,
-} from './config'
+export { DEFAULT_MODEL_REF, resolveConfig, type AtlasConfig } from './config'
 export {
   CREDENTIAL_EXIT_CODE,
   diagnoseCredentialFailure,

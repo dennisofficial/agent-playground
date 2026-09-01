@@ -5,7 +5,9 @@ import {
   pendingCalls,
   resolveApproval,
   rowsOwnedBy,
-  projectDirectoryOf,
+  activeWorktreeAfter,
+  activeWorktreeOf,
+  type ActiveWorktree,
   type ThreadId,
   type CallId,
   type Event,
@@ -20,20 +22,6 @@ export type SettlePending = (args: {
   threadId: ThreadId
   signal: AbortSignal
 }) => Promise<{ paused?: { callId: CallId; reason: string } }>
-
-function projectDirectoryAfter(args: {
-  drafts: readonly EventDraft[]
-  launchDirectory: string
-  projectDirectory: string
-}): string {
-  for (let index = args.drafts.length - 1; index >= 0; index -= 1) {
-    const draft = args.drafts[index]
-    if (draft?.type === 'worktree-entered') return draft.path
-    if (draft?.type === 'worktree-exited') return args.launchDirectory
-  }
-
-  return args.projectDirectory
-}
 
 export function createSettlePending(deps: {
   log: EventLogPort
@@ -52,6 +40,7 @@ export function createSettlePending(deps: {
     events: readonly Event[]
     signal: AbortSignal
     projectDirectory: string
+    activeWorktree: ActiveWorktree | undefined
   }): Promise<readonly EventDraft[]> => {
     const { call, refusal } = args
 
@@ -63,6 +52,7 @@ export function createSettlePending(deps: {
       call,
       signal: args.signal,
       projectDirectory: args.projectDirectory,
+      activeWorktree: args.activeWorktree,
       events: args.events,
     })
   }
@@ -87,11 +77,12 @@ export function createSettlePending(deps: {
     const runs = partitionToolCalls({ calls, isSafe })
 
     const launchDirectory = deps.launchDirectory ?? process.cwd()
-    let projectDirectory = projectDirectoryOf({ events, launchDirectory })
+    let activeWorktree: ActiveWorktree | undefined = activeWorktreeOf(events)
 
     for (const run of runs) {
       if (signal.aborted) return {}
 
+      const projectDirectory = activeWorktree?.path ?? launchDirectory
       const settled = await Promise.all(
         run.map((call) =>
           settleOne({
@@ -100,6 +91,7 @@ export function createSettlePending(deps: {
             events,
             signal,
             projectDirectory,
+            activeWorktree,
           }),
         ),
       )
@@ -112,7 +104,7 @@ export function createSettlePending(deps: {
 
       const drafts = settled.flat()
 
-      projectDirectory = projectDirectoryAfter({ drafts, launchDirectory, projectDirectory })
+      activeWorktree = activeWorktreeAfter({ drafts, active: activeWorktree })
 
       const asked = drafts.find((draft) => draft.type === 'approval-requested')
       if (asked !== undefined) return { paused: { callId: asked.callId, reason: asked.reason } }

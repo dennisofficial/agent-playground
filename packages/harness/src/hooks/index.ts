@@ -1,4 +1,7 @@
+export * from './budget'
 export * from './registry'
 export * from './resolve-hooks'
 export * from './register-hooks'
 export * from './load-instructions'
+export * from './load-memory'
+export * from './stamp-memory'

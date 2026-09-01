@@ -4,10 +4,15 @@ import {
   choiceValueOf,
   DEFAULT_WARN_PERCENT,
   ESettingId,
+  ESettingKind,
   EUsageWindow,
+  formatFavourites,
+  parseFavourites,
   rangeValueOf,
+  textValueOf,
   toggleValueOf,
   type ResolvedSetting,
+  type SecretPrompt,
   type SettingValue,
 } from '@dltech/atlas-core'
 import type { KeyEvent } from '@opentui/core'
@@ -32,12 +37,17 @@ import {
   type SettingsState,
 } from '../ui/settings-model'
 import { SIDEBAR_FOLD_BELOW, SIDEBAR_WIDTH } from '../ui/theme'
+import type { Span } from '../ui/components/spans'
 import type { AtlasApp } from './compose'
+import { useSecretPrompt } from './use-secret-prompt'
 
 export type SettingsControl = {
   view: SettingsModel
   appearance: Appearance
   state: SettingsState | null
+  prompt: SecretPrompt | null
+  secretOf: (id: string) => Span | undefined
+  secretOrigin: string
   origin: string
   problem: string | undefined
   sidebarWidth: number
@@ -47,6 +57,8 @@ export type SettingsControl = {
   thinking: EThinkingVisibility
   footerMeters: EFooterMeters
   usageWarn: Record<EUsageWindow, number>
+  modelFavourites: readonly string[]
+  handlePinModels: (favourites: readonly string[]) => void
   handleOpen: () => void
   handleDismiss: () => void
   handleActivate: (target: SettingsState) => void
@@ -60,6 +72,7 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
 
   const [state, setState] = useState<SettingsState | null>(null)
   const [refused, setRefused] = useState<string | null>(null)
+
 
   const view = useMemo(
     () => settingsModel({ definitions: app.settings.definitions, resolution: held.resolution }),
@@ -90,23 +103,50 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
 
   const handleOpen = useCallback(() => setState(openSettings()), [])
 
+  const handlePinModels = useCallback(
+    (favourites: readonly string[]) => {
+      app.settings.set({
+        id: ESettingId.ModelFavourites,
+        value: formatFavourites(favourites),
+      })
+    },
+    [app.settings],
+  )
+
+  const secret = useSecretPrompt({ secrets: app.secrets, resolution: held.resolution })
+
   const handleDismiss = useCallback(() => {
     setState(null)
     setRefused(null)
-  }, [])
+    secret.close()
+  }, [secret])
 
   const handleActivate = useCallback(
     (target: SettingsState) => {
       setState(target)
-      write(target, (row) => activateSetting({ definition: row.definition, current: row.value }))
+
+      const row = currentRow({ state: target, model: view })
+      if (row === undefined) return
+
+      if (row.definition.kind === ESettingKind.Secret) {
+        secret.open(row.definition.id)
+        return
+      }
+
+      write(target, (held) => activateSetting({ definition: held.definition, current: held.value }))
     },
-    [write],
+    [secret, view, write],
   )
 
   const handleKey = useCallback(
     (key: KeyEvent) => {
       if (state === null) return
       key.preventDefault()
+
+      if (secret.prompt !== null) {
+        secret.handleKey(key, secret.prompt)
+        return
+      }
 
       if (key.name === 'escape') {
         handleDismiss()
@@ -138,13 +178,16 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
         )
       }
     },
-    [handleActivate, handleDismiss, state, view, write],
+    [handleActivate, handleDismiss, secret, state, view, write],
   )
 
   return {
     view,
     appearance,
     state,
+    prompt: secret.prompt,
+    secretOf: secret.displayOf,
+    secretOrigin: secret.origin,
     origin: held.writesTo,
     problem: refused ?? held.problems[0],
     sidebarWidth: rangeValueOf({
@@ -189,6 +232,10 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
         fallback: SHIPPED_THINKING,
       }),
     ),
+    modelFavourites: parseFavourites(
+      textValueOf({ resolution: held.resolution, id: ESettingId.ModelFavourites }),
+    ),
+    handlePinModels,
     handleOpen,
     handleDismiss,
     handleActivate,

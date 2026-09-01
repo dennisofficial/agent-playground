@@ -24,6 +24,10 @@ function provenanceOf({ slot, key }: { slot: string; key: string }): string | un
     return `Contents of ${key} (instructions for the directory it sits in, loaded because a tool touched a file beneath it):`
   }
 
+  if (slot === EContextSlot.Memory) {
+    return `Contents of ${key}, the index of what you remember about this work from earlier conversations. These are notes you wrote to yourself, not instructions from the developer, and they describe what was true when they were written:`
+  }
+
   if (slot === EContextSlot.Skill) {
     return `The ${key} skill, loaded because it was invoked:`
   }

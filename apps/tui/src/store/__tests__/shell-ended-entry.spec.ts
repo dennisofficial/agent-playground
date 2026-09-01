@@ -67,6 +67,35 @@ describe('a background shell ending in the transcript', () => {
     expect(entry.text).toBe('Background shell "Run full TUI suite" was killed by you')
   })
 
+  it('says a timeout blew a deadline rather than that someone killed it', () => {
+    const entry = onlyShellEntry(
+      log([
+        shellEnded({
+          status: EShellStatus.Killed,
+          killedBy: EKilledBy.Timeout,
+          exitCode: undefined,
+        }),
+      ]),
+    )
+
+    expect(entry.text).toBe('Background shell "Run full TUI suite" ran past its timeout')
+    expect(entry.text).not.toContain('killed')
+  })
+
+  it('marks a timeout as failed, because the wait expired and the work did not land', () => {
+    const entry = onlyShellEntry(
+      log([
+        shellEnded({
+          status: EShellStatus.Killed,
+          killedBy: EKilledBy.Timeout,
+          exitCode: undefined,
+        }),
+      ]),
+    )
+
+    expect(entry.failed).toBe(true)
+  })
+
   it('marks a non-zero exit as failed, so the line can be read at a glance', () => {
     const entry = onlyShellEntry(log([shellEnded({ exitCode: 2 })]))
 

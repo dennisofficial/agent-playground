@@ -13,7 +13,7 @@ const expiryMillis = (tokens: OauthTokens): number => {
   return Number.isNaN(parsed) ? 0 : parsed
 }
 
-const samePair = (left: OauthTokens, right: OauthTokens): boolean =>
+export const isSamePair = (left: OauthTokens, right: OauthTokens): boolean =>
   left.accessToken === right.accessToken && left.refreshToken === right.refreshToken
 
 export function adoptionOf(args: {
@@ -26,7 +26,7 @@ export function adoptionOf(args: {
   if (observed.accessToken.length === 0 || observed.refreshToken.length === 0)
     return EAdoption.Unusable
 
-  if (samePair(observed, stored)) return EAdoption.Unchanged
+  if (isSamePair(observed, stored)) return EAdoption.Unchanged
 
   const belongsToAnother = others.some(
     (other) =>

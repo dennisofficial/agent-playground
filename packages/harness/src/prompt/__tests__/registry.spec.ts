@@ -1,23 +1,23 @@
 import { describe, expect, it } from 'bun:test'
 
 import {
-  EModelVendor,
+  CONTEXT_WINDOW_WHEN_THE_MODEL_IS_UNKNOWN,
   EPromptAgent,
   ESkipReason,
-  MODEL_ID_OUTSIDE_THE_CATALOGUE,
   PromptFragment,
   deadFragmentIds,
-  modelEntry,
   reachablePromptContexts,
 } from '@dltech/atlas-core'
 
 import { InMemoryPromptRegistry } from '../registry'
 import { ConditionalFragment, CountingFragment, SayingFragment, contextFor } from './fake-fragments'
 
-const forModel = (modelId: string) => contextFor({ modelId, model: modelEntry(modelId), projectDirectory: '/w' })
+const forModel = (modelId: string) => contextFor({ modelId })
+
+const WIDE_CONTEXT = 1_000_000
 
 const OPUS = forModel('claude-opus-5')
-const CODEX = forModel('gpt-5-codex')
+const CODEX = contextFor({ modelId: 'gpt-5-codex', model: { contextWindow: 400_000 } })
 
 describe('InMemoryPromptRegistry', () => {
   it('compiles the fragments in registration order into one system block', () => {
@@ -76,45 +76,41 @@ describe('InMemoryPromptRegistry', () => {
     expect(compiled.blocks).toEqual([{ text: 'kept' }])
   })
 
-  it('gives one registry two prompts when a fragment conditions on the model vendor', () => {
+  it('gives one registry two prompts when a fragment conditions on a model trait', () => {
     const registry = new InMemoryPromptRegistry([
       new SayingFragment('identity', 'You are Atlas.'),
       new ConditionalFragment(
-        'anthropic-only',
-        'Anthropic-shaped advice.',
-        (ctx) => ctx.model?.vendor === EModelVendor.Anthropic,
+        'wide-context-only',
+        'Advice for a roomy window.',
+        (ctx) => ctx.model.contextWindow >= WIDE_CONTEXT,
       ),
     ])
 
     expect(registry.compile(OPUS).blocks).toEqual([
-      { text: 'You are Atlas.\n\nAnthropic-shaped advice.' },
+      { text: 'You are Atlas.\n\nAdvice for a roomy window.' },
     ])
     expect(registry.compile(CODEX).blocks).toEqual([{ text: 'You are Atlas.' }])
     expect(registry.compile(CODEX).skipped).toEqual([
-      { id: 'anthropic-only', reason: ESkipReason.Condition },
+      { id: 'wide-context-only', reason: ESkipReason.Condition },
     ])
   })
 
-  it('compiles a context whose modelId is outside the catalogue without throwing', () => {
+  it('compiles a context for a model no catalogue holds without throwing', () => {
     const registry = new InMemoryPromptRegistry([
       new SayingFragment('identity', 'You are Atlas.'),
       new ConditionalFragment(
-        'anthropic-only',
-        'Anthropic-shaped advice.',
-        (ctx) => ctx.model?.vendor === EModelVendor.Anthropic,
+        'wide-context-only',
+        'Advice for a roomy window.',
+        (ctx) => ctx.model.contextWindow >= WIDE_CONTEXT,
       ),
     ])
 
-    const unknown = forModel('claude-opus-12')
+    const uncatalogued = contextFor({
+      modelId: 'claude-opus-12',
+      model: { contextWindow: CONTEXT_WINDOW_WHEN_THE_MODEL_IS_UNKNOWN },
+    })
 
-    expect(unknown.model).toBeUndefined()
-    expect(registry.compile(unknown).blocks).toEqual([{ text: 'You are Atlas.' }])
-  })
-
-  it('resolves a dated release id back to its catalogue entry', () => {
-    const stamped = forModel('claude-haiku-4-5-20251001')
-
-    expect(stamped.model?.id).toBe('claude-haiku-4-5')
+    expect(registry.compile(uncatalogued).blocks).toEqual([{ text: 'You are Atlas.' }])
   })
 
   it('refuses two fragments under one id at construction, naming the collision', () => {
@@ -177,12 +173,12 @@ describe('the compile memo', () => {
     expect(counting.calls).toBe(2)
   })
 
-  it('keys on the provider modelId rather than the resolved entry, so two ids for one entry differ', () => {
+  it('keys on the provider modelId rather than the traits, so two ids of one window differ', () => {
     const counting = new CountingFragment('counting')
     const registry = new InMemoryPromptRegistry([counting])
 
     registry.compile(forModel('claude-haiku-4-5'))
-    registry.compile(forModel('claude-haiku-4-5-20251001'))
+    registry.compile(forModel('claude-haiku-4-6'))
 
     expect(counting.calls).toBe(2)
   })
@@ -207,20 +203,27 @@ describe('dead prose', () => {
     expect(idsThatAreDead(fragments)).toEqual(['never'])
   })
 
-  it('leaves a fragment alive when one catalogue entry selects it', () => {
+  it('leaves a fragment alive when one sampled window selects it', () => {
     const fragments = [
-      new ConditionalFragment('openai-only', 'text', (ctx) => ctx.model?.vendor === EModelVendor.OpenAI),
+      new ConditionalFragment(
+        'wide-only',
+        'text',
+        (ctx) => ctx.model.contextWindow >= WIDE_CONTEXT,
+      ),
     ]
 
     expect(idsThatAreDead(fragments)).toEqual([])
   })
 
-  it('leaves a fragment alive when only the uncatalogued-model context selects it', () => {
+  it('samples a window narrow enough to select a fragment written for a small model', () => {
     const fragments = [
-      new ConditionalFragment('unknown-only', 'text', (ctx) => ctx.model === undefined),
+      new ConditionalFragment(
+        'narrow-only',
+        'text',
+        (ctx) => ctx.model.contextWindow <= CONTEXT_WINDOW_WHEN_THE_MODEL_IS_UNKNOWN,
+      ),
     ]
 
-    expect(contexts.some((ctx) => ctx.provider.modelId === MODEL_ID_OUTSIDE_THE_CATALOGUE)).toBe(true)
     expect(idsThatAreDead(fragments)).toEqual([])
   })
 })

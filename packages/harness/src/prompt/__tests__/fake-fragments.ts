@@ -4,10 +4,12 @@ export const contextFor = (args: {
   modelId: string
   model?: PromptContext['model']
   providerId?: string
+  projectDirectory?: string
 }): PromptContext => ({
   agent: EPromptAgent.Main,
   provider: { id: args.providerId ?? 'anthropic-oauth', modelId: args.modelId },
-  model: args.model,
+  model: args.model ?? { contextWindow: 1_000_000 },
+  projectDirectory: args.projectDirectory ?? '/w',
 })
 
 export class SayingFragment extends PromptFragment {

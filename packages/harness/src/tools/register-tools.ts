@@ -18,6 +18,8 @@ import { ShellListTool } from './builtin/shell-list'
 import { ShellOutputTool } from './builtin/shell-output'
 import { SkillTool } from './builtin/skill'
 import { TaskWriteTool } from './builtin/task-write'
+import { WebFetchTool } from './builtin/web-fetch'
+import { WebSearchTool } from './builtin/web-search'
 import { WriteTool } from './builtin/write'
 import { WorktreeListTool } from './builtin/worktree-list'
 import { InMemoryToolRegistry, ToolRegistry } from './registry'
@@ -42,6 +44,8 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
   container.register(portToken(ToolDefinition), { useClass: EnterWorktreeTool })
   container.register(portToken(ToolDefinition), { useClass: ExitWorktreeTool })
   container.register(portToken(ToolDefinition), { useClass: WorktreeListTool })
+  container.register(portToken(ToolDefinition), { useClass: WebFetchTool })
+  container.register(portToken(ToolDefinition), { useClass: WebSearchTool })
 
   container.register(portToken(ToolRegistry), { useClass: InMemoryToolRegistry })
 }

@@ -4,6 +4,7 @@ import type { AssemblyTrace } from '../assembly/trace'
 import type { Event } from '../events/envelope'
 import type { ThreadId } from '../events/ids'
 import type { BeforeToolOutcome } from '../policy/before-tool'
+import type { EndedShell } from '../shells/status'
 import type { Chunk } from '../stream/chunk'
 import type { ToolCall, ToolOutcome } from '../tools/tool'
 import type { HookOrder } from './order'
@@ -18,6 +19,7 @@ export enum EHookPhase {
   BeforeRequest = 'before-request',
   BeforeTool = 'before-tool',
   AfterTool = 'after-tool',
+  AfterShell = 'after-shell',
   OnChunk = 'on-chunk',
   AfterTurn = 'after-turn',
 }
@@ -38,7 +40,20 @@ export type BeforeTool = (args: {
   signal: AbortSignal
 }) => Promise<BeforeToolOutcome>
 
-export type AfterTool = (args: { call: ToolCall; result: ToolOutcome }) => Promise<HookOutcome>
+export type AfterTool = (args: {
+  call: ToolCall
+  result: ToolOutcome
+  signal: AbortSignal
+}) => Promise<HookOutcome>
+
+/**
+ * The only phase not driven by a turn: a backgrounded shell can finish while the session is idle,
+ * so the shell registry invokes this one and its drafts are delivered with the ending's notice.
+ */
+export type AfterShell = (args: {
+  threadId: ThreadId
+  shell: EndedShell
+}) => Promise<HookOutcome>
 
 export type OnChunk = (chunk: Chunk) => Promise<Chunk | null>
 
@@ -59,6 +74,8 @@ export abstract class BeforeRequestHook extends PhaseHook<BeforeRequest> {}
 export abstract class BeforeToolHook extends PhaseHook<BeforeTool> {}
 
 export abstract class AfterToolHook extends PhaseHook<AfterTool> {}
+
+export abstract class AfterShellHook extends PhaseHook<AfterShell> {}
 
 export abstract class OnChunkHook extends PhaseHook<OnChunk> {}
 

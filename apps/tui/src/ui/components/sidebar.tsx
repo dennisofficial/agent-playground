@@ -3,26 +3,45 @@ import { homedir } from 'node:os'
 import { RGBA } from '@opentui/core'
 import React from 'react'
 
-import { collapseHome, tailOfPath } from '../paths'
+import { collapseHome, compactPath } from '../paths'
 import { theme } from '../theme'
 import type { ShellSnapshot } from '@dltech/atlas-harness'
 
 import type { SidebarModel } from '../../store'
 import type { SidebarCrewFold } from '../../store/subagent-row'
 import { SIDEBAR_GUTTER, SIDEBAR_PADDING, sidebarCells } from './sidebar/cells'
+import { ESidebarPlace } from '../sidebar-section'
+import { ContributedSections } from './sidebar/contributed'
 import { SubagentsSection, TeammatesSection } from './sidebar/crew'
-import { FactsSection, HeadSection } from './sidebar/head'
+import { HeadSection } from './sidebar/head'
 import { ShellsSection } from './sidebar/shells'
 import { TodoSection } from './sidebar/todo'
 import { ApprovalsSection, TurnSection } from './sidebar/turn'
 import type { TurnClock } from './transcript'
 
-function SidebarFooter(props: { cwd: string; cells: number }): React.ReactNode {
-  const where = collapseHome({ cwd: props.cwd, home: homedir() })
+const worktreeLabel = (args: { worktree: string; root: string }): string =>
+  args.worktree.startsWith(`${args.root}/`)
+    ? args.worktree.slice(args.root.length + 1)
+    : collapseHome({ cwd: args.worktree, home: homedir() })
+
+function SidebarFooter(props: {
+  root: string
+  worktree: string | null
+  cells: number
+}): React.ReactNode {
+  const where = collapseHome({ cwd: props.root, home: homedir() })
 
   return (
     <box flexDirection="column" flexShrink={0} paddingTop={1} paddingRight={SIDEBAR_GUTTER}>
-      <text fg={theme.dim}>{tailOfPath({ path: where, cells: props.cells })}</text>
+      <text fg={theme.dim}>{compactPath({ path: where, cells: props.cells })}</text>
+      {props.worktree === null ? null : (
+        <text fg={theme.meta}>
+          {compactPath({
+            path: worktreeLabel({ worktree: props.worktree, root: props.root }),
+            cells: props.cells,
+          })}
+        </text>
+      )}
       <text>
         <span fg={theme.accent}>● </span>
         <span fg={theme.hover}>atlas</span>
@@ -62,9 +81,11 @@ export function Sidebar(props: {
   model: SidebarModel
   turn: TurnClock
   now: number
-  cwd: string
+  root: string
+  worktree: string | null
   overlay?: boolean
   shells?: readonly ShellSnapshot[]
+  shellNow?: number
   shellFold?: SidebarCrewFold
   onOpenShell?: (shellId: string) => void
   onSelectSubagent?: (agentId: string) => void
@@ -98,11 +119,16 @@ export function Sidebar(props: {
         >
           <box flexDirection="column" flexShrink={0} gap={1}>
             <HeadSection model={model} cells={cells} />
-            <FactsSection model={model} cells={cells} />
+            <ContributedSections
+              sections={model.sections ?? []}
+              place={ESidebarPlace.Facts}
+              cells={cells}
+            />
             <TurnSection turn={props.turn} now={props.now} cells={cells} />
             <ApprovalsSection model={model} cells={cells} />
             <ShellsSection
               shells={props.shells ?? []}
+              now={props.shellNow ?? Date.now()}
               cells={cells}
               fold={props.shellFold}
               {...(props.onOpenShell === undefined ? {} : { onOpen: props.onOpenShell })}
@@ -115,9 +141,14 @@ export function Sidebar(props: {
               {...(props.onSelectSubagent === undefined ? {} : { onOpen: props.onSelectSubagent })}
             />
             <TeammatesSection teammates={model.teammates ?? []} cells={cells} />
+            <ContributedSections
+              sections={model.sections ?? []}
+              place={ESidebarPlace.Panels}
+              cells={cells}
+            />
           </box>
         </scrollbox>
-        <SidebarFooter cwd={props.cwd} cells={cells} />
+        <SidebarFooter root={props.root} worktree={props.worktree} cells={cells} />
       </box>
     </>
   )

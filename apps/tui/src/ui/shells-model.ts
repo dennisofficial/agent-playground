@@ -1,5 +1,7 @@
 import { EKilledBy, EShellStatus, type ShellSnapshot } from '@dltech/atlas-harness'
 
+import { formatElapsed } from './theme'
+
 export type ShellsState = { index: number }
 
 export const AWAITING_INPUT_LABEL = 'awaiting input'
@@ -49,11 +51,45 @@ export function shellStateLabel(shell: ShellSnapshot): string {
     return shell.awaitingInput ? AWAITING_INPUT_LABEL : 'running'
   }
   if (shell.status === EShellStatus.Killed) {
-    return shell.killedBy === EKilledBy.User ? 'killed by you' : 'killed'
+    if (shell.killedBy === EKilledBy.User) return 'killed by you'
+    if (shell.killedBy === EKilledBy.Timeout) return 'timed out'
+    return 'killed'
   }
   if (shell.status === EShellStatus.Overflowed) return 'killed — too much output'
   if (shell.exitCode === undefined || shell.exitCode === 0) return 'done'
   return `exit ${shell.exitCode}`
+}
+
+const instantOf = (iso: string): number | null => {
+  const at = Date.parse(iso)
+  return Number.isNaN(at) ? null : at
+}
+
+const settledAt = (shell: ShellSnapshot): number | null => {
+  if (isShellRunning(shell)) return null
+  return instantOf(shell.endedAt ?? shell.lastOutputAt)
+}
+
+/**
+ * How long the process itself has been alive, which a running shell keeps counting and a settled
+ * one stops at its ending. A shell that ended without a stamp is dated by its last output, the
+ * latest moment it is known to have been running.
+ */
+export function shellElapsedMs(args: { shell: ShellSnapshot; now: number }): number | null {
+  const started = instantOf(args.shell.startedAt)
+  if (started === null) return null
+
+  return Math.max(0, (settledAt(args.shell) ?? args.now) - started)
+}
+
+const READOUT_SEPARATOR = ' · '
+
+export function shellReadout(args: { shell: ShellSnapshot; now: number }): string {
+  const state = shellStateLabel(args.shell)
+  if (args.shell.awaitingInput) return state
+
+  const elapsed = shellElapsedMs(args)
+  return elapsed === null ? state : `${state}${READOUT_SEPARATOR}${formatElapsed(elapsed)}`
 }
 
 export const shellCommandLabel = (command: string): string => command.replace(/\s+/g, ' ').trim()

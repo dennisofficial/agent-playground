@@ -12,6 +12,7 @@ import { useTickingNow } from './use-ticking-now'
 import type { SidebarCrewFold } from '../store/subagent-row'
 import { useOutputScroll, type OutputScroll } from '../ui/hooks/use-output-scroll'
 import {
+  isShellRunning,
   moveShellSelection,
   openShells,
   outputScrollCommand,
@@ -38,6 +39,7 @@ export type ShellsControl = {
   fold: SidebarCrewFold
   everywhere: readonly ShellSnapshot[]
   running: number
+  now: number
   state: ShellsState | null
   selected: ShellSnapshot | undefined
   output: string
@@ -125,8 +127,8 @@ function useShellVisits(viewing: string | null): CrewVisits {
 
 /**
  * A settled shell prints nothing more, so the poll finds the same snapshots and holds the render
- * still — the one thing a grace window cannot survive. The tick runs only while some shell is
- * inside its window, and the reading it answers with is the wall clock rather than the ticked one.
+ * still — the one thing a grace window or a counting timer cannot survive. The tick runs while a
+ * shell is running or inside its window, and reads the wall clock rather than the turn's own.
  */
 /**
  * The scoped list is what a conversation may see and act on; the unscoped one exists for the exit
@@ -148,13 +150,14 @@ export function useShells({ app, threadId }: { app: AtlasApp; threadId: ThreadId
   const viewing = selected?.shellId ?? null
   const visits = useShellVisits(viewing)
   const now = useTickingNow(
-    shellGraceIsRunning({
-      shells,
-      visits,
-      viewing,
-      now: Date.now(),
-      graceMs: DEFAULT_CREW_GRACE_MS,
-    }),
+    shells.some(isShellRunning) ||
+      shellGraceIsRunning({
+        shells,
+        visits,
+        viewing,
+        now: Date.now(),
+        graceMs: DEFAULT_CREW_GRACE_MS,
+      }),
   )
 
   const folded = useMemo(
@@ -239,6 +242,7 @@ export function useShells({ app, threadId }: { app: AtlasApp; threadId: ThreadId
       fold: { hidden: folded.hidden, hiddenFailed: folded.hiddenFailed },
       everywhere,
       running: runningCount(everywhere),
+      now,
       state,
       selected,
       output,
@@ -257,6 +261,7 @@ export function useShells({ app, threadId }: { app: AtlasApp; threadId: ThreadId
       handleSelect,
       everywhere,
       folded,
+      now,
       output,
       scroll,
       selected,

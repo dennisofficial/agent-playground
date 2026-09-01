@@ -9,26 +9,32 @@
   "scripts": {
     "typecheck": "bun run db:ensure && tsc --noEmit",
     "test": "bun run db:ensure && bun test",
+    "generate:catalogue": "bun scripts/generate-catalogue.ts",
     "db:generate": "prisma generate",
     "db:ensure": "bun prisma/ensure-client.ts && bun prisma/embed-migrations.ts",
     "db:migrate": "prisma migrate dev"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.41",
+    "@ai-sdk/openai": "^4.0.55",
+    "@ai-sdk/openai-compatible": "^3.0.42",
     "@ai-sdk/provider": "4.0.7",
     "@dltech/atlas-core": "workspace:*",
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@prisma/client": "7.9.1",
     "ai": "^7.0.77",
+    "htmlparser2": "^12.0.0",
     "prisma-adapter-bun-sqlite": "^0.8.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "tsyringe": "4.10.0",
+    "turndown": "^7.2.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "@types/turndown": "^5.0.6",
     "prisma": "7.9.1"
   }
 }

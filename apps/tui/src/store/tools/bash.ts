@@ -9,6 +9,8 @@
  * Ordered: the first matcher that fires wins, so the specific ones come before the general.
  */
 
+import { isMemoryIndexPath, memoryNameOf, MEMORY_MENTION } from '@dltech/atlas-core'
+
 import { EDetail, EGather, EToolClass, type Classification } from './kinds'
 
 export type Shell = {
@@ -161,7 +163,46 @@ const subjectOf = (command: string): string =>
   /-m\s+(?:'([^']*)'|"([^"]*)")/.exec(command)?.[2] ??
   'a change'
 
+const INDEX_SUBJECT = 'the memory index'
+
+/** What a command is talking about, when what it is talking about is a memory. */
+const memorySubjectOf = (command: string): string => {
+  for (const token of command.split(/\s+/)) {
+    const bare = token.replace(/^['"]|['"]$/g, '')
+    if (isMemoryIndexPath(bare)) return INDEX_SUBJECT
+    const name = memoryNameOf(bare)
+    if (name !== undefined) return name
+  }
+  return 'a memory'
+}
+
+const WRITES_TO_MEMORY = new RegExp(`(?:>>?\\s*\\S*|tee\\s+\\S*|^(?:cp|mv)\\s+.*)${MEMORY_MENTION.source}`)
+
+/**
+ * Memory reached through the shell rather than through the file tools.
+ *
+ * The model will `cat` an index or `ls` the directory as readily as it will read one, and spelled
+ * that way the same operation lands in the read or list clause with a path for a label. The clause
+ * is what the sentence counts, so recognising the path here is what keeps `Recalled 2 memories`
+ * true however the model got there.
+ */
+const memoryShell = (shell: Staged): Classification => {
+  if (/^rm\b/.test(shell.command)) {
+    const subject = memorySubjectOf(shell.command)
+    return named({ line: `Forgot ${subject}`, note: shell.ok ? 'forgotten' : 'failed', failed: !shell.ok, detail: EDetail.None })
+  }
+
+  if (WRITES_TO_MEMORY.test(shell.command)) {
+    const subject = memorySubjectOf(shell.command)
+    const verb = subject === INDEX_SUBJECT ? 'Updated' : 'Remembered'
+    return named({ line: `${verb} ${subject}`, note: shell.ok ? 'saved' : 'failed', failed: !shell.ok, detail: EDetail.None })
+  }
+
+  return gathered({ gather: EGather.Recall, shell, counts: false })
+}
+
 const MATCHERS: readonly Matcher[] = [
+  { when: MEMORY_MENTION, read: memoryShell },
   { when: /^git\s+push\b/, read: (shell) => named({ line: `Pushed to ${branchOf(shell.command)}`, note: shell.ok ? 'pushed' : 'failed', failed: !shell.ok }) },
   { when: /^git\s+commit\b/, read: (shell) => named({ line: `Committed “${subjectOf(shell.command)}”`, note: shell.ok ? 'committed' : 'failed', failed: !shell.ok }) },
   { when: /^git\s+add\b/, read: (shell) => named({ line: 'Staged the changes', note: shell.ok ? 'staged' : 'failed', failed: !shell.ok }) },

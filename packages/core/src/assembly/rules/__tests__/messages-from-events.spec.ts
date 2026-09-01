@@ -272,4 +272,26 @@ describe('messagesFromEvents and nudges', () => {
 
     expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['user'])
   })
+
+  it('hands a watch match to the model as its own user turn while the shell runs on', () => {
+    const events = log([
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'backgrounding the suite' }] },
+      {
+        type: 'background-shell-matched',
+        shellId: 'bash_1',
+        command: 'bun test',
+        pattern: '(fail|error)',
+        lines: '12 fail\n',
+        matchCount: 1,
+      },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual(['assistant', 'user'])
+
+    const notice = assembled.messages[1]?.message.content[0]
+    expect(notice?.type).toBe('text')
+    expect(notice?.type === 'text' ? notice.text : '').toContain('<background-shell-matched>')
+  })
 })

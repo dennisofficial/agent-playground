@@ -10,6 +10,7 @@ const handlers = (over: Partial<GlobalHandlers>): GlobalHandlers => ({
   onSubmit: noop,
   onShortcuts: noop,
   onTakeBackPending: () => true,
+  onEnterFooterStrip: () => false,
   onInterrupt: noop,
   onOpenSwitcher: noop,
   onAttachImage: () => false,

@@ -1,7 +1,8 @@
-import { MODEL_CATALOG } from '@dltech/atlas-core'
+import type { ModelRef } from '@dltech/atlas-core'
 import React from 'react'
 
 import { Accounts } from '../ui/components/accounts'
+import { Approval } from '../ui/components/approval'
 import type { Span } from '../ui/components/spans'
 import type { AccountRow } from '../ui/accounts-model'
 import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
@@ -15,10 +16,10 @@ import { Threads } from '../ui/components/threads'
 import { AgentsPicker } from '../ui/components/agents-picker'
 import { isShellRunning } from '../ui/shells-model'
 import { isSubagentRunning } from '../store/subagent-row'
-import { modelIsReachable } from './model-selection'
 import type { AccountsControl } from './use-accounts'
 import type { AgentsControl } from './use-agents'
 import type { AgentsPickerControl } from './use-agents-picker'
+import type { ApprovalControl } from './use-approval'
 import type { ExitGuardControl } from './use-exit-guard'
 import type { RewindControl } from './use-rewind'
 import type { SettingsControl } from './use-settings'
@@ -30,7 +31,7 @@ export function OverlayStack(props: {
   width: number
   contentWidth: number
   cwd: string
-  activeModelId: string
+  active: ModelRef
   switcher: SwitcherControl
   shells: ShellsControl
   agents: AgentsControl
@@ -40,12 +41,14 @@ export function OverlayStack(props: {
   threads: ThreadsControl
   accountMeters: (row: AccountRow) => readonly Span[]
   rewind: RewindControl
+  approval: ApprovalControl
   exitGuard: ExitGuardControl
   compacting: Compacting | null
   now: number
 }): React.ReactNode {
   const { switcher, shells, agents, agentsPicker, settings, accounts, threads, rewind, exitGuard } =
     props
+  const { approval } = props
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
@@ -64,7 +67,7 @@ export function OverlayStack(props: {
       )}
       {accounts.state === null ? null : (
         <Accounts
-          width={sidebarWidth}
+          width={props.width}
           state={accounts.state}
           meters={props.accountMeters}
           overlay
@@ -94,12 +97,14 @@ export function OverlayStack(props: {
       {switcher.state === null ? null : (
         <Switcher
           width={sidebarWidth}
-          models={MODEL_CATALOG}
+          rows={switcher.rows}
           state={switcher.state}
-          activeModelId={props.activeModelId}
-          availability={modelIsReachable}
+          active={props.active}
+          total={switcher.total}
+          query={switcher.query}
           overlay
           onPick={switcher.handlePick}
+          onSelect={switcher.handleSelect}
           onDismiss={switcher.handleDismiss}
         />
       )}
@@ -107,12 +112,22 @@ export function OverlayStack(props: {
         <Shells
           width={Math.min(props.contentWidth, props.width)}
           shells={shells.shells}
+          now={shells.now}
           selected={shells.selected}
           output={shells.output}
           scroll={shells.scroll}
           overlay
           onKill={shells.handleKill}
           onDismiss={shells.handleDismiss}
+        />
+      )}
+      {approval.state === null ? null : (
+        <Approval
+          width={Math.min(props.contentWidth, props.width)}
+          state={approval.state}
+          overlay
+          onPick={approval.handlePick}
+          onDismiss={approval.handleDismiss}
         />
       )}
       {exitGuard.state === null ? null : (
@@ -137,6 +152,9 @@ export function OverlayStack(props: {
           cwd={props.cwd}
           origin={settings.origin}
           appearance={settings.appearance}
+          prompt={settings.prompt}
+          secretOf={settings.secretOf}
+          secretOrigin={settings.secretOrigin}
           problem={settings.problem}
           onActivate={settings.handleActivate}
           onDismiss={settings.handleDismiss}

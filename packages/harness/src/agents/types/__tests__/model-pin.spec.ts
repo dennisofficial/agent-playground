@@ -11,9 +11,10 @@ import { pinnedModelSource } from '../pinned-model'
 import { loadAgentTypes } from '../registry'
 
 const REACHABLE = 'claude-haiku-4-5'
-const STAMPED = 'claude-haiku-4-5-20251001'
 const ANOTHER_VENDOR = 'gpt-5-codex'
 const TYPO = 'claude-haiku-45'
+
+const REACHABLE_MODELS = [REACHABLE, ANOTHER_VENDOR]
 
 class FileSource extends AgentTypeSource {
   readonly origin = EDefinitionOrigin.User
@@ -41,6 +42,7 @@ const typeOf = (args: { name: string; model?: string | undefined }): AgentType =
 const load = (types: readonly AgentType[], modelIsUsable?: (modelId: string) => boolean) =>
   loadAgentTypes({
     sources: [new FileSource({ types })],
+    reachableModelIds: REACHABLE_MODELS,
     ...(modelIsUsable === undefined ? {} : { modelIsUsable }),
   })
 
@@ -50,14 +52,14 @@ const port = (modelId: string): ModelPort => ({
 })
 
 describe('a model pinned by an agent type file', () => {
-  it('is kept when the catalogue knows it, release stamp and all', async () => {
+  it('is kept when the composition root can reach it', async () => {
     const { types, refusals } = await load([
-      typeOf({ name: 'quick', model: STAMPED }),
+      typeOf({ name: 'quick', model: ANOTHER_VENDOR }),
       typeOf({ name: 'plain', model: REACHABLE }),
     ])
 
     expect(refusals).toEqual([])
-    expect(types.map((agentType) => agentType.model)).toEqual([REACHABLE, STAMPED])
+    expect(types.map((agentType) => agentType.model)).toEqual([REACHABLE, ANOTHER_VENDOR])
   })
 
   it('is refused when it names no model at all, rather than running on the parent silently', async () => {
@@ -101,6 +103,7 @@ describe('a model pinned by an agent type file', () => {
 
   it('lets a sound definition of the same name win once the bad one is out', async () => {
     const { types } = await loadAgentTypes({
+      reachableModelIds: REACHABLE_MODELS,
       sources: [
         new FileSource({
           types: [
@@ -124,6 +127,7 @@ describe('a subagent model configured for every child', () => {
   }) =>
     loadAgentTypes({
       sources: [new FileSource({ types: args.types })],
+      reachableModelIds: REACHABLE_MODELS,
       subagentModelId: args.subagentModelId,
       ...(args.modelIsUsable === undefined ? {} : { modelIsUsable: args.modelIsUsable }),
     })
@@ -209,10 +213,10 @@ describe('the model a child is actually run against', () => {
       },
     })
 
-    const built = modelFor({ agentType: typeOf({ name: 'quick', model: STAMPED }) })
+    const built = modelFor({ agentType: typeOf({ name: 'quick', model: ANOTHER_VENDOR }) })
 
-    expect(asked).toEqual([STAMPED])
-    expect(built.identity.modelId).toBe(STAMPED)
+    expect(asked).toEqual([ANOTHER_VENDOR])
+    expect(built.identity.modelId).toBe(ANOTHER_VENDOR)
   })
 
   it('is the configured subagent model when the type pins nothing', () => {
@@ -241,9 +245,9 @@ describe('the model a child is actually run against', () => {
       subagentModelId: REACHABLE,
     })
 
-    const built = modelFor({ agentType: typeOf({ name: 'quick', model: STAMPED }) })
+    const built = modelFor({ agentType: typeOf({ name: 'quick', model: ANOTHER_VENDOR }) })
 
-    expect(built.identity.modelId).toBe(STAMPED)
+    expect(built.identity.modelId).toBe(ANOTHER_VENDOR)
   })
 
   it('is rebuilt per spawn, so a child started after a switch reads the current selection', () => {

@@ -7,22 +7,18 @@ import {
   type ExitGuardRow,
   type ExitGuardState,
 } from '../exit-guard-model'
-import { fitHints, hintSpans, type Hint } from '../hint-layout'
+import { type Hint } from '../hint-layout'
 import { type PressHandlers, usePress } from '../hooks/use-press'
 import { glyph, theme } from '../theme'
+import { BottomDrawer, drawerCells, DrawerHints, DrawerLine, DRAWER_INSET } from './drawer'
 import { clipSpans, spanCells, truncateCells } from './sidebar/cells'
 import { Spans, type Span } from './spans'
 
-const PAD = 2
-
-const EDGE = 1
-
 const GUTTER_CELLS = 2
 
-export const EXIT_GUARD_INSET = EDGE + PAD * 2
+export const EXIT_GUARD_INSET = DRAWER_INSET
 
-export const exitGuardCells = (args: { width: number }): number =>
-  Math.max(0, args.width - EXIT_GUARD_INSET)
+export const exitGuardCells = (args: { width: number }): number => drawerCells(args)
 
 export const HEADING = 'Background work is running'
 
@@ -45,11 +41,11 @@ function Line(props: {
   press?: PressHandlers
 }): React.ReactNode {
   return (
-    <box height={1} flexShrink={0} paddingLeft={PAD} paddingRight={PAD} {...(props.press ?? {})}>
+    <DrawerLine {...(props.press === undefined ? {} : { press: props.press })}>
       <text>
         <Spans spans={clipSpans({ spans: props.spans, cells: props.cells })} />
       </text>
-    </box>
+    </DrawerLine>
   )
 }
 
@@ -133,18 +129,7 @@ export function ExitGuard(props: {
   const press = usePress()
 
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
-      backgroundColor={theme.overlayBg}
-      border={['top']}
-      borderColor={theme.rule}
-      paddingTop={1}
-      paddingBottom={1}
-      {...(props.overlay
-        ? { position: 'absolute' as const, left: 0, right: 0, bottom: 0, zIndex: 30 }
-        : {})}
-    >
+    <BottomDrawer overlay={props.overlay === true}>
       <Line spans={[{ text: HEADING, fg: theme.accent }]} cells={cells} />
       <Line spans={[{ text: SUBTITLE, fg: theme.hint }]} cells={cells} />
       <Running running={props.running} cells={cells} />
@@ -162,11 +147,7 @@ export function ExitGuard(props: {
         />
       ))}
       <Gap />
-      <Line
-        spans={hintSpans({ hints: fitHints({ hints: HINTS, cells }), keyColour: theme.meta })}
-        cells={cells}
-        press={press(props.onDismiss)}
-      />
-    </box>
+      <DrawerHints hints={HINTS} cells={cells} onDismiss={props.onDismiss} />
+    </BottomDrawer>
   )
 }

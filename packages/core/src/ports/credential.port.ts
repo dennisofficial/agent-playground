@@ -22,6 +22,12 @@ export type CredentialRequest = {
 
 export abstract class CredentialPort {
   abstract read(request?: CredentialRequest): Promise<Credential>
+
+  /**
+   * The server refused this credential. Expiry alone cannot tell: a shared OAuth lineage revokes a
+   * pair the moment another holder rotates it, long before the copy Atlas holds reads stale.
+   */
+  abstract discard(credential: Credential): Promise<void>
 }
 
 export const secretOf = (credential: Credential): string =>

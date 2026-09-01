@@ -71,6 +71,7 @@ export {
   type AgentEndedEntry,
   type BackgroundShellAwaitingInputEntry,
   type BackgroundShellEndedEntry,
+  type BackgroundShellMatchedEntry,
   type ModelSaidEntry,
   type ModelThoughtEntry,
   type OperatorSaidEntry,
@@ -85,10 +86,7 @@ export {
   ESidebarTaskState,
   IDLE_SIDEBAR,
   type SidebarApproval,
-  type SidebarChecks,
-  type SidebarGit,
   type SidebarModel,
-  type SidebarPullRequest,
   type SidebarTask,
   type SidebarTeammate,
 } from './sidebar-model'

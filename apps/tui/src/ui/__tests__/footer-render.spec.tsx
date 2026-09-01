@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { EMeterBand } from '@dltech/atlas-core'
+import { EEffort, EMeterBand } from '@dltech/atlas-core'
 
 import { Footer } from '../components/footer'
 import { cellsOf } from '../hint-layout'
@@ -25,7 +25,7 @@ const footer = (props: {
   <Footer
     width={props.width}
     model={MODEL}
-    effort="medium"
+    effort={EEffort.Medium}
     {...(props.percent === undefined
       ? {}
       : {

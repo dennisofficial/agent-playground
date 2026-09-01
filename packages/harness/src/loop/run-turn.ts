@@ -3,11 +3,11 @@ import {
   AUTO_COMPACT_OFF,
   autoCompactBeforeStep,
   EAutoCompact,
-  modelEntry,
   overflowsWindow,
   awaitsReply,
   estimateTokensFor,
-  imageTierFor,
+  imageTierOf,
+  contextWindowOf,
   exchangeFaults,
   outstandingApproval,
   pendingCalls,
@@ -89,7 +89,7 @@ export class LoopTurnRunner extends TurnRunner {
     this.tools = deps.tools ?? []
     this.countTokens =
       deps.countTokens ??
-      ((assembled) => estimateTokensFor(imageTierFor(this.model.identity.modelId))(assembled))
+      ((assembled) => estimateTokensFor(imageTierOf(this.model))(assembled))
     this.onChunk = deps.onChunk
     this.onContext = deps.onContext
     this.hooks = deps.hooks
@@ -248,7 +248,7 @@ export class LoopTurnRunner extends TurnRunner {
       previous = assembled
 
       const tokens = this.countTokens(assembled)
-      const window = modelEntry(this.model.identity.modelId)?.contextWindow ?? 0
+      const window = contextWindowOf(this.model)
       this.onContext?.({ tokens, window })
 
       if (

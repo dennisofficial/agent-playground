@@ -1,26 +1,35 @@
 import { describe, expect, it } from 'bun:test'
 import { generateText, streamText } from 'ai'
 
-import type { CredentialPort } from '@dltech/atlas-core'
+import { secretOf, type CredentialPort } from '@dltech/atlas-core'
 
 import { CredentialError, ECredentialFailure } from '../../credentials'
 import { apiKeyCredential, oauthCredential } from '../../credentials/testing'
 import { ANTHROPIC_OAUTH_BETA, createAnthropicOauthModel } from '../anthropic-oauth'
-import { generatedText, recordingFetch, streamedText } from './recording-fetch'
+import { generatedText, recordingFetch, refusingFirstFetch, streamedText } from './recording-fetch'
 
-const credentialsReturning = (...tokens: readonly string[]): CredentialPort => {
+type Recording = CredentialPort & { readonly discarded: string[] }
+
+const credentialsReturning = (...tokens: readonly string[]): Recording => {
   let handed = 0
+  const discarded: string[] = []
+
   return {
+    discarded,
     read: async () => {
       const accessToken = tokens[Math.min(handed, tokens.length - 1)] ?? ''
       handed += 1
       return oauthCredential({ accessToken })
+    },
+    discard: async (credential) => {
+      discarded.push(secretOf(credential))
     },
   }
 }
 
 const apiKeyCredentials = (apiKey: string): CredentialPort => ({
   read: async () => apiKeyCredential({ apiKey }),
+  discard: async () => {},
 })
 
 describe('the anthropic model authenticated by a subscription credential', () => {
@@ -168,6 +177,24 @@ describe('the anthropic model authenticated by a subscription credential', () =>
     })
   })
 
+  it('reads its provider options again per request, so a changed effort needs no rebuild', async () => {
+    const recorder = recordingFetch({ body: streamedText('pong') })
+    let effort = 'low'
+    const model = createAnthropicOauthModel({
+      credentials: credentialsReturning('token-one'),
+      modelId: 'claude-opus-5',
+      providerOptions: () => ({ anthropic: { effort } }),
+      fetch: recorder.fetch,
+    })
+
+    await streamText({ model, prompt: 'ping' }).text
+    effort = 'xhigh'
+    await streamText({ model, prompt: 'ping' }).text
+
+    expect(recorder.requests[0]?.body).toMatchObject({ output_config: { effort: 'low' } })
+    expect(recorder.requests[1]?.body).toMatchObject({ output_config: { effort: 'xhigh' } })
+  })
+
   it('sends an api key as an api key, not as a bearer token', async () => {
     const recorder = recordingFetch({ body: streamedText('pong') })
     const model = createAnthropicOauthModel({
@@ -197,6 +224,54 @@ describe('the anthropic model authenticated by a subscription credential', () =>
     })
   })
 
+  it('takes up the live token and sends the call again when the server says revoked', async () => {
+    const recorder = refusingFirstFetch({ body: streamedText('pong') })
+    const credentials = credentialsReturning('revoked-token', 'live-token')
+    const model = createAnthropicOauthModel({
+      credentials,
+      modelId: 'claude-opus-5',
+      fetch: recorder.fetch,
+    })
+
+    expect(await streamText({ model, prompt: 'ping', maxRetries: 0 }).text).toBe('pong')
+
+    expect(recorder.requests).toHaveLength(2)
+    expect(recorder.requests[0]?.headers.get('authorization')).toBe('Bearer revoked-token')
+    expect(recorder.requests[1]?.headers.get('authorization')).toBe('Bearer live-token')
+    expect(credentials.discarded).toEqual(['revoked-token'])
+  })
+
+  it('takes up the live token on a generate call too', async () => {
+    const recorder = refusingFirstFetch({
+      body: generatedText('pong'),
+      contentType: 'application/json',
+    })
+    const model = createAnthropicOauthModel({
+      credentials: credentialsReturning('revoked-token', 'live-token'),
+      modelId: 'claude-opus-5',
+      fetch: recorder.fetch,
+    })
+
+    expect(await generateText({ model, prompt: 'ping', maxRetries: 0 }).then((r) => r.text)).toBe(
+      'pong',
+    )
+    expect(recorder.requests).toHaveLength(2)
+  })
+
+  it('reports the refusal rather than sending the same refused token a second time', async () => {
+    const recorder = refusingFirstFetch({ body: streamedText('pong') })
+    const model = createAnthropicOauthModel({
+      credentials: credentialsReturning('the-only-token'),
+      modelId: 'claude-opus-5',
+      fetch: recorder.fetch,
+    })
+
+    await expect(
+      model.doStream({ prompt: [{ role: 'user', content: [{ type: 'text', text: 'ping' }] }] }),
+    ).rejects.toThrow('OAuth access token has been revoked')
+    expect(recorder.requests).toHaveLength(1)
+  })
+
   it('fails the call with the credential failure and sends nothing when no credential is stored', async () => {
     const recorder = recordingFetch({ body: streamedText('pong') })
     const model = createAnthropicOauthModel({
@@ -208,6 +283,7 @@ describe('the anthropic model authenticated by a subscription credential', () =>
               message: 'no credential is stored',
             }),
           ),
+        discard: async () => {},
       },
       modelId: 'claude-opus-5',
       fetch: recorder.fetch,

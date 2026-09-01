@@ -10,6 +10,7 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
+import { HookChain, type HookChainSource } from '../../hooks/registry'
 import { EShellStatus } from '../background-shell'
 import { BunShellRegistry, type ShellRegistryPort } from '../shell-registry'
 
@@ -54,6 +55,18 @@ export function awaitingInputDraft(draft: EventDraft | undefined): AwaitingInput
   return draft
 }
 
+type MatchedDraft = Omit<
+  EventOfType<'background-shell-matched'>,
+  keyof { id: 0; seq: 0; threadId: 0; runId: 0; depth: 0; at: 0 }
+>
+
+export function matchedDraft(draft: EventDraft | undefined): MatchedDraft {
+  if (draft?.type !== 'background-shell-matched') {
+    throw new Error(`expected a background-shell-matched draft, got ${draft?.type ?? 'nothing'}`)
+  }
+  return draft
+}
+
 const opened: { registry: ShellRegistryPort; root: string }[] = []
 
 export async function closeRegistries(): Promise<void> {
@@ -63,14 +76,18 @@ export async function closeRegistries(): Promise<void> {
   }
 }
 
-export function openRegistry(): {
+const noHooks: HookChainSource = () => new HookChain({})
+
+export function openRegistry(
+  { hooks }: { hooks?: HookChainSource | undefined } = {},
+): {
   registry: BunShellRegistry
   clock: SteppableClock
   root: string
 } {
   const root = mkdtempSync(join(tmpdir(), 'atlas-shells-'))
   const clock = new SteppableClock()
-  const registry = new BunShellRegistry(root, clock)
+  const registry = new BunShellRegistry(root, clock, hooks ?? noHooks)
   opened.push({ registry, root })
   return { registry, clock, root }
 }

@@ -1,5 +1,5 @@
 import { mkdir, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { listWorktrees, type Worktree } from '../../workspace/worktrees'
 
@@ -62,3 +62,8 @@ export async function hideWorktreeHome({ home }: { home: string }): Promise<void
 }
 
 export const parentOf = (path: string): string => dirname(path)
+
+export function isUnder({ directory, path }: { directory: string; path: string }): boolean {
+  const relation = relative(directory, path)
+  return relation.length > 0 && !relation.startsWith('..') && !isAbsolute(relation)
+}

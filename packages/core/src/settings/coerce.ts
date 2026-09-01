@@ -36,6 +36,14 @@ export function coerceSettingValue(args: {
     return value === undefined ? { ok: false, reason: 'expected on or off' } : { ok: true, value }
   }
 
+  if (definition.kind === ESettingKind.Secret) {
+    return { ok: false, reason: 'a secret is not read from a settings file' }
+  }
+
+  if (definition.kind === ESettingKind.Text) {
+    return typeof raw === 'string' ? { ok: true, value: raw } : { ok: false, reason: 'expected text' }
+  }
+
   if (definition.kind === ESettingKind.Choice) {
     if (typeof raw !== 'string' || optionOf({ definition, value: raw }) === undefined) {
       const allowed = definition.options.map((option) => option.value).join(', ')

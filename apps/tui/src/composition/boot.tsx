@@ -2,8 +2,6 @@ import { createCliRenderer, type CliRenderer } from "@opentui/core";
 import { createRoot, type Root } from "@opentui/react";
 import React from "react";
 
-import { atlasDatabaseUrl } from "@dltech/atlas-harness";
-
 import { appearanceOf, applyAppearance } from "../ui/appearance";
 import { createBootProgress } from "./boot-progress";
 import { BootScreen } from "./boot-screen";
@@ -36,8 +34,9 @@ export async function bootAtlas(args: {
   cwd: string;
 }): Promise<number> {
   const config = resolveConfig({
-    ...args,
-    defaultDatabaseUrl: atlasDatabaseUrl(),
+    argv: args.argv,
+    cwd: args.cwd,
+    home: args.env.HOME,
   });
   const settings = loadSettings({ env: args.env, cwd: config.cwd });
   applyAppearance(appearanceOf({ resolution: settings.service.snapshot().resolution }));

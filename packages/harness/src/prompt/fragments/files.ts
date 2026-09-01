@@ -18,3 +18,17 @@ export class ReadBeforeWriteFragment extends PromptFragment {
     ].join('\n')
   }
 }
+
+@injectable()
+export class ReadWideFragment extends PromptFragment {
+  readonly id = 'files.read-wide'
+
+  text(): string {
+    return [
+      'Read a file whole unless you already know it is enormous. Slicing it into offsets costs a round',
+      'trip each and leaves you holding a partial view, which is the one thing that will not unlock a',
+      'write — and a later grep over a file you had read whole drops it back to partial, because a',
+      'search proves only that those lines were seen.',
+    ].join('\n')
+  }
+}

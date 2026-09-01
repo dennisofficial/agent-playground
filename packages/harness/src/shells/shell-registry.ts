@@ -1,26 +1,17 @@
-import { ClockPort, EKilledBy, EShellStatus, type EventDraft, type ThreadId } from '@dltech/atlas-core'
+import { ClockPort, EKilledBy, type EventDraft, type ThreadId } from '@dltech/atlas-core'
 
 import { inject, injectable, portToken } from '../container/injection'
-import { WorkspaceRoot } from '../container/tokens'
+import { HookChainSourceToken, WorkspaceRoot } from '../container/tokens'
+import type { HookChainSource } from '../hooks/registry'
+import { afterShellDrafts } from './after-shell'
 import { startBackgroundShell, type BackgroundShell, type ShellSnapshot } from './background-shell'
-import { awaitingInputDraft, endedDraft } from './notifications'
+import { ENotice, ShellNoticeQueue, take, type ShellDelta, type Tracked } from './notice-queue'
 import { toShellId, type ShellId } from './shell-id'
+import { compileWatch, MATCH_SETTLE_MS, MATCHED_LINES_CAP, type MatchedLines } from './shell-watch'
 
 export const RETAINED_CHARACTERS = 400_000
 export const OVERFLOW_CHARACTERS = 50_000_000
-export const DELIVERED_CHARACTERS = 30_000
 export const PROMPT_SETTLE_MS = 2_000
-
-export enum ENotice {
-  Ended = 'ended',
-  AwaitingInput = 'awaiting-input',
-}
-
-export type ShellDelta = {
-  text: string
-  droppedCharacters: number
-  remainingCharacters: number
-}
 
 export type StartedShellOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
 
@@ -41,6 +32,8 @@ export abstract class ShellRegistryPort {
     command: string
     description: string
     cwd?: string | undefined
+    watch?: string | undefined
+    timeoutMs?: number | undefined
   }): StartedShellOutcome
   abstract read(args: { shellId: string; threadId: ThreadId }): ShellReadOutcome
   abstract peek(args: {
@@ -59,42 +52,6 @@ export abstract class ShellRegistryPort {
   abstract closeAll(): Promise<void>
 }
 
-type Tracked = { shell: BackgroundShell; cursor: number; announced: boolean; threadId: ThreadId }
-
-/**
- * The delta is read when the notice is handed over rather than when the shell exits, so a notice
- * that is dropped rather than delivered leaves its output where shell_output can still find it.
- */
-type Notice = {
-  kind: ENotice
-  snapshot: ShellSnapshot
-  take: () => ShellDelta
-  threadId: ThreadId
-}
-
-const NOTHING_PENDING: readonly Notice[] = Object.freeze([])
-
-const NOTHING_ANNOUNCED: readonly ShellSnapshot[] = Object.freeze([])
-
-const NOTHING_DRAINED: readonly EventDraft[] = Object.freeze([])
-
-const NOTHING_NOTICED: ReadonlyMap<ThreadId, readonly ShellSnapshot[]> = new Map()
-
-/**
- * The cursor is the model's place in a shell, so taking a delta is what marks output as delivered.
- */
-function take(entry: Tracked): ShellDelta {
-  const delta = entry.shell.since(entry.cursor)
-  const text = delta.text.slice(0, DELIVERED_CHARACTERS)
-  entry.cursor = entry.cursor + delta.droppedCharacters + text.length
-
-  return {
-    text,
-    droppedCharacters: delta.droppedCharacters,
-    remainingCharacters: Math.max(delta.totalCharacters - entry.cursor, 0),
-  }
-}
-
 const unknownShell = (args: { shellId: string; known: readonly ShellId[] }): string => {
   const known = args.known.length === 0 ? 'none is running' : args.known.join(', ')
   return `no background shell is registered as "${args.shellId}"; known shells: ${known}`
@@ -103,14 +60,16 @@ const unknownShell = (args: { shellId: string; known: readonly ShellId[] }): str
 @injectable()
 export class BunShellRegistry extends ShellRegistryPort {
   private readonly tracked = new Map<ShellId, Tracked>()
-  private queued: readonly Notice[] = NOTHING_PENDING
-  private noticed: ReadonlyMap<ThreadId, readonly ShellSnapshot[]> = NOTHING_NOTICED
-  private readonly listeners = new Set<() => void>()
+  private readonly notices = new ShellNoticeQueue(({ shellId }) =>
+    this.tracked.get(toShellId(shellId))?.shell.snapshot(),
+  )
+  private readonly settling = new Set<Promise<void>>()
   private started = 0
 
   constructor(
     @inject(WorkspaceRoot) private readonly root: string,
     @inject(portToken(ClockPort)) private readonly clock: ClockPort,
+    @inject(HookChainSourceToken) private readonly hooks: HookChainSource,
   ) {
     super()
   }
@@ -120,7 +79,12 @@ export class BunShellRegistry extends ShellRegistryPort {
     command: string
     description: string
     cwd?: string | undefined
+    watch?: string | undefined
+    timeoutMs?: number | undefined
   }): StartedShellOutcome {
+    const watch = compileWatch(args.watch)
+    if (!watch.ok) return watch
+
     this.started += 1
     const shellId = toShellId(`bash_${this.started}`)
 
@@ -133,8 +97,13 @@ export class BunShellRegistry extends ShellRegistryPort {
       retainCharacters: RETAINED_CHARACTERS,
       overflowCharacters: OVERFLOW_CHARACTERS,
       promptSettleMs: PROMPT_SETTLE_MS,
+      watch: watch.pattern,
+      matchSettleMs: MATCH_SETTLE_MS,
+      matchedLinesCap: MATCHED_LINES_CAP,
+      timeoutMs: args.timeoutMs,
       onExit: (shell) => this.announceExit(shell),
       onAwaitingInput: (shell) => this.announceAwaitingInput(shell),
+      onMatched: (matched) => this.announceMatched(matched),
     })
     if (!opened.ok) return opened
 
@@ -143,6 +112,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       cursor: 0,
       announced: false,
       threadId: args.threadId,
+      pattern: args.watch,
     })
 
     return { ok: true, snapshot: opened.shell.snapshot() }
@@ -201,51 +171,24 @@ export class BunShellRegistry extends ShellRegistryPort {
     return [...this.tracked.values()].map((entry) => entry.shell.snapshot())
   }
 
-  /**
-   * An awaiting-input notice is dropped if the shell ended before it was handed over: the prompt
-   * stopped being the reason nothing is coming, and the ending queued behind it carries the output.
-   */
   drainNotifications({ threadId }: { threadId: ThreadId }): readonly EventDraft[] {
-    const handed = this.queued.filter((notice) => notice.threadId === threadId)
-    if (handed.length === 0) return NOTHING_DRAINED
-
-    this.settleNotices(this.queued.filter((notice) => notice.threadId !== threadId))
-
-    return handed.filter((notice) => this.stillWorthTelling(notice)).map((notice) => this.draftOf(notice))
-  }
-
-  private stillWorthTelling(notice: Notice): boolean {
-    if (notice.kind === ENotice.Ended) return true
-
-    const live = this.tracked.get(notice.snapshot.shellId)?.shell.snapshot()
-    return live === undefined || live.status === EShellStatus.Running
-  }
-
-  private draftOf(notice: Notice): EventDraft {
-    const delta = notice.take()
-    return notice.kind === ENotice.Ended
-      ? endedDraft({ snapshot: notice.snapshot, delta })
-      : awaitingInputDraft({ snapshot: notice.snapshot, delta })
+    return this.notices.drain({ threadId })
   }
 
   pendingNotices({ threadId }: { threadId: ThreadId }): readonly ShellSnapshot[] {
-    return this.noticed.get(threadId) ?? NOTHING_ANNOUNCED
+    return this.notices.pending({ threadId })
   }
 
   threadsAwaitingNotice(): readonly ThreadId[] {
-    return [...this.noticed.keys()]
+    return this.notices.threadsAwaiting()
   }
 
   onNotice(listener: () => void): () => void {
-    this.listeners.add(listener)
-    return () => void this.listeners.delete(listener)
+    return this.notices.onNotice(listener)
   }
 
   forgetNotices({ threadId }: { threadId: ThreadId }): void {
-    const kept = this.queued.filter((notice) => notice.threadId !== threadId)
-    if (kept.length === this.queued.length) return
-
-    this.settleNotices(kept)
+    this.notices.forget({ threadId })
   }
 
   /**
@@ -257,6 +200,7 @@ export class BunShellRegistry extends ShellRegistryPort {
     const running = [...this.tracked.values()]
     for (const entry of running) entry.shell.kill(EKilledBy.SessionEnd)
     await Promise.all(running.map((entry) => entry.shell.exited))
+    while (this.settling.size > 0) await Promise.all([...this.settling])
     this.tracked.clear()
   }
 
@@ -279,12 +223,33 @@ export class BunShellRegistry extends ShellRegistryPort {
     return undefined
   }
 
+  /**
+   * The after-shell hooks run before the ending is queued rather than beside it: with no turn in
+   * flight their drafts have nowhere else to go, and riding with the notice is the only delivery
+   * this registry can promise. A shell that has already announced never runs them twice.
+   */
   private announceExit(shell: BackgroundShell): void {
     const entry = this.tracked.get(shell.shellId)
     if (entry === undefined || entry.announced) return
 
     entry.announced = true
-    this.queue({ kind: ENotice.Ended, entry, shell })
+
+    const settling = this.queueEnding({ entry, shell })
+    this.settling.add(settling)
+    void settling.finally(() => void this.settling.delete(settling))
+  }
+
+  private async queueEnding(args: {
+    entry: Tracked
+    shell: BackgroundShell
+  }): Promise<void> {
+    const hooked = await afterShellDrafts({
+      hooks: this.hooks,
+      threadId: args.entry.threadId,
+      shell: args.shell.snapshot(),
+    })
+
+    this.queue({ kind: ENotice.Ended, entry: args.entry, shell: args.shell, hooked })
   }
 
   private announceAwaitingInput(shell: BackgroundShell): void {
@@ -294,33 +259,41 @@ export class BunShellRegistry extends ShellRegistryPort {
     this.queue({ kind: ENotice.AwaitingInput, entry, shell })
   }
 
-  private queue(args: { kind: ENotice; entry: Tracked; shell: BackgroundShell }): void {
-    this.settleNotices([
-      ...this.queued,
-      {
-        kind: args.kind,
-        snapshot: args.shell.snapshot(),
-        take: () => take(args.entry),
-        threadId: args.entry.threadId,
-      },
-    ])
+  /**
+   * A match is queued with the lines already in hand rather than a cursor read, so what the model
+   * is shown as matching is never subtracted from what shell_output would hand it next.
+   */
+  private announceMatched({
+    shell,
+    matched,
+  }: {
+    shell: BackgroundShell
+    matched: MatchedLines
+  }): void {
+    const entry = this.tracked.get(shell.shellId)
+    if (entry === undefined || entry.pattern === undefined) return
+
+    this.notices.queue({
+      kind: ENotice.Matched,
+      snapshot: shell.snapshot(),
+      threadId: entry.threadId,
+      pattern: entry.pattern,
+      matched,
+    })
   }
 
-  /**
-   * The snapshots are held rather than derived per call: pendingNotices backs a React external
-   * store, which reads it on every render and requires a stable value between changes.
-   */
-  private settleNotices(notices: readonly Notice[]): void {
-    this.queued = notices
-
-    const byThread = new Map<ThreadId, ShellSnapshot[]>()
-    for (const notice of notices) {
-      const held = byThread.get(notice.threadId)
-      if (held === undefined) byThread.set(notice.threadId, [notice.snapshot])
-      else held.push(notice.snapshot)
-    }
-    this.noticed = byThread
-
-    for (const listener of [...this.listeners]) listener()
+  private queue(args: {
+    kind: ENotice.Ended | ENotice.AwaitingInput
+    entry: Tracked
+    shell: BackgroundShell
+    hooked?: readonly EventDraft[] | undefined
+  }): void {
+    this.notices.queue({
+      kind: args.kind,
+      snapshot: args.shell.snapshot(),
+      take: () => take(args.entry),
+      threadId: args.entry.threadId,
+      hooked: args.hooked,
+    })
   }
 }

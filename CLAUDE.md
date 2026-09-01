@@ -12,6 +12,14 @@ on rewind.
 Because we make raw model calls, Atlas is model-agnostic by construction. Claude and Codex
 subscription credentials are one provider implementation among several, not a foundation.
 
+## Who uses Atlas
+
+**One person: Dennis.** There is no user base, no support burden, no migration window, and no
+untrusted third party. Weigh decisions accordingly — a breaking change costs one afternoon, a
+plugin loaded from disk is his own code in his own repo, and a feature nobody has asked for is a
+feature nobody needs. Spend the saved effort on the things a single user still feels every day:
+a hang, a silent failure, a seam that makes the next feature cheap.
+
 Read `docs/architecture.md` before changing anything structural. It is the source of truth over
 any inference from code, and `docs/core-contract.md` holds the seams it depends on.
 `docs/research/` holds the primary-source investigation both were derived from.

@@ -23,7 +23,11 @@ export type ClassifierPolicy = {
   askWhenUnreachableAtOrAbove: ESeverity
   asksPerThread: number
   muted: readonly ERiskDimension[]
+  environment: readonly string[]
 }
+
+export const SENSITIVE_NAME_HEURISTIC =
+  'Any namespace, host, container, bucket, branch or remote whose name carries "prod" or "production" as a whole word or name segment is a sensitive remote target.'
 
 export const DEFAULT_CLASSIFIER_POLICY: ClassifierPolicy = {
   mode: EClassifierMode.Shadow,
@@ -31,6 +35,33 @@ export const DEFAULT_CLASSIFIER_POLICY: ClassifierPolicy = {
   askWhenUnreachableAtOrAbove: ESeverity.Grave,
   asksPerThread: 8,
   muted: [],
+  environment: [SENSITIVE_NAME_HEURISTIC],
+}
+
+export function environmentFor({
+  projectDirectory,
+  repoRoot,
+  worktreeHome,
+  remotes,
+}: {
+  projectDirectory: string
+  repoRoot: string | undefined
+  worktreeHome: string | undefined
+  remotes: readonly string[]
+}): readonly string[] {
+  return [
+    `The developer's project directory, and everything the agent is expected to change, is ${projectDirectory}.`,
+    ...(repoRoot === undefined || repoRoot === projectDirectory
+      ? []
+      : [
+          `The main checkout of the same repository is ${repoRoot}, and it is not this session's own.`,
+        ]),
+    ...(worktreeHome === undefined
+      ? []
+      : [`Sibling worktrees, which other live agents stand in, live under ${worktreeHome}.`]),
+    ...remotes.map((remote) => `The repository has a git remote: ${remote}.`),
+    SENSITIVE_NAME_HEURISTIC,
+  ]
 }
 
 export type ClearedSignal = { signal: RiskSignal; by: Grant }

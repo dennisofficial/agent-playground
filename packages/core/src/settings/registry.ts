@@ -1,6 +1,8 @@
+import { EFFORT_LADDER, EEffort } from '../models/effort-ladder'
 import { EClassifierMode } from '../policy/classifier/triage'
+import { EWebSearchBackend } from '../web/search'
 import { ESettingPage, type SettingDefinition, type SettingPage } from './definition'
-import { ESettingKind } from './value'
+import { ESettingKind, type SettingOption } from './value'
 
 export const SETTING_PAGES: readonly SettingPage[] = [
   { id: ESettingPage.General, label: 'general' },
@@ -27,9 +29,24 @@ export enum ESettingId {
   BlockPadding = 'appearance.blockPadding',
   ComposerEdge = 'appearance.composerEdge',
   ClassifierMode = 'classifier.mode',
+  WebSearchBackend = 'web.searchBackend',
+  WebSearchKey = 'web.searchKey',
+  ModelId = 'model.id',
+  ModelEffort = 'model.effort',
+  ModelFavourites = 'model.favourites',
+  SubagentModel = 'agents.subagentModel',
+  DatabaseUrl = 'store.databaseUrl',
+  KeychainService = 'credentials.keychainService',
 }
 
 export const DEFAULT_WORKTREE_DIRECTORY = '.atlas/worktrees'
+
+export const DEFAULT_EFFORT = EEffort.Medium
+
+const EFFORT_OPTIONS: readonly SettingOption[] = EFFORT_LADDER.map((effort) => ({
+  value: effort,
+  label: effort,
+}))
 
 export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
   {
@@ -251,10 +268,85 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     kind: ESettingKind.Choice,
     fallback: EClassifierMode.Shadow,
     options: [
-      { value: EClassifierMode.Off, label: 'off', detail: 'no classification' },
-      { value: EClassifierMode.Shadow, label: 'shadow', detail: 'watches only' },
-      { value: EClassifierMode.Nudge, label: 'nudge', detail: 'may ask' },
+      {
+        value: EClassifierMode.Off,
+        label: 'off',
+        detail: 'no classification',
+        note: 'Nothing is derived and nothing is recorded. The call goes to the tool exactly as it would have without this feature.',
+      },
+      {
+        value: EClassifierMode.Shadow,
+        label: 'shadow',
+        detail: 'watches only',
+        note: 'The whole pipeline runs and writes a row saying what it would have done, and every call still runs. This is where the rate of would-be interruptions becomes a number rather than a fear.',
+      },
+      {
+        value: EClassifierMode.Nudge,
+        label: 'nudge',
+        detail: 'may ask',
+        note: 'The same pipeline, except that a call the judge says it cannot let pass unseen stops and asks you. Only a model that can name what would be lost is allowed to interrupt.',
+      },
     ],
+  },
+  {
+    id: ESettingId.WebSearchBackend,
+    page: ESettingPage.General,
+    group: 'Web',
+    label: 'Search backend',
+    description:
+      'Which search service web_search asks. Every one of them is somebody else\u2019s, so Atlas picks none for you: DuckDuckGo works with no account at all and is the fallback, and the rest are better in exchange for a key you get yourself. The ones that return the text of each page rather than a one-line snippet are worth the setup, because a result carrying its own text saves the model a fetch per link.',
+    environmentVariable: 'ATLAS_SEARCH_BACKEND',
+    kind: ESettingKind.Choice,
+    fallback: EWebSearchBackend.DuckDuckGo,
+    options: [
+      {
+        value: EWebSearchBackend.DuckDuckGo,
+        label: 'DuckDuckGo',
+        detail: 'no key',
+        note: 'Nothing to set up, and nothing to sign up for. Returns a title and a snippet per result, so reading anything means a web_fetch after it, and it throttles unauthenticated searches \u2014 a busy session will meet a rate limit and have to wait.',
+      },
+      {
+        value: EWebSearchBackend.Jina,
+        label: 'Jina',
+        detail: 'key optional',
+        note: 'Returns the extracted text of each page, not just a snippet. Works anonymously at 20 searches a minute, which a single session rarely exceeds; a free key raises that to 500.',
+      },
+      {
+        value: EWebSearchBackend.Tavily,
+        label: 'Tavily',
+        detail: 'key needed',
+        note: 'Built for agents rather than for people: results come back with the full page text already extracted. A thousand searches a month are free and no card is asked for.',
+      },
+      {
+        value: EWebSearchBackend.Exa,
+        label: 'Exa',
+        detail: 'key needed',
+        note: 'Embedding-based search that reads queries written as sentences rather than as keywords, and returns page text with each result. Generous free tier, no card.',
+      },
+      {
+        value: EWebSearchBackend.Brave,
+        label: 'Brave',
+        detail: 'key needed',
+        note: 'An index of its own rather than a wrapper over somebody else\u2019s, with clean, fast results. Snippets only, so reading still costs a fetch, and every plan now wants a card on file \u2014 including the free credits.',
+      },
+      {
+        value: EWebSearchBackend.SearXNG,
+        label: 'SearXNG',
+        detail: 'instance url',
+        note: 'Your own metasearch instance, so the queries leave no account behind. Set the row below to its address. Public instances almost always disable the JSON output this needs, so in practice this means one you run.',
+      },
+    ],
+  },
+  {
+    id: ESettingId.WebSearchKey,
+    page: ESettingPage.General,
+    group: 'Web',
+    label: 'Search key',
+    description:
+      'What the selected backend needs before it will answer \u2014 a key for most of them, an address for a SearXNG instance of your own. It belongs to whichever backend is chosen above, so switching backend shows the one that backend needs. Atlas never reads it from the environment and never writes it to a settings file: it is sealed in the secrets file beside the account vault, and only the last four characters are ever shown again.',
+    kind: ESettingKind.Secret,
+    fallback: '',
+    masked: true,
   },
   {
     id: ESettingId.Accent,
@@ -303,5 +395,72 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
       { value: 'bordered', label: 'bordered' },
       { value: 'claude', label: 'claude' },
     ],
+  },
+  {
+    id: ESettingId.ModelId,
+    page: ESettingPage.Hidden,
+    group: 'Model',
+    label: 'Model',
+    description:
+      'The model a conversation opens on. The switcher writes this every time you change model, so it is remembered state rather than a knob; --model outranks it for one launch.',
+    environmentVariable: 'ATLAS_MODEL',
+    kind: ESettingKind.Text,
+    fallback: '',
+  },
+  {
+    id: ESettingId.ModelEffort,
+    page: ESettingPage.Hidden,
+    group: 'Model',
+    label: 'Thinking effort',
+    description:
+      'How much thinking a model that takes a budget is given before it answers. The switcher writes this beside the model it belongs to.',
+    environmentVariable: 'ATLAS_EFFORT',
+    kind: ESettingKind.Choice,
+    fallback: DEFAULT_EFFORT,
+    options: EFFORT_OPTIONS,
+  },
+  {
+    id: ESettingId.ModelFavourites,
+    page: ESettingPage.Hidden,
+    group: 'Model',
+    label: 'Pinned models',
+    description:
+      'The models the switcher gathers into its own group at the top of the list, in the order they were pinned. Written by the switcher rather than set here.',
+    environmentVariable: 'ATLAS_MODEL_FAVOURITES',
+    kind: ESettingKind.Text,
+    fallback: '',
+  },
+  {
+    id: ESettingId.SubagentModel,
+    page: ESettingPage.Hidden,
+    group: 'Sub-agents',
+    label: 'Sub-agent model',
+    description:
+      'The model every sub-agent runs on unless its own type pins one. Left empty, a child inherits whatever the conversation that spawned it is on.',
+    environmentVariable: 'ATLAS_SUBAGENT_MODEL',
+    kind: ESettingKind.Text,
+    fallback: '',
+  },
+  {
+    id: ESettingId.DatabaseUrl,
+    page: ESettingPage.Hidden,
+    group: 'Store',
+    label: 'Database',
+    description:
+      'Where the event log and the threads over it are kept. Left empty, it is harness.db inside the Atlas home — which ATLAS_HOME moves, since a home has to be found before a settings file in it can be read.',
+    environmentVariable: 'ATLAS_DATABASE_URL',
+    kind: ESettingKind.Text,
+    fallback: '',
+  },
+  {
+    id: ESettingId.KeychainService,
+    page: ESettingPage.Hidden,
+    group: 'Credentials',
+    label: 'Keychain item',
+    description:
+      'The keychain item a Claude Code login is imported from on boot, and written back to when Atlas refreshes it. Left empty, it is the item Claude Code itself writes.',
+    environmentVariable: 'ATLAS_KEYCHAIN_SERVICE',
+    kind: ESettingKind.Text,
+    fallback: '',
   },
 ]

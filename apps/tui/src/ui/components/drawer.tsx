@@ -4,6 +4,7 @@ import { fitHints, hintSpans, type Hint } from '../hint-layout'
 import { theme } from '../theme'
 import { clipSpans } from './sidebar/cells'
 import { Spans } from './spans'
+import type { HoverHandlers } from '../hooks/use-hover'
 import { usePress, type PressHandlers } from '../hooks/use-press'
 
 export const DRAWER_PAD = 2
@@ -140,7 +141,9 @@ export function BottomDrawer(props: {
 
 export function DrawerLine(props: {
   children: React.ReactNode
+  id?: string
   press?: PressHandlers
+  hover?: HoverHandlers
   band?: string
 }): React.ReactNode {
   return (
@@ -149,13 +152,17 @@ export function DrawerLine(props: {
       flexShrink={0}
       paddingLeft={DRAWER_PAD}
       paddingRight={DRAWER_PAD}
+      {...(props.id === undefined ? {} : { id: props.id })}
       {...(props.band === undefined ? {} : { backgroundColor: props.band })}
       {...(props.press ?? {})}
+      {...(props.hover ?? {})}
     >
       {props.children}
     </box>
   )
 }
+
+export const DrawerGap = (): React.ReactNode => <box height={1} flexShrink={0} />
 
 export function DrawerHeading(props: { label: string }): React.ReactNode {
   return (

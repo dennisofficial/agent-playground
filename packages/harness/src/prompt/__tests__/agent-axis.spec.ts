@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EPromptAgent, modelEntry, type PromptContext } from '@dltech/atlas-core'
+import { EPromptAgent, type PromptContext } from '@dltech/atlas-core'
 
 import { AtlasIdentityFragment } from '../fragments/identity'
 
 const contextFor = (agent: EPromptAgent): PromptContext => ({
   agent,
   provider: { id: 'anthropic-oauth', modelId: 'claude-opus-5' },
-  model: modelEntry('claude-opus-5'), projectDirectory: '/w'
+  model: { contextWindow: 1_000_000 }, projectDirectory: '/w'
 })
 
 describe('the identity fragment across the agent axis', () => {

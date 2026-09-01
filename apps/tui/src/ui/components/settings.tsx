@@ -1,3 +1,4 @@
+import type { SecretPrompt as SecretPromptState } from '@dltech/atlas-core'
 import React from 'react'
 
 import { fitHints, hintSpans, type Hint } from '../hint-layout'
@@ -8,6 +9,7 @@ import type { Appearance } from '../appearance'
 import { SettingsBand } from './settings/band'
 import { SettingsDetail } from './settings/detail'
 import { SettingsHead } from './settings/head'
+import { SecretPrompt } from './settings/secret-prompt'
 import { SettingLine, SettingsGroupHeader, SettingsLine, SETTINGS_PAD } from './settings/rows'
 import { clipSpans } from './sidebar/cells'
 import { Spans, type Span } from './spans'
@@ -66,6 +68,9 @@ export function Settings(props: {
   cwd: string
   origin: string
   appearance: Appearance
+  prompt: SecretPromptState | null
+  secretOf: (id: string) => Span | undefined
+  secretOrigin: string
   problem?: string | undefined
   onActivate: (target: { pageIndex: number; rowIndex: number }) => void
   onDismiss: () => void
@@ -113,6 +118,7 @@ export function Settings(props: {
                       key={row.definition.id}
                       setting={row}
                       cells={cells}
+                      override={props.secretOf(row.definition.id)}
                       selected={row.definition.id === selected?.definition.id}
                       press={press(() =>
                         props.onActivate({
@@ -126,14 +132,23 @@ export function Settings(props: {
               ))}
             </box>
           </scrollbox>
-          <SettingsBand
-            width={columnWidth}
-            setting={selected}
-            appearance={props.appearance}
-          />
+          {props.prompt === null ? (
+            <SettingsBand
+              width={columnWidth}
+              setting={selected}
+              appearance={props.appearance}
+            />
+          ) : (
+            <SecretPrompt prompt={props.prompt} cells={cells} />
+          )}
           <FooterLine
             cells={cells}
-            status={props.problem ?? `edits write to ${props.origin}`}
+            status={
+              props.problem ??
+              (props.prompt === null
+                ? `edits write to ${props.origin}`
+                : `sealed into ${props.secretOrigin}, never into ${props.origin}`)
+            }
             failing={props.problem !== undefined}
             onDismiss={props.onDismiss}
           />

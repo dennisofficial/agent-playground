@@ -18,26 +18,31 @@ import {
   imageTagAround,
   imageTagSpans,
   nearerEdgeOf,
-  modelEntry,
   type EUsageWindow,
-  type ModelEntry,
+  type ModelCard,
 } from '@dltech/atlas-core'
 import type { DiscoveredSkill } from '@dltech/atlas-harness'
 
 import { newestExpandableKey } from '../store'
+import { withSections } from '../store/sidebar-model'
 import { accountMeterSpans } from '../ui/account-meters'
-import type { AccountRow } from '../ui/accounts-model'
+import { accountOf, type AccountRow } from '../ui/accounts-model'
 import type { Span } from '../ui/components/spans'
 import { usageMeters, type FooterMeter } from '../ui/usage-meters'
 import { CommandMenu } from '../ui/components/command-menu'
 import { FileMenu } from '../ui/components/file-menu'
 import { Composer, composerRows, composerTone } from '../ui/components/composer'
-import { readClipboardImage, readImageBase64, type ClipboardImageReader } from '../ui/clipboard-image'
+import {
+  readClipboardImage,
+  readImageBase64,
+  type ClipboardImageReader,
+} from '../ui/clipboard-image'
 import { restoredImages, submissionOf } from '../ui/draft-images'
 import { isEmptyPaste } from '../ui/pasted-text'
 import { useDraftImages } from '../ui/hooks/use-draft-images'
 import { pasteDirectoryOf } from './paste-directory'
 import { Footer, type FooterContext } from '../ui/components/footer'
+import { footerLayout } from '../ui/footer-layout'
 import { Screen } from '../ui/components/screen'
 import { AgentTypes } from '../ui/components/agent-types'
 import { LostChildren } from '../ui/components/lost-children'
@@ -51,7 +56,7 @@ import { composerEdgeVersion, subscribeComposerEdge } from '../ui/composer-edge-
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { modelLabel } from '../ui/model-label'
 import { theme } from '../ui/theme'
-import { notify } from '../ui/notice-store'
+import { ENoticeTone, notify } from '../ui/notice-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import { SelectionSurface } from '../ui/selection/selection-surface'
@@ -85,12 +90,23 @@ import { globalBindings } from './global-bindings'
 import { applyTranscriptCovered } from '../ui/covered-store'
 import { OverlayStack } from './overlay-stack'
 import type { ModelSelection } from './model-selection'
+import { unmeasuredWindowWarning } from './providers'
 import type { OpenedConversation } from './open-conversation'
 import { useConversation } from './use-conversation'
 import { useExitGuard } from './use-exit-guard'
+import {
+  composerCovered,
+  covering,
+  keyOwners,
+  transcriptCovered,
+  type OverlayPresence,
+} from './overlay-presence'
 import { useOverlayKeys } from './use-overlay-keys'
 import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
+import { shellsSurface } from './shells-surface'
+import { usePluginSurfaces } from './use-plugin-surfaces'
+import { useFooterStrip } from './use-footer-strip'
 import { useRewind } from './use-rewind'
 import { useAccounts } from './use-accounts'
 import { useAgents } from './use-agents'
@@ -123,15 +139,18 @@ const composerPlaceholder = (args: { addressingChild: boolean; working: boolean 
 }
 
 const readoutOf = (args: {
-  entry: ModelEntry | undefined
+  card: ModelCard | undefined
   used: number
   meters: readonly FooterMeter[]
+  provider: string | null
 }): FooterContext | null => {
-  const { entry } = args
-  if (entry === undefined) return null
+  const { card } = args
+  const named = args.provider === null ? {} : { provider: args.provider }
 
-  const pressure = contextPressure({ used: args.used, window: entry.contextWindow })
-  return { percent: pressure.percent, tokensUsed: pressure.used, meters: args.meters }
+  if (card === undefined) return { percent: 0, measured: false, meters: args.meters, ...named }
+
+  const pressure = contextPressure({ used: args.used, window: card.contextWindow })
+  return { percent: pressure.percent, tokensUsed: pressure.used, meters: args.meters, ...named }
 }
 
 export function App(props: {
@@ -212,21 +231,34 @@ function Workspace(props: {
     props.app.skillRegistry.all(),
   )
 
-  /**
-   * A configured model id carries its release stamp; the catalog is keyed without one, so every
-   * reading of "what is answering" goes through the entry rather than the raw id.
-   */
-  const entry = modelEntry(selection.modelId)
-  const activeModelId = entry?.id ?? selection.modelId
+  const card = props.app.models.cardFor(selection.ref)
 
-  const meters = usageMeters({
-    usage: props.app.usage.snapshot(),
-    show: settings.footerMeters,
-    warn: settings.usageWarn,
-    now: Date.now(),
-  })
+  const metered = props.app.models.subscribed(selection.ref.providerId)
 
-  const readout = readoutOf({ entry, used: conversation.contextTokens, meters })
+  const meters = metered
+    ? usageMeters({
+        usage: props.app.usage.snapshot(),
+        show: settings.footerMeters,
+        warn: settings.usageWarn,
+        now: Date.now(),
+      })
+    : []
+
+  const provider = metered
+    ? null
+    : (props.app.models.adapterFor(selection.ref.providerId)?.label ?? null)
+
+  const readout = readoutOf({ card, used: conversation.contextTokens, meters, provider })
+
+  useEffect(() => {
+    const warning = unmeasuredWindowWarning({
+      catalogue: props.app.models,
+      ref: props.app.model.choice().ref,
+    })
+    if (warning === null) return
+
+    notify({ text: warning, tone: ENoticeTone.Warn })
+  }, [props.app.model, props.app.models])
 
   const { usage } = props.app
   const working = conversation.working
@@ -246,18 +278,21 @@ function Workspace(props: {
 
   const handlePicked = useCallback(
     (choice: SwitcherChoice) => {
-      if (choice.modelId === null) return
+      if (choice.ref === null) return
 
-      props.app.model.select({ modelId: choice.modelId, effort: choice.effort })
+      props.app.model.select({ ref: choice.ref, effort: choice.effort })
       setSelection(props.app.model.choice())
     },
     [props.app.model],
   )
 
   const switcher = useSwitcher({
-    activeModelId,
+    catalogue: props.app.models,
+    active: selection.ref,
     effort: selection.effort,
+    favourites: settings.modelFavourites,
     onPick: handlePicked,
+    onPin: settings.handlePinModels,
   })
 
   const shells = useShells({ app: props.app, threadId: conversation.threadId })
@@ -349,22 +384,33 @@ function Workspace(props: {
     [handleOpenThread, threads],
   )
 
-  const accounts = useAccounts({ accounts: props.app.accounts, openUrl: props.app.openUrl })
+  const accounts = useAccounts({
+    accounts: props.app.accounts,
+    openUrl: props.app.openUrl,
+    onAccounts: props.app.models.observeAccounts,
+  })
   const accountsOpen = accounts.state !== null
   const accountRows = accounts.state?.rows
 
   useEffect(() => {
     if (!accountsOpen) return
-    for (const row of accountRows ?? []) void usage.refresh({ accountId: row.account.id })
+    for (const row of accountRows ?? []) {
+      const account = accountOf(row)
+      if (account !== undefined) void usage.refresh({ accountId: account.id })
+    }
   }, [accountRows, accountsOpen, usage])
 
   const accountMeters = useCallback(
-    (row: AccountRow): readonly Span[] =>
-      accountMeterSpans({
-        usage: usage.snapshotFor({ accountId: row.account.id }),
+    (row: AccountRow): readonly Span[] => {
+      const account = accountOf(row)
+      if (account === undefined) return []
+
+      return accountMeterSpans({
+        usage: usage.snapshotFor({ accountId: account.id }),
         warn: settings.usageWarn,
         now: Date.now(),
-      }),
+      })
+    },
     [settings.usageWarn, usage],
   )
 
@@ -543,7 +589,6 @@ function Workspace(props: {
 
   const highlights = useMemo(() => [...mentionSpans, ...imageTags], [imageTags, mentionSpans])
 
-
   const handleSubmit = useCallback(() => {
     const said = draft.editor.current?.plainText ?? draft.value
     const attached = attachments.images
@@ -609,6 +654,29 @@ function Workspace(props: {
     skills,
   ])
 
+  const surfaces = usePluginSurfaces({
+    surfaces: [...props.app.pluginSurfaces, shellsSurface({ shells })],
+  })
+
+  /**
+   * The ladder inside `footerLayout` is what decides which pills survive the width, so the row is
+   * laid out once here and both readers are given the same answer. Handing the strip the full list
+   * would let a selection outlive the pill it names when the terminal is dragged narrower.
+   */
+  const footerRow = useMemo(
+    () =>
+      footerLayout({
+        width: chromeWidth,
+        model: card?.label ?? modelLabel(selection.ref.modelId),
+        effort: selection.effort,
+        items: surfaces.footerItems,
+        context: readout,
+      }),
+    [card, chromeWidth, readout, selection.effort, selection.ref, surfaces.footerItems],
+  )
+
+  const footerStrip = useFooterStrip({ items: footerRow.instruments.items, draft })
+
   /**
    * The draft is asked for its buffer rather than its mirror because OpenTUI parses a whole input
    * burst before React re-renders, so a `?` pasted after text would otherwise read as empty.
@@ -660,6 +728,7 @@ function Workspace(props: {
       onSubmit: handleSubmit,
       onShortcuts: () => setPanel(EChromePanel.Shortcuts),
       onTakeBackPending: handleTakeBackPending,
+      onEnterFooterStrip: footerStrip.handleEnter,
       onInterrupt: conversation.handleInterrupt,
       onOpenSwitcher: switcher.handleOpen,
       onAttachImage: handleAttachImage,
@@ -693,18 +762,24 @@ function Workspace(props: {
 
   const registry = useKeyRegistry()
 
+  const overlays: readonly OverlayPresence[] = [
+    covering(exitGuard.state !== null, exitGuard.handleKey),
+    covering(conversation.approval.state !== null, conversation.approval.handleKey),
+    covering(rewind.state !== null, rewind.handleKey),
+    covering(switcher.state !== null, switcher.handleKey),
+    covering(shells.state !== null, shells.handleKey),
+    covering(accounts.state !== null, accounts.handleKey),
+    covering(threads.state !== null, threads.handleKey),
+    covering(agentsPicker.state !== null, agentsPicker.handleKey),
+    { ...covering(settings.state !== null, settings.handleKey), porous: true },
+    { ...covering(footerStrip.state !== null, footerStrip.handleKey), coversTranscript: false },
+    { open: conversation.compacting !== null, coversComposer: true, coversTranscript: true },
+    { open: overlay, coversComposer: true, coversTranscript: false },
+  ]
+
   const handleKey = useOverlayKeys({
     veil: { shown: panel !== null, dismiss: () => setPanel(null), keys: [HELP_KEY] },
-    owners: [
-      { open: exitGuard.state !== null, handleKey: exitGuard.handleKey },
-      { open: rewind.state !== null, handleKey: rewind.handleKey },
-      { open: switcher.state !== null, handleKey: switcher.handleKey },
-      { open: shells.state !== null, handleKey: shells.handleKey },
-      { open: accounts.state !== null, handleKey: accounts.handleKey },
-      { open: threads.state !== null, handleKey: threads.handleKey },
-      { open: agentsPicker.state !== null, handleKey: agentsPicker.handleKey },
-      { open: settings.state !== null, handleKey: settings.handleKey, porous: true },
-    ],
+    owners: keyOwners(overlays),
     bindings: registry.snapshot,
   })
 
@@ -724,43 +799,9 @@ function Workspace(props: {
 
   useKeyboard(handleKeyWithMenu)
 
-  /**
-   * Anything covering the composer must take focus with it: the terminal cursor is not part of the
-   * character grid, so a focused textarea keeps drawing its caret straight through whatever is
-   * painted over it.
-   */
-  const overlaid =
-    props.covered ||
-    overlay ||
-    exitGuard.state !== null ||
-    switcher.state !== null ||
-    accounts.state !== null ||
-    threads.state !== null ||
-    agentsPicker.state !== null ||
-    settings.state !== null ||
-    shells.state !== null ||
-    rewind.state !== null ||
-    conversation.compacting !== null
+  const overlaid = props.covered || composerCovered(overlays)
 
-  /**
-   * Which overlays a picture has to be withheld for.
-   *
-   * Every one of these paints across the transcript, and a kitty image cannot be layered over — the
-   * terminal composites it above the text plane whatever z-order was asked for. The sidebar is left
-   * out on purpose: it narrows the transcript rather than covering it, so the picture beside it is
-   * still worth showing.
-   */
-  const picturesCovered =
-    props.covered ||
-    exitGuard.state !== null ||
-    switcher.state !== null ||
-    accounts.state !== null ||
-    threads.state !== null ||
-    agentsPicker.state !== null ||
-    settings.state !== null ||
-    shells.state !== null ||
-    rewind.state !== null ||
-    conversation.compacting !== null
+  const picturesCovered = props.covered || transcriptCovered(overlays)
 
   useEffect(() => {
     applyTranscriptCovered(picturesCovered)
@@ -794,7 +835,7 @@ function Workspace(props: {
             <WelcomeScreen
               cwd={props.app.config.cwd}
               home={homedir()}
-              modelId={selection.modelId}
+              modelId={selection.ref.modelId}
               width={contentWidth}
             />
           ) : (
@@ -802,10 +843,11 @@ function Workspace(props: {
               model={agentView.transcript ?? conversation.model}
               width={contentWidth}
               now={conversation.now}
-              cwd={props.app.config.cwd}
+              cwd={conversation.projectDirectory}
               turn={conversation.turn}
               sends={sends}
               pending={conversation.pending}
+              background={{ agents: agents.running, shells: shells.running }}
               {...(conversation.handleRetry === null ? {} : { onRetry: conversation.handleRetry })}
               {...(conversation.handleResume === null
                 ? {}
@@ -853,20 +895,24 @@ function Workspace(props: {
           <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
           <Footer
             width={chromeWidth}
-            model={entry?.label ?? modelLabel(selection.modelId)}
-            effort={selection.effort}
+            model={card?.label ?? modelLabel(selection.ref.modelId)}
+            layout={footerRow}
+            strip={footerStrip.state}
+            onActivateItem={footerStrip.handleActivate}
             {...(readout === null ? {} : { context: readout })}
           />
         </box>
         {sidebarVisible ? (
           <Sidebar
             width={overlay ? floatingSidebarWidth({ width, sidebarWidth }) : sidebarWidth}
-            model={agents.sidebar}
+            model={withSections({ model: agents.sidebar, sections: surfaces.sidebarSections })}
             turn={conversation.turn}
             now={conversation.now}
-            cwd={conversation.projectDirectory}
+            root={props.app.config.cwd}
+            worktree={conversation.activeWorktree?.path ?? null}
             overlay={overlay}
             shells={shells.folded}
+            shellNow={shells.now}
             shellFold={shells.fold}
             onOpenShell={shells.handleOpen}
             onSelectSubagent={agentView.handleSelect}
@@ -876,7 +922,7 @@ function Workspace(props: {
           width={width}
           contentWidth={contentWidth}
           cwd={props.app.config.cwd}
-          activeModelId={activeModelId}
+          active={selection.ref}
           accountMeters={accountMeters}
           switcher={switcher}
           shells={shells}
@@ -886,6 +932,7 @@ function Workspace(props: {
           threads={threads}
           agentsPicker={agentsPicker}
           rewind={rewind}
+          approval={conversation.approval}
           exitGuard={exitGuard}
           compacting={conversation.compacting}
           now={conversation.now}

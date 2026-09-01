@@ -21,6 +21,7 @@ export type Palette = {
   hint: string
   meta: string
   hoverBg: string
+  selectedBg: string
   error: string
   warn: string
   ok: string
@@ -57,6 +58,7 @@ export const theme: Palette = {
   hint: '#6b625c',
   meta: '#8a8078',
   hoverBg: '#2b2724',
+  selectedBg: '#3a332e',
   error: '#e5534b',
   warn: '#e3b341',
   ok: '#57ab5a',

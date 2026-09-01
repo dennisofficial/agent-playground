@@ -19,8 +19,9 @@
     "test": "bun scripts/test-shards.ts",
     "test:serial": "bun test",
     "grammars:update": "bun scripts/update-grammars.ts",
-    "build": "bun run --filter @dltech/atlas-harness db:ensure && bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas",
-    "skills:generate": "bun scripts/generate-skills.ts"
+    "build": "bun run --filter @dltech/atlas-harness db:ensure && bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun scripts/generate-plugins.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas",
+    "skills:generate": "bun scripts/generate-skills.ts",
+    "plugins:generate": "bun scripts/generate-plugins.ts"
   },
   "dependencies": {
     "@dltech/atlas-core": "workspace:*",
@@ -31,7 +32,8 @@
     "marked": "^18.0.7",
     "react": "19.2.7",
     "reflect-metadata": "^0.2.2",
-    "tsyringe": "4.10.0"
+    "tsyringe": "4.10.0",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/bun": "latest",

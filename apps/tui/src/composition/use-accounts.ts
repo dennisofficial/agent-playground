@@ -2,13 +2,17 @@ import type { KeyEvent, PasteEvent } from '@opentui/core'
 import { usePaste } from '@opentui/react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
-import { EAuthProvider, type Account, type AccountId } from '@dltech/atlas-core'
+import { EAuthProvider, providerSpec, type Account, type AccountId } from '@dltech/atlas-core'
 import type { AccountsService, LoginTicket, UrlOpener } from '@dltech/atlas-harness'
 
 import { pastedText } from '../ui/pasted-text'
 
 import {
+  acceptsApiKey,
+  acceptsPastedCode,
+  accountOf,
   accountRows,
+  rowProvider,
   askForApiKey,
   askForCode,
   backspace,
@@ -49,8 +53,13 @@ const isPrintable = (key: KeyEvent): boolean => {
   return sequence.length > 0 && !key.ctrl && !key.meta && !/[\u0000-\u001f]/.test(sequence)
 }
 
-const providerOf = (state: AccountsState): EAuthProvider =>
-  selectedRow(state)?.account.provider ?? EAuthProvider.Anthropic
+const signInUnsupported = (provider: EAuthProvider): string =>
+  `${providerSpec(provider).label} takes an api key — press k.`
+
+const providerOf = (state: AccountsState): EAuthProvider | undefined => {
+  const row = selectedRow(state)
+  return row === undefined ? undefined : rowProvider(row)
+}
 
 /**
  * OpenTUI parses a whole input burst before React re-renders, so a pasted code arrives as a run of
@@ -60,8 +69,9 @@ const providerOf = (state: AccountsState): EAuthProvider =>
 export function useAccounts(args: {
   accounts: AccountsService
   openUrl: UrlOpener
+  onAccounts?: (accounts: readonly Account[]) => void
 }): AccountsControl {
-  const { accounts, openUrl } = args
+  const { accounts, openUrl, onAccounts } = args
   const held = useRef<AccountsState | null>(null)
   const [state, setState] = useState<AccountsState | null>(null)
   const ticket = useRef<LoginTicket | null>(null)
@@ -73,12 +83,14 @@ export function useAccounts(args: {
 
   const rows = useCallback(async (): Promise<readonly AccountRow[]> => {
     const stored = await accounts.list()
+    onAccounts?.(stored)
+
     const active: Partial<Record<EAuthProvider, AccountId | undefined>> = {}
 
     for (const provider of PROVIDERS) active[provider] = await accounts.activeFor(provider)
 
     return accountRows({ accounts: stored, active })
-  }, [accounts])
+  }, [accounts, onAccounts])
 
   const handleOpen = useCallback(
     (notice?: string) => {
@@ -106,19 +118,46 @@ export function useAccounts(args: {
     [put, rows],
   )
 
+  /**
+   * A row for a provider nothing has signed into exists to be signed into, so the key that activates
+   * a row starts the flow rather than doing nothing.
+   */
+  const askForKey = useCallback(
+    (current: AccountsState) => {
+      const provider = providerOf(current)
+      if (provider === undefined || !acceptsApiKey(provider)) return
+
+      put(askForApiKey({ state: current, provider }))
+    },
+    [put],
+  )
+
   const handlePick = useCallback(
     (row: AccountRow) => {
-      void accounts
-        .use({ provider: row.account.provider, accountId: row.account.id })
-        .then(() => refresh())
+      const account = accountOf(row)
+      if (account === undefined) {
+        const current = held.current
+        if (current !== null) askForKey(current)
+        return
+      }
+
+      void accounts.use({ provider: account.provider, accountId: account.id }).then(() => refresh())
     },
-    [accounts, refresh],
+    [accounts, askForKey, refresh],
   )
 
   const beginLogin = useCallback(
     (current: AccountsState) => {
+      const provider = providerOf(current)
+      if (provider === undefined) return
+
+      if (!acceptsPastedCode(provider)) {
+        put(failed({ state: current, reason: signInUnsupported(provider) }))
+        return
+      }
+
       try {
-        const begun = accounts.begin(providerOf(current))
+        const begun = accounts.begin(provider)
         ticket.current = begun
         put(askForCode({ state: current, prompt: { provider: begun.provider, url: begun.url } }))
         openUrl(begun.url)
@@ -139,9 +178,10 @@ export function useAccounts(args: {
   const removeSelected = useCallback(
     (current: AccountsState) => {
       const row = selectedRow(current)
-      if (row === undefined) return
+      const account = row === undefined ? undefined : accountOf(row)
+      if (account === undefined) return
 
-      void accounts.remove(row.account.id).then(() => refresh())
+      void accounts.remove(account.id).then(() => refresh())
     },
     [accounts, refresh],
   )
@@ -152,7 +192,8 @@ export function useAccounts(args: {
       if (pasted.length === 0 || current.busy) return
 
       const open = ticket.current
-      const provider = current.prompt?.provider ?? EAuthProvider.Anthropic
+      const provider = current.prompt?.provider
+      if (provider === undefined) return
 
       const signIn: Promise<Account> =
         current.view === EAccountsView.ApiKey || open === null
@@ -198,7 +239,7 @@ export function useAccounts(args: {
       }
 
       if (key.sequence === 'k') {
-        put(askForApiKey({ state: current, provider: providerOf(current) }))
+        askForKey(current)
         return
       }
 

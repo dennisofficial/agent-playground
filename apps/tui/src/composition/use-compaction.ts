@@ -2,7 +2,6 @@ import {
   autoCompactAfterTurn,
   EAutoCompact,
   ECompactionAnchor,
-  modelEntry,
   type ThreadId,
 } from '@dltech/atlas-core'
 import { useCallback, useRef, useState } from 'react'
@@ -108,7 +107,7 @@ export function useCompaction(args: {
 
   const compactIfFull = useCallback(
     async (used: number) => {
-      const window = modelEntry(app.model.choice().modelId)?.contextWindow ?? 0
+      const window = app.models.cardFor(app.model.choice().ref)?.contextWindow ?? 0
       const decision = autoCompactAfterTurn({ used, window, atPercent })
       if (decision === EAutoCompact.Hold) return
 
@@ -122,7 +121,7 @@ export function useCompaction(args: {
         }),
       )
     },
-    [app.log, app.model, app.summarise, app.threads, atPercent, run, threadId],
+    [app.log, app.model, app.models, app.summarise, app.threads, atPercent, run, threadId],
   )
 
   /**

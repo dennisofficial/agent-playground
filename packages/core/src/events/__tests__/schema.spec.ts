@@ -63,12 +63,31 @@ const bodies: EventDraft[] = [
     toolCalls: 2,
   },
   {
+    type: 'background-shell-matched',
+    shellId: 'bash_1',
+    command: 'bun test',
+    pattern: '(fail|error)',
+    lines: '12 fail\n',
+    matchCount: 1,
+  },
+  {
+    type: 'background-shell-matched',
+    shellId: 'bash_1',
+    command: 'bun test',
+    description: 'Run full TUI suite',
+    pattern: '(fail|error)',
+    lines: '12 fail\n13 fail\n',
+    matchCount: 200,
+    watchDisarmed: true,
+  },
+  {
     type: 'classifier-judged',
     callId: toCallId('call-1'),
     mode: EClassifierMode.Shadow,
     triage: ETriage.Consult,
     judgment: EJudgment.Check,
     dimensions: [ERiskDimension.Contention, ERiskDimension.Irreversibility],
+    judgedDimension: ERiskDimension.Contention,
     signalIds: ['contention.dirty-foreign-worktree'],
     reason: 'contention: eng-412-sidebar holds 4 changed files',
     consulted: true,
@@ -180,6 +199,24 @@ describe('eventBodySchema', () => {
     ).toThrow()
   })
 
+  it('rejects a classifier verdict whose judged dimension is outside the enum', () => {
+    expect(() =>
+      eventBodySchema.parse({
+        type: 'classifier-judged',
+        callId: 'call-1',
+        mode: EClassifierMode.Shadow,
+        triage: ETriage.Consult,
+        judgment: EJudgment.Check,
+        dimensions: [ERiskDimension.Contention],
+        judgedDimension: 'vibes',
+        signalIds: [],
+        reason: 'contention: eng-412-sidebar',
+        consulted: true,
+        elapsedMs: 1,
+      }),
+    ).toThrow()
+  })
+
   it('rejects a classifier verdict that names a dimension the enum does not have', () => {
     expect(() =>
       eventBodySchema.parse({
@@ -206,6 +243,19 @@ describe('eventBodySchema', () => {
         scope: EGrantScope.Thread,
         subject: '',
         reason: 'because',
+      }),
+    ).toThrow()
+  })
+
+  it('rejects a watch match that names no pattern', () => {
+    expect(() =>
+      eventBodySchema.parse({
+        type: 'background-shell-matched',
+        shellId: 'bash_1',
+        command: 'bun test',
+        pattern: '',
+        lines: '12 fail\n',
+        matchCount: 1,
       }),
     ).toThrow()
   })

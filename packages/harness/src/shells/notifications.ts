@@ -1,7 +1,8 @@
 import { type EventDraft } from '@dltech/atlas-core'
 
 import type { ShellSnapshot } from './background-shell'
-import type { ShellDelta } from './shell-registry'
+import type { ShellDelta } from './notice-queue'
+import type { MatchedLines } from './shell-watch'
 
 export function endedDraft(args: { snapshot: ShellSnapshot; delta: ShellDelta }): EventDraft {
   const { snapshot, delta } = args
@@ -34,5 +35,24 @@ export function awaitingInputDraft(args: {
     output: delta.text,
     droppedCharacters: delta.droppedCharacters,
     remainingCharacters: delta.remainingCharacters,
+  }
+}
+
+export function matchedDraft(args: {
+  snapshot: ShellSnapshot
+  pattern: string
+  matched: MatchedLines
+}): EventDraft {
+  const { snapshot, matched } = args
+
+  return {
+    type: 'background-shell-matched',
+    shellId: snapshot.shellId,
+    command: snapshot.command,
+    description: snapshot.description,
+    pattern: args.pattern,
+    lines: matched.lines.join('\n'),
+    matchCount: matched.matchCount,
+    watchDisarmed: matched.disarmed ? true : undefined,
   }
 }

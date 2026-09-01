@@ -1,4 +1,11 @@
-import { EEffort, toThreadId } from '@dltech/atlas-core'
+import {
+  EEffort,
+  ESettingId,
+  parseFavourites,
+  refKey,
+  textValueOf,
+  toThreadId,
+} from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -13,8 +20,26 @@ const THREAD = toThreadId('opened-thread')
 
 const WIDE = { width: 150, height: 40 }
 
-const appWith = (): FakeApp =>
-  fakeApp({ model: scriptedModelPort({ script: { thinking: 'weighing it', reply: 'done' } }) })
+const appWith = (args?: { pinned?: string }): FakeApp =>
+  fakeApp({
+    model: scriptedModelPort({ script: { thinking: 'weighing it', reply: 'done' } }),
+    ...(args?.pinned === undefined
+      ? {}
+      : { settings: { values: { [ESettingId.ModelFavourites]: args.pinned } } }),
+  })
+
+const pinnedIn = (app: FakeApp): readonly string[] =>
+  parseFavourites(
+    textValueOf({
+      resolution: app.settings.snapshot().resolution,
+      id: ESettingId.ModelFavourites,
+    }),
+  )
+
+async function pin(setup: Mounted): Promise<void> {
+  setup.mockInput.typeText('*')
+  await landed(setup)
+}
 
 async function opened(app: FakeApp): Promise<Awaited<ReturnType<typeof testRender>>> {
   const setup = await testRender(<App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />, WIDE)
@@ -81,14 +106,14 @@ describe('switching what answers', () => {
     const setup = await opened(app)
 
     try {
-      expect(app.model.choice().modelId).toBe('claude-haiku-4-5-20251001')
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-haiku-4-5')
 
       await openSwitcherWith(setup)
       await arrow(setup, 'up')
       await arrow(setup, 'right')
       await enter(setup)
 
-      expect(app.model.choice().modelId).toBe('claude-sonnet-5')
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-sonnet-5')
       expect(app.model.choice().effort).toBe(EEffort.High)
       expect(setup.captureCharFrame()).not.toContain('APPLIES')
     } finally {
@@ -120,7 +145,7 @@ describe('switching what answers', () => {
       await arrow(setup, 'up')
       await escape(setup)
 
-      expect(app.model.choice().modelId).toBe('claude-haiku-4-5-20251001')
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-haiku-4-5')
       expect(setup.captureCharFrame()).not.toContain('APPLIES')
     } finally {
       await teardown(setup)
@@ -144,6 +169,27 @@ describe('switching what answers', () => {
     }
   }, 60_000)
 
+  it('narrows the list to what was typed, and switches to what is left', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+      await setup.mockInput.typeText('opus')
+      await landed(setup)
+
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain('opus-5')
+      expect(frame).not.toContain('sonnet-5')
+
+      await enter(setup)
+
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-opus-5')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
   it('never lands on a model there is no credential for', async () => {
     const app = appWith()
     const setup = await opened(app)
@@ -153,7 +199,86 @@ describe('switching what answers', () => {
       for (let step = 0; step < 6; step += 1) await arrow(setup, 'down')
       await enter(setup)
 
-      expect(app.model.choice().modelId).not.toBe('gpt-5-codex')
+      expect(app.model.choice().ref.providerId).not.toBe('openai')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
+describe('pinning the models worth coming back to', () => {
+  it('writes the pin where the next launch will read it', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      expect(pinnedIn(app)).toEqual([])
+
+      await openSwitcherWith(setup)
+      await pin(setup)
+
+      expect(pinnedIn(app)).toEqual(['anthropic/claude-haiku-4-5'])
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('takes the pin back off the model it is already on', async () => {
+    const app = appWith({ pinned: 'anthropic/claude-haiku-4-5' })
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+      await pin(setup)
+
+      expect(pinnedIn(app)).toEqual([])
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('gathers what is pinned into a group above the providers', async () => {
+    const app = appWith({ pinned: 'anthropic/claude-sonnet-5' })
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+
+      const lines = setup.captureCharFrame().split('\n')
+      const pinned = lines.findIndex((line) => line.includes('Pinned'))
+      const plan = lines.findIndex((line) => line.includes('Claude Plan'))
+      expect(pinned).toBeGreaterThan(0)
+      expect(pinned).toBeLessThan(plan)
+      expect(lines[pinned + 1]).toContain('sonnet-5')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('keeps the highlight on the model it just pinned, wherever that moved it', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+      await pin(setup)
+      await enter(setup)
+
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-haiku-4-5')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('leaves the pin key out of the filter it types into', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+      await pin(setup)
+
+      expect(setup.captureCharFrame()).not.toContain('▸ *')
     } finally {
       await teardown(setup)
     }

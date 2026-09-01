@@ -4,6 +4,7 @@ import {
   ModelPort,
   type Assembled,
   type ChunkFilter,
+  type ModelTraits,
   type ModelStepResult,
   type ProviderIdentity,
   type ToolDeclaration,
@@ -57,6 +58,10 @@ export class FaultingModelPort extends ModelPort {
     this.inner = args.inner
     this.spec = args.spec
     this.identity = args.inner.identity
+  }
+
+  override traits(): ModelTraits {
+    return this.inner.traits?.() ?? {}
   }
 
   async step(args: {

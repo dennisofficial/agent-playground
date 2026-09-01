@@ -8,17 +8,12 @@ import {
 } from '@dltech/atlas-core'
 
 import { truncateCells } from '../ui/components/sidebar/cells'
+import { orderSections, type SidebarSection } from '../ui/sidebar-section'
 import type { TurnClock } from '../ui/components/transcript'
 import { TITLE_CELLS, oneLineOf } from './sidebar-text'
 import type { SidebarCrewFold, SidebarSubagent } from './subagent-row'
 
 export type SidebarApproval = { callId: CallId; reason: string }
-
-export type SidebarGit = { branch: string }
-
-export type SidebarPullRequest = { number: number; state: string }
-
-export type SidebarChecks = { running: number; passed: number; failed: number }
 
 export enum ESidebarTaskState {
   Done = 'done',
@@ -43,13 +38,11 @@ export type SidebarModel = {
   lastActivity: string | null
   liveOutputTokens: number
   lastTurnOutputTokens: number | null
-  git?: SidebarGit
-  pr?: SidebarPullRequest
-  ci?: SidebarChecks
   todo?: readonly SidebarTask[]
   subagents?: readonly SidebarSubagent[]
   crewFold?: SidebarCrewFold
   teammates?: readonly SidebarTeammate[]
+  sections?: readonly SidebarSection[]
 }
 
 export const IDLE_SIDEBAR: SidebarModel = {
@@ -144,4 +137,14 @@ export function withCrew(args: {
   if (fold === undefined || fold.hidden === 0) return { ...model, subagents }
 
   return { ...model, subagents, crewFold: fold }
+}
+
+export function withSections(args: {
+  model: SidebarModel
+  sections: readonly SidebarSection[]
+}): SidebarModel {
+  const sections = orderSections(args.sections)
+  if (sections.length === 0) return args.model
+
+  return { ...args.model, sections }
 }

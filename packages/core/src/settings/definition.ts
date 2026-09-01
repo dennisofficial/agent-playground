@@ -3,6 +3,7 @@ import { ESettingKind, type SettingOption } from './value'
 export enum ESettingPage {
   General = 'general',
   Appearance = 'appearance',
+  Hidden = 'hidden',
 }
 
 export type SettingPage = {
@@ -39,7 +40,24 @@ export type RangeDefinition = SettingFacts & {
   unit: string
 }
 
-export type SettingDefinition = ToggleDefinition | ChoiceDefinition | RangeDefinition
+export type TextDefinition = SettingFacts & {
+  kind: ESettingKind.Text
+  fallback: string
+}
+
+export type SecretDefinition = SettingFacts & {
+  kind: ESettingKind.Secret
+  fallback: ''
+  masked: boolean
+  environmentVariable?: never
+}
+
+export type SettingDefinition =
+  | ToggleDefinition
+  | ChoiceDefinition
+  | RangeDefinition
+  | TextDefinition
+  | SecretDefinition
 
 export function definitionsOfPage(args: {
   definitions: readonly SettingDefinition[]

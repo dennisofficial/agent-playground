@@ -7,6 +7,7 @@ import { EToolEffect, type ToolOutcome,
   toThreadId,
 } from '@dltech/atlas-core'
 
+import { HookChain } from '../../../hooks/registry'
 import { EShellStatus } from '../../../shells/background-shell'
 import { BunShellRegistry, PROMPT_SETTLE_MS } from '../../../shells/shell-registry'
 import { SystemClock } from '../../../store'
@@ -14,6 +15,8 @@ import { BashTool } from '../bash'
 import { ShellKillTool } from '../shell-kill'
 import { ShellListTool } from '../shell-list'
 import { ShellOutputTool } from '../shell-output'
+
+const noHooks = () => new HookChain({})
 
 type Suite = {
   root: string
@@ -35,7 +38,7 @@ afterEach(async () => {
 
 function openSuite(): Suite {
   const root = mkdtempSync(join(tmpdir(), 'atlas-shell-tools-'))
-  const shells = new BunShellRegistry(root, new SystemClock())
+  const shells = new BunShellRegistry(root, new SystemClock(), noHooks)
   const suite: Suite = {
     root,
     shells,
@@ -120,7 +123,7 @@ describe('asking bash to run something in the background', () => {
     expect(modelTextOf(outcome)).toContain('shell_kill')
   })
 
-  it('refuses a timeout on a background shell rather than ignoring it', async () => {
+  it('takes a timeout on a background shell as a ceiling rather than refusing it', async () => {
     const suite = openSuite()
 
     const outcome = await runBash(suite, {
@@ -129,9 +132,8 @@ describe('asking bash to run something in the background', () => {
       timeoutMs: 5_000,
     })
 
-    expect(outcome.ok).toBe(false)
-    if (outcome.ok) return
-    expect(outcome.reason).toContain('no timeout')
+    expect(outcome.ok).toBe(true)
+    expect(modelTextOf(outcome)).toContain('killed if it outlives 5000 ms')
   })
 
   it('still waits for a command when runInBackground is absent', async () => {
@@ -267,7 +269,8 @@ describe('refusing to burn the turn asleep', () => {
 
     expect(outcome.ok).toBe(false)
     expect(reasonOf(outcome)).toContain('115 seconds asleep')
-    expect(reasonOf(outcome)).toContain('end the turn and be woken')
+    expect(reasonOf(outcome)).toContain('runInBackground')
+    expect(reasonOf(outcome)).toContain('gh run watch --exit-status')
   })
 
   it('still runs a short settle before a real command', async () => {

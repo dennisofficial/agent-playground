@@ -2,29 +2,31 @@ import React from 'react'
 
 import type { ShellSnapshot } from '@dltech/atlas-harness'
 
-import { fitHints, hintSpans, type Hint } from '../hint-layout'
+import { type Hint } from '../hint-layout'
 import type { OutputScroll } from '../hooks/use-output-scroll'
 import { usePress, type PressHandlers } from '../hooks/use-press'
 import {
-  AWAITING_INPUT_LABEL,
   isShellRunning,
   outputRows,
   shellCommandLabel,
   shellNameLabel,
-  shellStateLabel,
+  shellReadout,
 } from '../shells-model'
 import { glyph, theme } from '../theme'
+import {
+  drawerCells,
+  DrawerHints,
+  DrawerLine,
+  DRAWER_INSET,
+  EDrawerEdge,
+  SideDrawer,
+} from './drawer'
 import { clipSpans } from './sidebar/cells'
 import { Spans, type Span } from './spans'
 
-const PAD = 2
+export const SHELLS_INSET = DRAWER_INSET
 
-const EDGE = 1
-
-export const SHELLS_INSET = EDGE + PAD * 2
-
-export const shellsCells = (args: { width: number }): number =>
-  Math.max(0, args.width - SHELLS_INSET)
+export const shellsCells = (args: { width: number }): number => drawerCells(args)
 
 /**
  * How far back the panel lets a reader walk. The registry retains more than this, but every row is
@@ -42,28 +44,9 @@ const BACK_TO_END = 'back to the end'
 const STDIN_CLOSED =
   'Its stdin is closed, so nothing can answer it. Kill it and re-run with input piped in.'
 
-function Line(props: {
-  band?: string | undefined
-  press?: PressHandlers | undefined
-  children: React.ReactNode
-}): React.ReactNode {
-  return (
-    <box
-      height={1}
-      flexShrink={0}
-      paddingLeft={PAD}
-      paddingRight={PAD}
-      {...(props.band === undefined ? {} : { backgroundColor: props.band })}
-      {...(props.press ?? {})}
-    >
-      {props.children}
-    </box>
-  )
-}
-
 function GroupHeader(props: { label: string; count?: string; note?: string }): React.ReactNode {
   return (
-    <Line>
+    <DrawerLine>
       <text>
         <Spans
           spans={[
@@ -73,7 +56,7 @@ function GroupHeader(props: { label: string; count?: string; note?: string }): R
           ]}
         />
       </text>
-    </Line>
+    </DrawerLine>
   )
 }
 
@@ -85,9 +68,13 @@ function markOf(shell: ShellSnapshot): Span {
 
 const named = (shell: ShellSnapshot): boolean => (shell.description?.trim() ?? '') !== ''
 
-function ShellHeading(props: { shell: ShellSnapshot; cells: number }): React.ReactNode {
+function ShellHeading(props: {
+  shell: ShellSnapshot
+  now: number
+  cells: number
+}): React.ReactNode {
   const { shell } = props
-  const state = shell.awaitingInput ? AWAITING_INPUT_LABEL : shellStateLabel(shell)
+  const state = shellReadout({ shell, now: props.now })
 
   const spans: Span[] = [
     markOf(shell),
@@ -101,11 +88,11 @@ function ShellHeading(props: { shell: ShellSnapshot; cells: number }): React.Rea
   ]
 
   return (
-    <Line band={theme.panelBg}>
+    <DrawerLine band={theme.panelBg}>
       <text>
         <Spans spans={clipSpans({ spans, cells: props.cells })} />
       </text>
-    </Line>
+    </DrawerLine>
   )
 }
 
@@ -132,7 +119,7 @@ function OutputSection(props: {
         {...(scrolledBack ? { note: 'scrolled back' } : {})}
       />
       {isShellRunning(props.shell) ? (
-        <Line press={props.press}>
+        <DrawerLine press={props.press}>
           <text>
             <Spans
               spans={[
@@ -141,19 +128,19 @@ function OutputSection(props: {
               ]}
             />
           </text>
-        </Line>
+        </DrawerLine>
       ) : null}
       {props.shell.awaitingInput ? (
-        <Line>
+        <DrawerLine>
           <text>
             <Spans spans={clipSpans({ spans: [{ text: STDIN_CLOSED, fg: theme.warn }], cells: props.cells })} />
           </text>
-        </Line>
+        </DrawerLine>
       ) : null}
       {rows.length === 0 ? (
-        <Line>
+        <DrawerLine>
           <text fg={theme.meta}>{NOTHING_PRINTED}</text>
-        </Line>
+        </DrawerLine>
       ) : (
         <scrollbox
           {...(scroll === undefined ? {} : { ref: scroll.attach })}
@@ -166,16 +153,16 @@ function OutputSection(props: {
           viewportCulling
         >
           {rows.map((row, index) => (
-            <Line key={index}>
+            <DrawerLine key={index}>
               <text fg={theme.hover}>{row}</text>
-            </Line>
+            </DrawerLine>
           ))}
         </scrollbox>
       )}
       {scrolledBack ? (
-        <Line press={props.jumpPress}>
+        <DrawerLine press={props.jumpPress}>
           <text fg={theme.warn}>{`↓ ${BACK_TO_END}`}</text>
-        </Line>
+        </DrawerLine>
       ) : null}
     </box>
   )
@@ -188,24 +175,10 @@ const WALKING: readonly Hint[] = [
   { key: 'esc', label: 'close' },
 ]
 
-function FooterLine(props: { cells: number; press: PressHandlers }): React.ReactNode {
-  const spans = hintSpans({
-    hints: fitHints({ hints: WALKING, cells: props.cells }),
-    keyColour: theme.meta,
-  })
-
-  return (
-    <Line press={props.press}>
-      <text>
-        <Spans spans={clipSpans({ spans, cells: props.cells })} />
-      </text>
-    </Line>
-  )
-}
-
 export function Shells(props: {
   width: number
   shells: readonly ShellSnapshot[]
+  now: number
   selected: ShellSnapshot | undefined
   output: string
   scroll?: OutputScroll | undefined
@@ -219,43 +192,33 @@ export function Shells(props: {
   const selected = props.selected
 
   return (
-    <box
-      flexDirection="column"
-      flexShrink={0}
+    <SideDrawer
       width={props.width}
-      backgroundColor={theme.overlayBg}
-      border={['right']}
-      borderColor={theme.rule}
-      paddingTop={1}
-      paddingBottom={1}
-      {...(props.overlay
-        ? { position: 'absolute' as const, top: 0, bottom: 0, left: 0, zIndex: 20 }
-        : {})}
+      side={EDrawerEdge.Left}
+      overlay={props.overlay === true}
+      footer={<DrawerHints hints={WALKING} cells={cells} onDismiss={props.onDismiss} />}
     >
-      <box flexDirection="column" flexGrow={1} flexShrink={1} gap={1}>
-        {selected === undefined ? (
-          <box flexDirection="column" flexShrink={0}>
-            <GroupHeader label="Background shells" count={`${running}/${props.shells.length}`} />
-            <Line>
-              <text fg={theme.meta}>Nothing is running in the background.</text>
-            </Line>
-          </box>
-        ) : (
-          <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
-            <GroupHeader label="Shell log" count={`${running}/${props.shells.length}`} />
-            <ShellHeading shell={selected} cells={cells} />
-            <OutputSection
-              shell={selected}
-              output={props.output}
-              cells={cells}
-              press={press(() => props.onKill(selected.shellId))}
-              jumpPress={press(props.scroll?.handleJumpToEnd)}
-              {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
-            />
-          </box>
-        )}
-      </box>
-      <FooterLine cells={cells} press={press(props.onDismiss)} />
-    </box>
+      {selected === undefined ? (
+        <box flexDirection="column" flexShrink={0}>
+          <GroupHeader label="Background shells" count={`${running}/${props.shells.length}`} />
+          <DrawerLine>
+            <text fg={theme.meta}>Nothing is running in the background.</text>
+          </DrawerLine>
+        </box>
+      ) : (
+        <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
+          <GroupHeader label="Shell log" count={`${running}/${props.shells.length}`} />
+          <ShellHeading shell={selected} now={props.now} cells={cells} />
+          <OutputSection
+            shell={selected}
+            output={props.output}
+            cells={cells}
+            press={press(() => props.onKill(selected.shellId))}
+            jumpPress={press(props.scroll?.handleJumpToEnd)}
+            {...(props.scroll === undefined ? {} : { scroll: props.scroll })}
+          />
+        </box>
+      )}
+    </SideDrawer>
   )
 }

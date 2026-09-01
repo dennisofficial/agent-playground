@@ -17,6 +17,9 @@ import { ClaudeCodeSource, claudeCodePayloadStore } from '../credentials/claude-
 import { fileAccountStore } from '../credentials/account-store'
 import { builtinOauthClients } from '../credentials/oauth'
 import { atlasVaultFile, atlasVaultKeyFile } from '../credentials/paths'
+import { SecretCipher } from '../credentials/secret-cipher'
+import { FileSecretsStore } from '../secrets/file-secrets-store'
+import { atlasSecretsFile } from '../secrets/paths'
 import { RefreshingCredentialPort } from '../credentials/refreshing-credential-port'
 import { registerBuiltinHooks } from '../hooks/register-hooks'
 import { PrismaTurnLedger, TurnLedgerPort } from '../ledger'
@@ -44,6 +47,8 @@ import {
   HookChainToken,
   KeychainReaderToken,
   LanguageModelToken,
+  ModelCardSourceToken,
+  SecretsStoreToken,
 } from './tokens'
 
 export const ChildRunnerDepsToken: InjectionToken<ChildRunnerDepsSource> =
@@ -105,6 +110,16 @@ export function createHarnessContainer(): DependencyContainer {
     ),
   })
 
+  harness.register(SecretsStoreToken, {
+    useFactory: instanceCachingFactory(
+      () =>
+        new FileSecretsStore({
+          file: atlasSecretsFile(),
+          cipher: new SecretCipher(atlasVaultKeyFile()),
+        }),
+    ),
+  })
+
   harness.register(ClaudeCodeSourceToken, {
     useFactory: instanceCachingFactory(
       (resolver) =>
@@ -150,8 +165,12 @@ export function createHarnessContainer(): DependencyContainer {
   harness.register(portToken(ModelPort), {
     useFactory: (resolver) => {
       const model = resolver.resolve(LanguageModelToken)
+      const card = resolver.isRegistered(ModelCardSourceToken, true)
+        ? resolver.resolve(ModelCardSourceToken)
+        : undefined
       return new AiSdkModelPort({
         model,
+        ...(card === undefined ? {} : { card }),
         hooks: resolver.resolve(HookChainToken),
         tape,
       })

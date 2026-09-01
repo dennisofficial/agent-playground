@@ -12,6 +12,8 @@ import {
   selectShell,
   selectedShell,
   shellCommandLabel,
+  shellElapsedMs,
+  shellReadout,
   shellStateLabel,
 } from '../shells-model'
 
@@ -120,6 +122,14 @@ describe('saying what a shell is doing', () => {
     ).toBe('killed by you')
   })
 
+  it('says a deadline expired rather than that something killed it', () => {
+    expect(
+      shellStateLabel(
+        shell({ shellId: 'bash_1', status: EShellStatus.Killed, killedBy: EKilledBy.Timeout }),
+      ),
+    ).toBe('timed out')
+  })
+
   it('says why an overflowed one was stopped', () => {
     expect(shellStateLabel(shell({ shellId: 'bash_1', status: EShellStatus.Overflowed }))).toContain(
       'too much output',
@@ -205,5 +215,63 @@ describe('reading the scrollback keys', () => {
     expect(outputScrollCommand({ name: 'k' })).toBeNull()
     expect(outputScrollCommand({ name: 'escape' })).toBeNull()
     expect(outputScrollCommand({})).toBeNull()
+  })
+})
+
+const STARTED_AT = '2026-08-27T12:00:00.000Z'
+
+const AT = (seconds: number): number => Date.parse(STARTED_AT) + seconds * 1_000
+
+describe('how long a shell has been alive', () => {
+  it('counts a running shell up to the reading it is given', () => {
+    expect(shellElapsedMs({ shell: running('bash_1'), now: AT(64) })).toBe(64_000)
+  })
+
+  it('stops a shell that ended at its ending, however late the reading', () => {
+    const ended = shell({
+      shellId: 'bash_1',
+      status: EShellStatus.Exited,
+      exitCode: 0,
+      endedAt: '2026-08-27T12:00:12.000Z',
+    })
+
+    expect(shellElapsedMs({ shell: ended, now: AT(600) })).toBe(12_000)
+  })
+
+  it('dates a shell that ended without a stamp by the last thing it printed', () => {
+    const ended = shell({
+      shellId: 'bash_1',
+      status: EShellStatus.Exited,
+      exitCode: 0,
+      lastOutputAt: '2026-08-27T12:00:09.000Z',
+    })
+
+    expect(shellElapsedMs({ shell: ended, now: AT(600) })).toBe(9_000)
+  })
+
+  it('offers no reading at all when the start is unreadable', () => {
+    expect(shellElapsedMs({ shell: shell({ shellId: 'bash_1', startedAt: '' }), now: AT(5) })).toBeNull()
+  })
+
+  it('reads a clock behind the start as no time at all rather than as negative', () => {
+    expect(shellElapsedMs({ shell: running('bash_1'), now: AT(-30) })).toBe(0)
+  })
+})
+
+describe('what a shell row reads as', () => {
+  it('follows the state with what it has cost', () => {
+    expect(shellReadout({ shell: running('bash_1'), now: AT(64) })).toBe('running · 1m 4s')
+  })
+
+  it('leaves the whole row to the warning when nothing can answer the shell, since it will never finish', () => {
+    const stuck = shell({ shellId: 'bash_1', awaitingInput: true })
+
+    expect(shellReadout({ shell: stuck, now: AT(64) })).toBe('awaiting input')
+  })
+
+  it('says only the state when there is no start to count from', () => {
+    expect(shellReadout({ shell: shell({ shellId: 'bash_1', startedAt: '' }), now: AT(5) })).toBe(
+      'running',
+    )
   })
 })

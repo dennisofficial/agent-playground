@@ -11,12 +11,14 @@ import { awaitingApproval, denied, failed } from './call-state'
 import { agentCall } from './agents'
 import { readShell } from './bash'
 import { imageRead } from './images'
+import { memoryCall } from './memory'
 import { EDetail, EGather, EToolClass, type Classification } from './kinds'
 import {
   commandLabel,
   count,
   detailOf,
   diffStatOf,
+  hostOf,
   inputOf,
   lineCount,
   num,
@@ -162,6 +164,41 @@ function gatheredByName(args: { call: ToolCall; cwd: string }): Classification |
     }
   }
 
+  if (call.name === 'web_fetch') {
+    const host = hostOf(str(output.finalUrl) ?? str(inputOf(call).url) ?? '')
+    const matched = num(output.matched)
+    return {
+      klass: EToolClass.Gathered,
+      gather: EGather.Browse,
+      line: host,
+      ...standing({ verb: 'Read', target: host }),
+      failed: false,
+      note:
+        matched === undefined
+          ? output.truncated === true
+            ? 'cut'
+            : 'read'
+          : plural(matched, 'match', 'matches'),
+      metric: null,
+      detail: EDetail.Page,
+    }
+  }
+
+  if (call.name === 'web_search') {
+    const query = str(inputOf(call).query) ?? target
+    const results = records(output.results).length
+    return {
+      klass: EToolClass.Gathered,
+      gather: EGather.Browse,
+      line: query,
+      ...standing({ verb: 'Searched the web for', target: query }),
+      failed: false,
+      note: plural(results, 'result'),
+      metric: null,
+      detail: EDetail.Results,
+    }
+  }
+
   if (call.name === 'shell_output' || call.name === 'shell_list') {
     const quiet = detailOf(call).join('').trim().length === 0
     return {
@@ -197,6 +234,9 @@ export function classify(args: { call: ToolCall; cwd: string }): Classification 
       detail: EDetail.Output,
     }
   }
+
+  const remembered = memoryCall(args)
+  if (remembered !== null) return remembered
 
   if (call.name === 'edit' || call.name === 'write') return changed(args)
 

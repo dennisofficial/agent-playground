@@ -1,25 +1,26 @@
-import type { ModelEntry } from '../models/catalog'
-import { modelEntry } from '../models/registry'
 import type { ProviderIdentity } from '../provider'
 import type { EPromptAgent } from './agent'
+import type { PromptModel } from './model'
 
 export type PromptContext = {
   agent: EPromptAgent
   provider: ProviderIdentity
-  model: ModelEntry | undefined
+  model: PromptModel
   projectDirectory: string
 }
 
 export function promptContextFor({
   agent,
   provider,
+  model,
   projectDirectory,
 }: {
   agent: EPromptAgent
   provider: ProviderIdentity
+  model: PromptModel
   projectDirectory: string
 }): PromptContext {
-  return { agent, provider, model: modelEntry(provider.modelId), projectDirectory }
+  return { agent, provider, model, projectDirectory }
 }
 
 export function promptContextKey({ agent, provider, projectDirectory }: PromptContext): string {

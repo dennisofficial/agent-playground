@@ -1,6 +1,8 @@
 import React from 'react'
 
+import { backgroundWaitLabel, isWaiting, type BackgroundWork } from '../background-wait'
 import { useShimmerClock } from '../hooks/use-shimmer-clock'
+import { useSince } from '../hooks/use-since'
 import { beaconHeat, shimmerCrest, WORKING_SHIMMER } from '../shimmer'
 import { retryLabel, type RetryWait } from '../retry-countdown'
 import { shimmerColour, shimmerSpans } from '../shimmer-style'
@@ -55,6 +57,27 @@ export function WorkingLine(props: {
   return (
     <box flexDirection="column">
       <ShimmeringLine label={label} now={now} />
+    </box>
+  )
+}
+
+/**
+ * The complement of the working line, and never shown beside it: the turn has settled, but what it
+ * started has not, so the transcript keeps a live row rather than looking finished while it isn't.
+ */
+export function WaitingLine(props: { work: BackgroundWork }): React.ReactNode {
+  const waiting = isWaiting(props.work)
+  const since = useSince(waiting)
+  const now = useShimmerClock({ active: waiting })
+  const label = backgroundWaitLabel({
+    work: props.work,
+    ...(since === null ? {} : { waitedMs: Math.max(0, now - since) }),
+  })
+  if (label === null) return null
+
+  return (
+    <box flexDirection="row" marginTop={1} marginBottom={1}>
+      <ShimmeringLine label={label} now={now} base={theme.meta} />
     </box>
   )
 }

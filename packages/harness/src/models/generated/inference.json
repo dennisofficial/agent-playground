@@ -1,0 +1,122 @@
+[
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "google/gemma-3"
+    },
+    "label": "Google Gemma 3",
+    "api": "openai-completions",
+    "contextWindow": 125000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.15,
+      "outputPerMillion": 0.3
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "meta/llama-3.1-8b-instruct"
+    },
+    "label": "Llama 3.1 8B Instruct",
+    "api": "openai-completions",
+    "contextWindow": 16000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.025,
+      "outputPerMillion": 0.025
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "meta/llama-3.2-11b-vision-instruct"
+    },
+    "label": "Llama 3.2 11B Vision Instruct",
+    "api": "openai-completions",
+    "contextWindow": 16000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.055,
+      "outputPerMillion": 0.055
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "meta/llama-3.2-1b-instruct"
+    },
+    "label": "Llama 3.2 1B Instruct",
+    "api": "openai-completions",
+    "contextWindow": 16000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.01,
+      "outputPerMillion": 0.01
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "meta/llama-3.2-3b-instruct"
+    },
+    "label": "Llama 3.2 3B Instruct",
+    "api": "openai-completions",
+    "contextWindow": 16000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.02,
+      "outputPerMillion": 0.02
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "mistral/mistral-nemo-12b-instruct"
+    },
+    "label": "Mistral Nemo 12B Instruct",
+    "api": "openai-completions",
+    "contextWindow": 16000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.038,
+      "outputPerMillion": 0.1
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "osmosis/osmosis-structure-0.6b"
+    },
+    "label": "Osmosis Structure 0.6B",
+    "api": "openai-completions",
+    "contextWindow": 4000,
+    "imageTier": "standard",
+    "maxOutputTokens": 2048,
+    "cost": {
+      "inputPerMillion": 0.1,
+      "outputPerMillion": 0.5
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "qwen/qwen-2.5-7b-vision-instruct"
+    },
+    "label": "Qwen 2.5 7B Vision Instruct",
+    "api": "openai-completions",
+    "contextWindow": 125000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.2,
+      "outputPerMillion": 0.2
+    }
+  }
+]
