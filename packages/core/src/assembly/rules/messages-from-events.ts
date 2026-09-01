@@ -111,6 +111,8 @@ function saidContent(event: EventOfType<'user-said'>): (TextPart | ImagePart)[] 
       data: image.data,
       mediaType: image.mediaType,
       source: image.path,
+      width: image.width,
+      height: image.height,
     })
   }
 

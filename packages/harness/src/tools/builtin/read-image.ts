@@ -79,6 +79,8 @@ const inlined = (args: {
       data: Buffer.from(args.bytes).toString('base64'),
       mediaType: args.mediaType,
       source: args.path,
+      width: args.size?.width,
+      height: args.size?.height,
     },
   ]
 

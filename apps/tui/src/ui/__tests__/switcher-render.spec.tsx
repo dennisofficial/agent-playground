@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { EEffort, EModelVendor, EThinkingControl, type ModelEntry } from '@dltech/atlas-core'
+import { EEffort, EImageTier, EModelVendor, EThinkingControl, type ModelEntry } from '@dltech/atlas-core'
 
 import { EFFORT_ABBREVIATION, Switcher } from '../components/switcher'
 import { cellsOf } from '../hint-layout'
@@ -30,6 +30,7 @@ const anthropic = (args: { id: string; label: string; price: number }): ModelEnt
   thinkingControl: EThinkingControl.Effort,
   inputPricePerMillion: 3,
   outputPricePerMillion: args.price,
+  imageTier: EImageTier.HighResolution,
 })
 
 const MODELS: readonly ModelEntry[] = [
@@ -44,6 +45,7 @@ const MODELS: readonly ModelEntry[] = [
   thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 1.25,
     outputPricePerMillion: 10,
+    imageTier: EImageTier.HighResolution,
   },
   {
     id: 'o4-mini',
@@ -53,6 +55,7 @@ const MODELS: readonly ModelEntry[] = [
   thinkingControl: EThinkingControl.Effort,
     inputPricePerMillion: 1.1,
     outputPricePerMillion: 4.4,
+    imageTier: EImageTier.HighResolution,
   },
 ]
 

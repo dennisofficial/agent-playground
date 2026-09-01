@@ -16,7 +16,10 @@ export const MAX_IMAGE_BLOCKS = 20
 type VisualPart = TextPart | ImagePart
 
 const describedSize = (part: ImagePart): string => {
-  const size = imageSize({ bytes: decodeBase64(part.data), mediaType: part.mediaType })
+  const size =
+    part.width === undefined || part.height === undefined
+      ? imageSize({ bytes: decodeBase64(part.data), mediaType: part.mediaType })
+      : { width: part.width, height: part.height }
   if (size === null) return part.mediaType
 
   return `${part.mediaType} ${size.width}×${size.height}`

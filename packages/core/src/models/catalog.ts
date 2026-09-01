@@ -1,3 +1,5 @@
+import { EImageTier } from '../images/projection'
+
 export enum EModelVendor {
   Anthropic = 'anthropic',
   OpenAI = 'openai',
@@ -27,6 +29,7 @@ export type ModelEntry = {
   thinkingControl: EThinkingControl
   inputPricePerMillion: number
   outputPricePerMillion: number
+  imageTier: EImageTier
 }
 
 export type ContextPressure = {

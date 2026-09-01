@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EEffort, EModelVendor, EThinkingControl, type ModelEntry } from '@dltech/atlas-core'
+import { EEffort, EImageTier, EModelVendor, EThinkingControl, type ModelEntry } from '@dltech/atlas-core'
 
 import {
   adjustEffort,
@@ -20,6 +20,7 @@ const entry = (id: string, vendor: EModelVendor = EModelVendor.Anthropic): Model
   thinkingControl: EThinkingControl.Effort,
   inputPricePerMillion: 1,
   outputPricePerMillion: 5,
+  imageTier: EImageTier.HighResolution,
 })
 
 const MODELS: readonly ModelEntry[] = [

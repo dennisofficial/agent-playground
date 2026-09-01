@@ -6,7 +6,8 @@ import {
   modelEntry,
   overflowsWindow,
   awaitsReply,
-  estimateTokens,
+  estimateTokensFor,
+  imageTierFor,
   exchangeFaults,
   outstandingApproval,
   pendingCalls,
@@ -86,7 +87,9 @@ export class LoopTurnRunner extends TurnRunner {
     this.ids = deps.ids
     this.assembly = deps.assembly
     this.tools = deps.tools ?? []
-    this.countTokens = deps.countTokens ?? estimateTokens
+    this.countTokens =
+      deps.countTokens ??
+      ((assembled) => estimateTokensFor(imageTierFor(this.model.identity.modelId))(assembled))
     this.onChunk = deps.onChunk
     this.onContext = deps.onContext
     this.hooks = deps.hooks

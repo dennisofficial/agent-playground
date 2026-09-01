@@ -25,7 +25,23 @@ describe('a message somebody attached a picture to', () => {
   it('reaches the model as the words followed by the image', () => {
     expect(contentOf({ type: 'user-said', text: 'why is this broken', images: [SHOT] })).toEqual([
       { type: 'text', text: 'why is this broken' },
-      { type: 'image', data: SHOT.data, mediaType: 'image/png', source: SHOT.path },
+      {
+        type: 'image',
+        data: SHOT.data,
+        mediaType: 'image/png',
+        source: SHOT.path,
+        width: SHOT.width,
+        height: SHOT.height,
+      },
+    ])
+  })
+
+  it('carries the dimensions the event already knew, so nothing decodes the bytes to find them', () => {
+    const image = contentOf({ type: 'user-said', text: 'look', images: [SHOT] })?.[1]
+
+    expect(image?.type === 'image' ? [image.width, image.height] : null).toEqual([
+      SHOT.width,
+      SHOT.height,
     ])
   })
 

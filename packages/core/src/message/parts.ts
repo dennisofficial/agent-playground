@@ -10,6 +10,8 @@ export type ImagePart = {
   data: string
   mediaType: string
   source?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
   providerOptions?: ProviderOptions | undefined
 }
 

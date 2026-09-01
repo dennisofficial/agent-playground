@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
+import { EImageTier } from '../../images/projection'
 import { EModelVendor } from '../catalog'
-import { MODEL_CATALOG, modelEntry } from '../registry'
+import { MODEL_CATALOG, imageTierFor, modelEntry } from '../registry'
 
 describe('MODEL_CATALOG', () => {
   it('names every model once', () => {
@@ -40,5 +41,24 @@ describe('modelEntry', () => {
   it('knows nothing about a model it was never given', () => {
     expect(modelEntry('gpt-4o')).toBeUndefined()
     expect(modelEntry('')).toBeUndefined()
+  })
+})
+
+describe('imageTierFor', () => {
+  it('reads Claude 4.7 and later at the high-resolution tier', () => {
+    expect(imageTierFor('claude-opus-5')).toBe(EImageTier.HighResolution)
+    expect(imageTierFor('claude-sonnet-5')).toBe(EImageTier.HighResolution)
+  })
+
+  it('reads an earlier Claude at the standard tier, where the same picture costs a third', () => {
+    expect(imageTierFor('claude-haiku-4-5')).toBe(EImageTier.Standard)
+  })
+
+  it('follows a release stamp back to the model it names', () => {
+    expect(imageTierFor('claude-haiku-4-5-20251001')).toBe(EImageTier.Standard)
+  })
+
+  it('assumes the dearer tier for a model it has never heard of, so the meter cannot run short', () => {
+    expect(imageTierFor('some-unreleased-model')).toBe(EImageTier.HighResolution)
   })
 })
