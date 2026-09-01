@@ -1,10 +1,4 @@
-import {
-  EImageTier,
-  projectedSize,
-  projectedTokens,
-  TIER_LIMITS,
-  type ImageSize,
-} from './projection'
+import { projectedTokens, type EImageTier, type ImageSize } from './projection'
 
 export type { ImageSize }
 
@@ -22,11 +16,8 @@ export enum EImageDelivery {
 
 export type DeliveryPlan = {
   delivery: EImageDelivery
-  resizeTo?: number
   reason?: string
 }
-
-export const MAX_LONG_EDGE = TIER_LIMITS[EImageTier.HighResolution].maxEdge
 
 /** The API's ceiling is 10 MB of base64, which inflates raw bytes by a third. */
 export const MAX_INLINE_BYTES = 5 * 1024 * 1024
@@ -35,9 +26,6 @@ export const MAX_INLINE_BYTES = 5 * 1024 * 1024
 export const MAX_API_EDGE = 8000
 
 const megabytes = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(1)} MB`
-
-export const fitted = (size: ImageSize, tier?: EImageTier): ImageSize =>
-  projectedSize({ size, tier })
 
 export function visualTokens(facts: ImageFacts): number | null {
   if (facts.width === undefined || facts.height === undefined) return null
@@ -48,27 +36,12 @@ export function visualTokens(facts: ImageFacts): number | null {
   })
 }
 
-export function planDelivery(facts: ImageFacts): DeliveryPlan {
-  const longEdge = Math.max(facts.width ?? 0, facts.height ?? 0)
-
-  if (longEdge > MAX_LONG_EDGE) return { delivery: EImageDelivery.Inline, resizeTo: MAX_LONG_EDGE }
-
-  if (facts.byteLength > MAX_INLINE_BYTES) {
-    return {
-      delivery: EImageDelivery.PathOnly,
-      reason: `${megabytes(facts.byteLength)} is past the ${megabytes(MAX_INLINE_BYTES)} inline limit`,
-    }
-  }
-
-  return { delivery: EImageDelivery.Inline }
-}
-
 /**
- * What a caller that cannot resize should do. Sending a picture whole costs exactly the tokens
- * resizing it would have — `visualTokens` counts patches of `fitted`, not of the bytes on the wire —
- * so the long edge is no reason to withhold it, and only the ceilings the API truly enforces are.
+ * Resizing locally saves no tokens: the API bills patches of the size it resizes to, not of the
+ * bytes on the wire. So the long edge is never a reason to withhold or shrink a picture, and only
+ * the two ceilings the API actually enforces are.
  */
-export function planUnresizedDelivery(facts: ImageFacts): DeliveryPlan {
+export function planDelivery(facts: ImageFacts): DeliveryPlan {
   const longEdge = Math.max(facts.width ?? 0, facts.height ?? 0)
 
   if (longEdge > MAX_API_EDGE) {

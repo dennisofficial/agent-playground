@@ -2,7 +2,7 @@ import {
   EImageDelivery,
   imageSize,
   MAX_INLINE_BYTES,
-  planUnresizedDelivery,
+  planDelivery,
   type ImageSize,
   type ModelPart,
   type SupportedImageMediaType,
@@ -102,7 +102,7 @@ export async function readImage(args: {
     byteLength <= MAX_INLINE_BYTES ? new Uint8Array(await Bun.file(path).arrayBuffer()) : args.head
 
   const size = imageSize({ bytes: readable, mediaType })
-  const plan = planUnresizedDelivery({ byteLength, width: size?.width, height: size?.height })
+  const plan = planDelivery({ byteLength, width: size?.width, height: size?.height })
 
   if (plan.delivery === EImageDelivery.PathOnly) {
     return textOnly({

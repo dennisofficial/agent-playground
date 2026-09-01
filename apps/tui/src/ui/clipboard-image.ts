@@ -126,13 +126,7 @@ async function writtenClipboardImage(args: {
   mkdirSync(directory, { recursive: true })
   writeFileSync(path, bytes)
 
-  const planned = planDelivery({ byteLength: bytes.byteLength, ...size })
-  const shrunk =
-    planned.resizeTo === undefined
-      ? null
-      : await shrink({ path, mediaType, longEdge: planned.resizeTo })
-  const facts = shrunk ?? { byteLength: bytes.byteLength, ...size }
-
+  const facts = { byteLength: bytes.byteLength, ...size }
   const settled = planDelivery(facts)
 
   return {
@@ -178,28 +172,6 @@ export async function attachClipboardImage(args: {
 
   args.memory.written.set(args.directory, { digest, image })
   return image
-}
-
-/**
- * `sips` ships with macOS, the same reason the fallback read is an `osascript` call. A failure is
- * not fatal: the original is still on disk and still sendable, so the caller keeps what it had.
- */
-async function shrink(args: {
-  path: string
-  mediaType: SupportedImageMediaType
-  longEdge: number
-}): Promise<{ byteLength: number; width: number; height: number } | null> {
-  const resized = Bun.spawn(['sips', '-Z', String(args.longEdge), args.path], {
-    stdout: 'ignore',
-    stderr: 'ignore',
-  })
-  if ((await resized.exited) !== 0) return null
-
-  const bytes = readFileSync(args.path)
-  const size = imageSize({ bytes, mediaType: args.mediaType })
-  if (size === null) return null
-
-  return { byteLength: bytes.byteLength, ...size }
 }
 
 export function readImageBase64(path: string): string | null {

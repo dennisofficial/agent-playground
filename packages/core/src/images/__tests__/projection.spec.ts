@@ -1,12 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 
-import {
-  EImageTier,
-  patchTokens,
-  projectedSize,
-  projectedTokens,
-  TIER_LIMITS,
-} from '../projection'
+import { EImageTier, patchTokens, projectedSize, projectedTokens, TIER_LIMITS } from '../projection'
 
 const std = EImageTier.Standard
 const hi = EImageTier.HighResolution
@@ -120,7 +114,7 @@ describe('projectedSize', () => {
     expect(projectedSize({ size })).toEqual(projectedSize({ size, tier: hi }))
   })
 
-  test('the high-resolution tier is never more expensive than the standard one is cheap', () => {
+  test('costs more on the high-resolution tier than on the standard one', () => {
     const size = { width: 3024, height: 1964 }
 
     expect(projectedTokens({ size, tier: hi })).toBeGreaterThan(

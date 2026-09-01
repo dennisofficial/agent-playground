@@ -3,20 +3,18 @@ import { describe, expect, test } from 'bun:test'
 import {
   decodeBase64,
   EImageDelivery,
-  fitted,
   gifSize,
   imageMediaType,
   imageSize,
   jpegSize,
   MAX_API_EDGE,
   MAX_INLINE_BYTES,
-  MAX_LONG_EDGE,
   planDelivery,
-  planUnresizedDelivery,
   pngSize,
   visualTokens,
   webpSize,
 } from '../limits'
+import { projectedSize } from '../projection'
 
 const bytes = (...values: number[]): Uint8Array => new Uint8Array(values)
 
@@ -135,61 +133,38 @@ describe('delivery planning', () => {
     })
   })
 
-  test('an oversized image is resized rather than refused', () => {
-    expect(planDelivery({ byteLength: 9_000_000, width: 5120, height: 2880 })).toEqual({
+  test('sends an image past the tier long edge untouched, because the API downscales it anyway', () => {
+    expect(planDelivery({ byteLength: 3_500_000, width: 6000, height: 4000 })).toEqual({
       delivery: EImageDelivery.Inline,
-      resizeTo: MAX_LONG_EDGE,
     })
   })
 
-  test('a heavy image within the edge limit falls back to its path', () => {
+  test('costs the same tokens sent whole as it would resized, which is why it is sent whole', () => {
+    const facts = { byteLength: 3_500_000, width: 6000, height: 4000 }
+    const projected = projectedSize({ size: { width: facts.width, height: facts.height } })
+
+    expect(visualTokens(facts)).toBe(visualTokens({ ...facts, ...projected }))
+  })
+
+  test('falls back to the path past the edge the API refuses outright', () => {
+    const plan = planDelivery({ byteLength: 1_000, width: MAX_API_EDGE + 1, height: 10 })
+
+    expect(plan.delivery).toBe(EImageDelivery.PathOnly)
+    expect(plan.reason).toContain(String(MAX_API_EDGE))
+  })
+
+  test('falls back to the path when the bytes exceed what the wire allows', () => {
     const plan = planDelivery({ byteLength: MAX_INLINE_BYTES + 1, width: 2000, height: 2000 })
 
     expect(plan.delivery).toBe(EImageDelivery.PathOnly)
     expect(plan.reason).toContain('inline limit')
   })
 
-  test('unmeasurable bytes still respect the byte ceiling', () => {
+  test('weighs the bytes even when the dimensions could not be read', () => {
     expect(planDelivery({ byteLength: 10 }).delivery).toBe(EImageDelivery.Inline)
-    expect(planDelivery({ byteLength: MAX_INLINE_BYTES + 1 }).delivery).toBe(EImageDelivery.PathOnly)
-  })
-})
-
-describe('delivery planning without a resizer', () => {
-  test('sends an image past the long edge untouched, because the API downscales it anyway', () => {
-    expect(planUnresizedDelivery({ byteLength: 3_500_000, width: 6000, height: 4000 })).toEqual({
-      delivery: EImageDelivery.Inline,
-    })
-  })
-
-  test('costs the same tokens sent whole as it would resized', () => {
-    const facts = { byteLength: 3_500_000, width: 6000, height: 4000 }
-
-    expect(visualTokens(facts)).toBe(visualTokens({ ...facts, ...fitted(facts) }))
-  })
-
-  test('falls back to the path past the edge the API refuses outright', () => {
-    const plan = planUnresizedDelivery({ byteLength: 1_000, width: MAX_API_EDGE + 1, height: 10 })
-
-    expect(plan.delivery).toBe(EImageDelivery.PathOnly)
-    expect(plan.reason).toContain(String(MAX_API_EDGE))
-  })
-
-  test('still refuses to inline more bytes than the wire allows', () => {
-    const plan = planUnresizedDelivery({
-      byteLength: MAX_INLINE_BYTES + 1,
-      width: 3000,
-      height: 2000,
-    })
-
-    expect(plan.delivery).toBe(EImageDelivery.PathOnly)
-    expect(plan.reason).toContain('inline limit')
-  })
-
-  test('never asks the caller to resize, having no resizer to ask with', () => {
-    const plan = planUnresizedDelivery({ byteLength: 400_000, width: 6000, height: 4000 })
-
-    expect(plan.resizeTo).toBeUndefined()
+    expect(planDelivery({ byteLength: MAX_INLINE_BYTES + 1 }).delivery).toBe(
+      EImageDelivery.PathOnly,
+    )
   })
 })
 
@@ -200,9 +175,9 @@ describe('visual tokens', () => {
 
   test('measures the size the API will actually read, not the one supplied', () => {
     const huge = visualTokens({ byteLength: 0, width: 5120, height: 5120 })
-    const capped = visualTokens({ byteLength: 0, width: MAX_LONG_EDGE, height: MAX_LONG_EDGE })
+    const projected = projectedSize({ size: { width: 5120, height: 5120 } })
 
-    expect(huge).toBe(capped)
+    expect(huge).toBe(visualTokens({ byteLength: 0, ...projected }))
   })
 
   test('a retina screenshot is expensive, not incidental', () => {
@@ -211,16 +186,6 @@ describe('visual tokens', () => {
 
   test('is null when the image could not be measured', () => {
     expect(visualTokens({ byteLength: 1000 })).toBeNull()
-  })
-})
-
-describe('fitted', () => {
-  test('leaves an image inside the tier alone', () => {
-    expect(fitted({ width: 800, height: 600 })).toEqual({ width: 800, height: 600 })
-  })
-
-  test('preserves aspect ratio on the way down', () => {
-    expect(fitted({ width: 5152, height: 2576 })).toEqual({ width: MAX_LONG_EDGE, height: 1288 })
   })
 })
 
