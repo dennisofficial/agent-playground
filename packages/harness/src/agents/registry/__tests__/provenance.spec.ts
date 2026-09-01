@@ -82,11 +82,101 @@ describe('whose voice reaches a child', () => {
   })
 })
 
+const SHOT = {
+  path: '/tmp/atlas/shot.png',
+  mediaType: 'image/png',
+  data: 'iVBORw0KGgo=',
+  width: 560,
+  height: 280,
+}
+
+const imagesIn = async (open: OpenedSupervisor, threadId: ThreadId) =>
+  (await open.harness.log.readOwn({ threadId }))
+    .flatMap((event) => (event.type === 'user-said' ? [event.images ?? []] : []))
+    .flat()
+
+describe('a picture the operator hands a child', () => {
+  it('reaches it as pixels, not as a path the child has to go and read', async () => {
+    const open = await openSupervisor()
+    opened.push(open)
+    const agentId = await childOf(open)
+    open.runners.started[0]?.settle(finished())
+    await open.supervisor.closeAll()
+
+    await open.supervisor.say({
+      agentId,
+      threadId: open.parent,
+      text: 'why is this broken',
+      images: [SHOT],
+    })
+    await settled()
+
+    expect(await imagesIn(open, agentId)).toEqual([SHOT])
+
+    open.runners.started[1]?.settle(finished())
+    await open.supervisor.closeAll()
+  })
+
+  it('waits in the steering queue with its pixels when the child is mid-step', async () => {
+    const open = await openSupervisor()
+    opened.push(open)
+    const agentId = await childOf(open)
+
+    await open.supervisor.say({
+      agentId,
+      threadId: open.parent,
+      text: 'look at this instead',
+      images: [SHOT],
+    })
+
+    expect(open.runners.started[0]?.request.steering()).toEqual([
+      { text: 'look at this instead', images: [SHOT] },
+    ])
+
+    open.runners.started[0]?.settle(finished())
+    await open.supervisor.closeAll()
+  })
+
+  it('leaves a wordless steer without an images key rather than an empty one', async () => {
+    const open = await openSupervisor()
+    opened.push(open)
+    const agentId = await childOf(open)
+    open.runners.started[0]?.settle(finished())
+    await open.supervisor.closeAll()
+
+    await open.supervisor.say({ agentId, threadId: open.parent, text: 'carry on', images: [] })
+    await settled()
+
+    const said = (await open.harness.log.readOwn({ threadId: agentId })).filter(
+      (event) => event.type === 'user-said',
+    )
+
+    expect(said.at(-1)).not.toHaveProperty('images')
+
+    open.runners.started[1]?.settle(finished())
+    await open.supervisor.closeAll()
+  })
+})
+
 describe('a steer queued while the child was stepping', () => {
   it('reaches the child in the parent voice, the same as one it was handed idle', () => {
-    expect(steerDrafts(['stop reading', 'summarise'])).toEqual([
+    expect(steerDrafts([{ text: 'stop reading' }, { text: 'summarise' }])).toEqual([
       { type: 'user-said', text: 'stop reading', via: EMessageOrigin.ParentAgent },
       { type: 'user-said', text: 'summarise', via: EMessageOrigin.ParentAgent },
+    ])
+  })
+})
+
+describe('steerDrafts', () => {
+  it('carries a queued picture through to the draft it builds', () => {
+    expect(steerDrafts([{ text: 'this one', images: [SHOT] }])).toEqual([
+      { type: 'user-said', text: 'this one', via: EMessageOrigin.ParentAgent, images: [SHOT] },
+    ])
+  })
+
+  it('omits the key entirely when a steer carried no picture', () => {
+    expect(steerDrafts([{ text: 'plain' }])).toEqual([
+      { type: 'user-said', text: 'plain', via: EMessageOrigin.ParentAgent },
     ])
   })
 })

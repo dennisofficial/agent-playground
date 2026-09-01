@@ -8,6 +8,7 @@ import {
   type EventDraft,
 } from '@dltech/atlas-core'
 
+import type { SteerMessage } from '../child-state'
 import { HookChain } from '../../../hooks/registry'
 import { buildHarness, type AtlasHarness } from '../../../loop/build-harness'
 import { createTempDatabase, type TempDatabase } from '../../../loop/__tests__/temp-database'
@@ -75,7 +76,7 @@ async function childTurn(args: {
     drafts: [{ type: 'user-said', text: 'count the call sites of assemble' }],
   })
 
-  const steering = [...args.steering]
+  const steering: SteerMessage[] = args.steering.map((text) => ({ text }))
   const notices = [...args.notices]
 
   const runner = buildChildRunner({

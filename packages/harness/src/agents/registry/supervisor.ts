@@ -6,6 +6,7 @@ import {
   type EventDraft,
   type EventLogPort,
   type IdPort,
+  type SaidImage,
   type ThreadId,
 } from '@dltech/atlas-core'
 
@@ -132,10 +133,12 @@ export class AgentSupervisor extends AgentRegistryPort {
     agentId,
     threadId,
     text,
+    images,
   }: {
     agentId: ThreadId
     threadId: ThreadId
     text: string
+    images?: readonly SaidImage[] | undefined
   }): Promise<AgentOutcome> {
     const child = this.childFor({ agentId, threadId })
     if (child === undefined) {
@@ -143,7 +146,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     }
 
     if (isStepping(child)) {
-      child.pending.push(text)
+      child.pending.push({ text, images })
       return { ok: true, snapshot: snapshotOf(child) }
     }
 
@@ -155,7 +158,14 @@ export class AgentSupervisor extends AgentRegistryPort {
     await this.log.append({
       threadId: agentId,
       runId: this.ids.nextRunId(),
-      drafts: [{ type: 'user-said', text, via: EMessageOrigin.ParentAgent }],
+      drafts: [
+        {
+          type: 'user-said',
+          text,
+          via: EMessageOrigin.ParentAgent,
+          ...(images === undefined || images.length === 0 ? {} : { images }),
+        },
+      ],
     })
     this.steps.take({
       child,

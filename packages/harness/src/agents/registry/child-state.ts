@@ -1,4 +1,5 @@
 import {
+  type SaidImage,
   attributedStop,
   EAgentStatus,
   type AssistantPart,
@@ -25,9 +26,11 @@ export type ChildState = {
   endedAt: string | undefined
   deliveredAt: string | undefined
   abort: AbortController
-  pending: string[]
+  pending: SteerMessage[]
   context: ChildContext | undefined
 }
+
+export type SteerMessage = { text: string; images?: readonly SaidImage[] | undefined }
 
 export const isStepping = (child: ChildState): boolean => child.status === EAgentStatus.Running
 

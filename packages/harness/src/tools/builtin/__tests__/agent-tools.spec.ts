@@ -289,7 +289,9 @@ describe('agent_say', () => {
 
     expect(outcome.ok && outcome.modelText).toContain('queued')
     expect(open_.runners.started).toHaveLength(1)
-    expect(open_.runners.started[0]?.request.steering()).toEqual(['look at the other file instead'])
+    expect(open_.runners.started[0]?.request.steering()).toEqual([
+      { text: 'look at the other file instead', images: undefined },
+    ])
   })
 
   it('runs a stopped child again on what it was told', async () => {

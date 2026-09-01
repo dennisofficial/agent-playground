@@ -1,4 +1,4 @@
-import type { Event, ThreadId } from '@dltech/atlas-core'
+import type { Event, SaidImage, ThreadId } from '@dltech/atlas-core'
 import { EKilledBy, type AgentSnapshot } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 
@@ -15,7 +15,7 @@ export type AgentView = {
   handleBack: () => void
   handleCycle: () => boolean
   handleStop: () => void
-  handleSay: (text: string) => Promise<string | null>
+  handleSay: (said: { text: string; images?: readonly SaidImage[] | undefined }) => Promise<string | null>
 }
 
 const NO_ROWS: readonly Event[] = Object.freeze([])
@@ -120,10 +120,13 @@ export function useAgentView(args: {
    * caller's report of the reason is actually on screen.
    */
   const handleSay = useCallback(
-    async (text: string): Promise<string | null> => {
+    async (said: {
+      text: string
+      images?: readonly SaidImage[] | undefined
+    }): Promise<string | null> => {
       if (viewing === null) return null
 
-      const outcome = await agents.say({ agentId: viewing, threadId, text })
+      const outcome = await agents.say({ agentId: viewing, threadId, ...said })
       if (outcome.ok) return null
 
       handleBack()

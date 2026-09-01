@@ -562,8 +562,8 @@ function Workspace(props: {
     }
 
     if (agentView.viewing !== null) {
-      const spoken = submissionOf({ text: said, images: attached, load: () => null })
-      void agentView.handleSay(spoken.text).then((refusal) => {
+      const spoken = submissionOf({ text: said, images: attached, load: readImageBase64 })
+      void agentView.handleSay(spoken).then((refusal) => {
         if (refusal === null) return
 
         putBack()

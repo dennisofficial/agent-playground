@@ -99,6 +99,8 @@ describe('read on an image', () => {
         data: expect.any(String),
         mediaType: 'image/png',
         source: paths.small,
+        width: 1024,
+        height: 768,
       },
     ])
 

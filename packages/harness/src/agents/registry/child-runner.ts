@@ -7,6 +7,7 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
+import type { SteerMessage } from './child-state'
 import type { HookChain } from '../../hooks/registry'
 import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
 import type { TurnRunner } from '../../loop/turn-runner.port'
@@ -61,7 +62,7 @@ export type ChildRunnerRequest = {
   threadId: ThreadId
   observe: (drafts: readonly EventDraft[]) => void
   observeContext: (args: { tokens: number; window: number }) => void
-  steering: () => readonly string[]
+  steering: () => readonly SteerMessage[]
 }
 
 export function childRunnerSource({ deps }: { deps: ChildRunnerDepsSource }): ChildRunnerSource {
@@ -74,8 +75,13 @@ export function childRunnerSource({ deps }: { deps: ChildRunnerDepsSource }): Ch
   }
 }
 
-export const steerDrafts = (texts: readonly string[]): readonly EventDraft[] =>
-  texts.map((text) => ({ type: 'user-said', text, via: EMessageOrigin.ParentAgent }))
+export const steerDrafts = (said: readonly SteerMessage[]): readonly EventDraft[] =>
+  said.map((one) => ({
+    type: 'user-said',
+    text: one.text,
+    via: EMessageOrigin.ParentAgent,
+    ...(one.images === undefined || one.images.length === 0 ? {} : { images: one.images }),
+  }))
 
 export function buildChildRunner({
   deps,
