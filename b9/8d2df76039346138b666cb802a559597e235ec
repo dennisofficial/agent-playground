@@ -1,0 +1,161 @@
+packages/harness/src/tools/__tests__/dispatch-hooks.spec.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 15
+  s_8ae1fa940f8094::t_26f802c8e62d8a 291,325
+  s_8ae1fa940f8094::t_6adcda41bdde04 25,57,97,125,172,192,208,233,259,301
+  s_8ae1fa940f8094::t_3ecf270865d71e 46,78,113,148,179,199,224,247
+packages/harness/src/tools/__tests__/dispatch-approvals.spec.ts
+  s_8ae1fa940f8094::t_6d96fb2ec86baf 1-2,4,6-20,22-70
+  s_8ae1fa940f8094::t_4789518751aea6 3,21
+  s_8ae1fa940f8094::t_210e338a363f12 5
+packages/harness/src/classifier/register-classifier.ts
+  s_8ae1fa940f8094::t_85752e70c428dd 18
+  s_8ae1fa940f8094::t_f63077ddf3f5f3 1-17,19-24
+packages/harness/src/container/create-harness-container.ts
+  s_8ae1fa940f8094::t_8ea9cde55978a1 31,146
+packages/harness/src/loop/__tests__/settle-pending-approval.spec.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 18
+  s_8ae1fa940f8094::t_6adcda41bdde04 98,159
+packages/harness/src/loop/__tests__/hooked-turn.ts
+  s_8ae1fa940f8094::t_6adcda41bdde04 67
+  s_8ae1fa940f8094::t_67de3d04d666ff 11
+packages/harness/src/loop/__tests__/context-reading.spec.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 9
+packages/harness/src/container/index.ts
+  s_641ad0b6026810::t_65880c10efb95e 14
+packages/harness/src/channel/__tests__/settled-tool-results.spec.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 11
+  s_8ae1fa940f8094::t_6adcda41bdde04 82
+apps/tui/src/composition/compose.ts
+  s_42c8bbcb2a2439::t_c16234597d733a 9,11,16,75,183-190
+  s_8ae1fa940f8094::t_067b62a5f72bf1 196
+packages/harness/src/loop/__tests__/steerable-turn.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 20
+  s_8ae1fa940f8094::t_6adcda41bdde04 143
+packages/core/src/policy/classifier/triage.ts
+  s_8ae1fa940f8094::t_461ea5a9b653ce 12-14
+packages/harness/src/classifier/tool-lens.ts
+  s_8ae1fa940f8094::t_f1622fa27d1ffc 1-102
+packages/harness/src/tools/index.ts
+  s_8ae1fa940f8094::t_4c657822a0cb62 3
+packages/harness/src/container/__tests__/harness-graph.spec.ts
+  s_8ae1fa940f8094::t_26f802c8e62d8a 92
+  s_8ae1fa940f8094::t_fcc7241279eded 63
+packages/harness/src/tools/__tests__/dispatch.spec.ts
+  s_8ae1fa940f8094::t_6adcda41bdde04 33,52,84,106,129,158,172,189,234,263,288,431,461
+  s_8ae1fa940f8094::t_67de3d04d666ff 24
+  s_8ae1fa940f8094::t_26f802c8e62d8a 206,250,328,482
+  s_8ae1fa940f8094::t_4cb46f3239ae37 318
+  s_8ae1fa940f8094::t_3ecf270865d71e 38,65,91,118,143,165,179,275,295
+packages/harness/src/loop/__tests__/run-turn.spec.ts
+  s_8ae1fa940f8094::t_6adcda41bdde04 206
+  s_8ae1fa940f8094::t_67de3d04d666ff 13
+packages/harness/src/agents/registry/__tests__/child-approvals.spec.ts
+  s_8ae1fa940f8094::t_c4cababe246dfe 1-112
+packages/harness/src/ledger/__tests__/exit-path-harness.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 28
+  s_8ae1fa940f8094::t_6adcda41bdde04 162
+packages/harness/src/tools/__tests__/dispatch-totality.spec.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 13
+  s_8ae1fa940f8094::t_3ecf270865d71e 60
+  s_8ae1fa940f8094::t_4cb46f3239ae37 49
+packages/harness/src/classifier/__tests__/fixtures.ts
+  s_8ae1fa940f8094::t_60c1598e8e7ebe 1-165
+packages/harness/src/classifier/classify-call.ts
+  s_8ae1fa940f8094::t_31922e14e8b803 30
+  s_8ae1fa940f8094::t_e1c5694e7eddc9 1-29,31-56,66-185,187-238
+  s_8ae1fa940f8094::t_4789518751aea6 57-65,186
+packages/harness/src/classifier/prefilter.ts
+  s_8ae1fa940f8094::t_31922e14e8b803 1-104
+packages/harness/src/agents/types/__tests__/tool-access.spec.ts
+  s_8ae1fa940f8094::t_26f802c8e62d8a 65
+  s_8ae1fa940f8094::t_67de3d04d666ff 5
+  s_8ae1fa940f8094::t_4cb46f3239ae37 56
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_8ae1fa940f8094::t_6adcda41bdde04 80
+  s_8ae1fa940f8094::t_67de3d04d666ff 18
+packages/harness/src/loop/__tests__/builtin-turn.spec.ts
+  s_8ae1fa940f8094::t_67de3d04d666ff 17
+  s_8ae1fa940f8094::t_4cb46f3239ae37 58
+packages/core/src/settings/registry.ts
+  s_0952e0f0b6d132::t_db48145673e42f 252-255
+  s_8ae1fa940f8094::t_590ef5d49b4339 1
+  s_ff6bbf5b431ad1::t_22ff857ebdf5e4 256-258
+  s_8ae1fa940f8094::t_572642e63453e7 243-251
+packages/harness/src/tools/approval-routing.ts
+  s_8ae1fa940f8094::t_4c657822a0cb62 1-7
+packages/harness/src/tools/__tests__/filtered-registry.spec.ts
+  s_8ae1fa940f8094::t_26f802c8e62d8a 177
+  s_8ae1fa940f8094::t_6adcda41bdde04 148
+  s_8ae1fa940f8094::t_67de3d04d666ff 6
+packages/harness/src/agents/registry/child-runner.ts
+  s_8ae1fa940f8094::t_8ea9cde55978a1 14,103-107
+packages/harness/src/classifier/__tests__/classify-call.spec.ts
+  s_8ae1fa940f8094::t_698667e59769ef 11,197
+  s_8ae1fa940f8094::t_2b652c2c8aab3b 1-6,8-10,12-123,141-157,159-165,168-196,198-229
+  s_8ae1fa940f8094::t_3bedab98d0f2ea 158,166-167
+  s_8ae1fa940f8094::t_3ad6cea8b01a6b 7,124-140
+packages/harness/src/container/tokens.ts
+  s_641ad0b6026810::t_65880c10efb95e 3,35-37
+packages/harness/src/tools/dispatch.ts
+  s_8ae1fa940f8094::t_21fc9636c0451a 56,62,68,76
+  s_8ae1fa940f8094::t_cc6e08be61efbc 41,106-116
+  s_8ae1fa940f8094::t_e63fd232bdce52 117
+  s_8ae1fa940f8094::t_8c2f1123324818 23,26
+packages/harness/src/classifier/index.ts
+  s_8ae1fa940f8094::t_ce910f67c37a3a 1-2,7-8
+  s_8ae1fa940f8094::t_31922e14e8b803 6
+packages/harness/src/hooks/register-hooks.ts
+  s_8ae1fa940f8094::t_ce910f67c37a3a 8
+  s_8ae1fa940f8094::t_944183e42d944c 26
+packages/harness/src/classifier/evidence-collector.ts
+  s_8ae1fa940f8094::t_8516e4e807a2d3 1-23,25-123
+  s_8ae1fa940f8094::t_4789518751aea6 24
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "b98d2df76039346138b666cb802a559597e235ec",
+  "prompts": {},
+  "sessions": {
+    "s_0952e0f0b6d132": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f4a00f8-be2e-463d-9025-843d6504a420",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_42c8bbcb2a2439": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7728a2-9abe-4af0-a646-30ccb395c98a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_641ad0b6026810": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a6bf8a1-cb11-4c03-b318-187d147fc697",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_ff6bbf5b431ad1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ce532022-9962-4edd-a300-f893aa307aa4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
