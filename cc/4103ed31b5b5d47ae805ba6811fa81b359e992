@@ -1,0 +1,1759 @@
+apps/tui/src/composition/__tests__/app-shell-ownership.spec.tsx
+  s_32840269673571::t_dbf92f2b9da68c 10,57
+  s_b36f35545a98fd::t_9485b396e0e00d 1-9,11-56,58-152
+apps/tui/src/ui/__tests__/lost-children-render.spec.tsx
+  s_098172864cf888::t_0903a0f7f03d8f 1-42,44-66
+  s_098172864cf888::t_18674c42cc04ce 43
+packages/core/src/skills/index.ts
+  s_e3b55646d2e132::t_ba21f8c9e3e05f 1-5
+apps/tui/src/store/__tests__/fixture.ts
+  s_1cb203f76f0ee1::t_b7847aa8b02640 101-102,108-109
+  s_4d236c02d75a05::t_b46a1434d686cd 3,52-78
+apps/tui/src/ui/components/blocks/pending-block.tsx
+  s_098172864cf888::t_bfa81011bf5bb5 7-8,11,21,48,55-56,67
+packages/harness/src/agents/registry/child-prompt.ts
+  s_301a123170cbf9::t_274a840d4eb388 18,23,25-27
+apps/tui/src/composition/global-bindings.ts
+  s_098172864cf888::t_83a8181cfd44cf 26-27
+  s_0124412df34243::t_738ec14e614f95 62
+  s_098172864cf888::t_1db019b823f739 90-100
+  s_3e6ccc6231323a::t_7e171857e62af5 10,60-61,63-64
+  s_f875eed3e73ec7::t_ca816815324987 11,24-25,28,31,72-82
+  s_098172864cf888::t_6e574502170311 13
+  s_0124412df34243::t_775ee48cd93dd1 30
+packages/harness/src/model/__tests__/failure.spec.ts
+  s_b36f35545a98fd::t_384db610398df5 1-66
+packages/harness/src/shells/__tests__/shell-registry-teardown.spec.ts
+  s_76e4c2895f6d97::t_24bded7920f551 1-42
+packages/harness/src/model/faulting-model.ts
+  s_f875eed3e73ec7::t_8ec2f8eb8b4f35 1-87
+docs/research/image-context-projection.md
+  s_b497bbab0c8dc0::t_21d28c0df1d56a 172-207
+  s_b497bbab0c8dc0::t_d633ba74c9f1ee 1-171,208-242
+apps/tui/src/ui/image-rows-store.ts
+  ai_agent 1-9
+apps/tui/src/composition/__tests__/app-images.spec.tsx
+  s_0124412df34243::t_8e10d8e015ee01 294-316
+  s_3e6ccc6231323a::t_2e03b224cc73a7 1-34,36-46,48,51-52,54-58,60-64,67-68,71-73,76-80,82,98-101,104-114,116-122,126-138,140-151,153-161,195-203,205-208,334
+  s_0124412df34243::t_9f978da77fce45 53,59,65-66,69-70,74-75,81,83-97,102-103,115,139,152,165-194,204
+  s_0124412df34243::t_d0dde8168398fa 293
+  s_3e6ccc6231323a::t_6b1db84714343b 49-50,123-125,162-164
+  s_0124412df34243::t_d2092fa719c3ce 35,47
+  s_0124412df34243::t_af8b181a9b5b20 318-333
+  s_0124412df34243::t_9395bd007893e6 317
+packages/harness/src/model/__tests__/model-port.spec.ts
+  s_69bd1f40697a50::t_baf5346510a303 2,92-117
+apps/tui/src/ui/__tests__/transcript-render.spec.tsx
+  s_69bd1f40697a50::t_dcbe928909378b 4-5,12,393-400,407,413-422
+packages/core/src/assembly/rules/__tests__/system-prompt.spec.ts
+  s_301a123170cbf9::t_7f438ddb1dc2a8 8-9
+  s_301a123170cbf9::t_1b83a6f2a226d6 73-74,95-96,98-99,102,107-126
+  s_301a123170cbf9::t_7937bd51cdb6f8 18,85
+apps/tui/src/store/tools/images.ts
+  s_3e6ccc6231323a::t_48c090a746d6b0 60-61
+  s_3e6ccc6231323a::t_388137300875c8 1-59,62-73
+packages/core/src/tools/tool.ts
+  s_301a123170cbf9::t_a57258678a0741 109,117,143,151-157
+  s_301a123170cbf9::t_3b53baa2b03a28 3,58-88
+  s_3e6ccc6231323a::t_8f04b79d0f6698 5,47-48,50-55
+packages/core/src/yaml/value.ts
+  s_e3b55646d2e132::t_d9eb35723fb163 1-13
+apps/tui/src/ui/components/sidebar/shells.tsx
+  s_e8edbfb6e7f442::t_4b890e6f80da68 6
+  s_e8edbfb6e7f442::t_d50f6d4e67dce8 30-46,50,57,60
+  s_e8edbfb6e7f442::t_be57405594cbdb 5
+  s_e8edbfb6e7f442::t_e180045ad1df23 76-78
+apps/tui/src/ui/draft-images.ts
+  s_3e6ccc6231323a::t_218abb8ea7b8d9 15
+  s_0124412df34243::t_b23c745fad69c8 5-6,18-19,32-33,35-43,45-50,52-53,67-70,78,80,82,84,97
+  s_3e6ccc6231323a::t_32ad1ac59f9cdd 10,12-14,16-17,20-31,34,44,51,64-66,71-77,79,81,83,85-96,98
+  s_3e6ccc6231323a::t_ea32ca869674bc 54-55,57-59,61-63
+  s_3e6ccc6231323a::t_41429842dce755 1-4,7-9,56,60
+  s_3e6ccc6231323a::t_38c63fd4649bd6 11
+apps/tui/src/store/tools/__tests__/classify.spec.ts
+  s_4d236c02d75a05::t_d862af0b5f00fa 463-500
+  s_e3b55646d2e132::t_eb59abcd8d7df0 155-173,182-183,187-188
+  s_e3b55646d2e132::t_8502c09be163ab 174-181,184-186
+  s_e54c4d80a3afc5::t_782dafd4c22487 235-266,307-308,310,321-323,370-371,452-454,456-458,461-462
+  s_e54c4d80a3afc5::t_cd7c6846d245d5 372-449
+  s_e54c4d80a3afc5::t_f1d8964d2aa309 450-451,455,459-460
+  s_098172864cf888::t_6606b1bb579ee1 3-4,267-306,309,311-320,324-369
+apps/tui/src/ui/components/composer.tsx
+  s_e54c4d80a3afc5::t_63e2875565d5a8 142,144,214-220,251,276-280
+apps/tui/src/composition/use-shells.ts
+  s_e8edbfb6e7f442::t_0ad8494b88adaa 11,150,158
+  s_e8edbfb6e7f442::t_4c620c6ea3796d 37-38
+  s_e8edbfb6e7f442::t_be57405594cbdb 12
+  s_e8edbfb6e7f442::t_e24e9594f10504 238-239
+  s_e8edbfb6e7f442::t_b25d4d36f8ab0a 259
+  s_e8edbfb6e7f442::t_b433c91d0bb041 148-149,172
+  s_e8edbfb6e7f442::t_2a816e51af52da 151-157
+  s_e8edbfb6e7f442::t_14ac0bcda9a8c6 110-130
+  s_e8edbfb6e7f442::t_91bc02b20d2083 7-10,159-171
+packages/core/src/assembly/__tests__/pipeline.spec.ts
+  s_098172864cf888::t_d929a235bbad1d 43,105
+  s_76e4c2895f6d97::t_b6a4e08fb66659 45,107
+  s_301a123170cbf9::t_b6846a28df4c4d 34,51,59,69,86,98,117
+  s_301a123170cbf9::t_a312c7edf13e42 46,108
+packages/harness/package.json
+  s_1cb203f76f0ee1::t_613c4ad0325ef1 13
+apps/tui/src/composition/__tests__/app-shells.spec.tsx
+  s_32840269673571::t_07d04b2694cdba 47
+  s_32840269673571::t_3b0af08e098c4e 9
+  s_b36f35545a98fd::t_9485b396e0e00d 20-24,26
+apps/tui/src/composition/workspace-directory.ts
+  s_1cb203f76f0ee1::t_4d44115dc8b5fb 1-16,18-22
+  s_1cb203f76f0ee1::t_78b4902a01e48f 17
+packages/harness/src/shells/__tests__/shell-registry-killing.spec.ts
+  s_76e4c2895f6d97::t_7f1220a2c45f69 1-65
+packages/harness/src/prompt/__tests__/preamble-fragments.spec.ts
+  s_42422f1a5c5a2b::t_d7f4be75730e19 219
+  s_99c19674ed59d0::t_1b67c5218907f9 44-50,94-97,108,127-143,161,163-171,199
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 55
+  s_e3b55646d2e132::t_7a7c2b9cc1da0c 5,21,24,61-63,182-185,200,228
+apps/tui/src/ui/clipboard-image.ts
+  s_0124412df34243::t_8593edcbaa6c89 110,149-150
+  s_3e6ccc6231323a::t_6b1db84714343b 130
+  s_3e6ccc6231323a::t_38c63fd4649bd6 2-4,13-24,26-28,36-38,40,42,45,48,87,89-90,117,124,127-129,134-137,139,141-147,181-183,185-186,188,190,197-198,201-211
+  s_0124412df34243::t_416c4e3931b11f 49-52
+  s_0124412df34243::t_db582c8a20beed 25,91-98,187,191-196
+  s_0124412df34243::t_4ab5c99d12c14e 5-12,29-35,39,41,43-44,46,53-79,81-86,99-107,119-123,125-126,131-133,138,140,184,189,199-200
+  s_0124412df34243::t_8d7d37b0d65f63 1,80,88,109,111-116,148,151-180
+packages/core/src/skills/parse.ts
+  s_e3b55646d2e132::t_378db75f27e153 1-43,55-96,100-149,151-166
+  s_e3b55646d2e132::t_c649d5c39eeed6 97-99
+  s_e3b55646d2e132::t_aeb52735745370 44-54,150
+packages/core/src/skills/__tests__/listing.spec.ts
+  s_e3b55646d2e132::t_c649d5c39eeed6 53-58
+  s_e54c4d80a3afc5::t_bbb8ded10e0680 1-52,59-87
+packages/harness/src/skills/register-skills.ts
+  s_e3b55646d2e132::t_6d5a150ca8e9c5 1-9,11-17
+  s_e3b55646d2e132::t_245efc0561737e 10
+apps/tui/src/composition/__tests__/app-steering.spec.tsx
+  s_3e6ccc6231323a::t_49e2f366dc2f0a 117
+apps/tui/src/store/tools/classify.ts
+  s_e54c4d80a3afc5::t_ea47654d22d18c 279-281
+  s_3e6ccc6231323a::t_b961fbf55bc978 12,145-147
+  s_3e6ccc6231323a::t_c79e8e8411f1e8 20,26
+  s_e3b55646d2e132::t_2fad62aaefe450 266-278,282
+  s_098172864cf888::t_ac64b1b169aef2 10
+  s_4d236c02d75a05::t_a0dd3228ac2386 30,35-65
+packages/harness/src/workspace/__tests__/worktrees.spec.ts
+  s_301a123170cbf9::t_d5bf6b6bfcd728 154-162
+packages/harness/src/tools/__tests__/tool-container.spec.ts
+  s_42422f1a5c5a2b::t_d4f134e616f317 55,61
+  s_e3b55646d2e132::t_8fcc7b4f92bb9c 31
+packages/harness/src/tools/builtin/__tests__/task-write.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 16
+packages/harness/src/model/ai-sdk-model-port.ts
+  s_69bd1f40697a50::t_545f8a9b4fbf24 32-36,68
+apps/tui/src/store/crew-fold.ts
+  s_e8edbfb6e7f442::t_f830db561fbd1b 3,17,21,24,26,29,41
+  s_e8edbfb6e7f442::t_22910ecc43f3b0 12-15,22,52
+  s_e8edbfb6e7f442::t_864990491a0593 1-2,4-11,16,18-20,23,25,27-28,30-40,42-51,53-54
+packages/core/src/assembly/rules/__tests__/worktree-block.spec.ts
+  s_301a123170cbf9::t_956dc9686312bb 3,6,8-11,16,24-26,29-31,33-36,39,41,44,47,50-51
+packages/harness/src/model/chunk-conversion.ts
+  s_4d236c02d75a05::t_a0531456605f92 66-73
+packages/harness/src/shells/__tests__/shell-registry-notices.spec.ts
+  s_76e4c2895f6d97::t_175c4d8fb20e06 1-191
+packages/harness/src/store/thread-store.ts
+  s_32840269673571::t_0f4370e2e1e6e8 298,311
+apps/tui/src/composition/commands/__tests__/agents-command.spec.ts
+  s_e8edbfb6e7f442::t_8c5e444509b525 82,142,161,175
+  s_e8edbfb6e7f442::t_6cd8d614a6c65c 56,74,86,97,149,166,182
+  s_e8edbfb6e7f442::t_002defe7fe20d5 106-109
+  s_e8edbfb6e7f442::t_1168c588d1cc1b 7,64-65,69
+  s_e8edbfb6e7f442::t_b8be4262ae9e10 129-132
+  s_e8edbfb6e7f442::t_4cc9562417e1a3 226-227
+  s_e8edbfb6e7f442::t_757809b37ef721 219
+  s_e8edbfb6e7f442::t_d43cbb2a91f61f 1-4,6,8-55,57-63,66-68,70-73,75-81,83-85,87-96,98-105,110-128,133-141,143-148,150-160,162-165,167-174,176-181,183-218,220-225,228-254
+  s_e8edbfb6e7f442::t_be57405594cbdb 5
+apps/tui/src/ui/covered-store.ts
+  s_3e6ccc6231323a::t_90eb53c86fa08f 1-37
+apps/tui/src/ui/__tests__/exit-guard-model.spec.ts
+  s_e54c4d80a3afc5::t_e39f9361c7d232 1,6,10,16,122,149-185
+  s_e54c4d80a3afc5::t_8b92f2e22777e9 130
+packages/harness/src/channel/delta-channel.ts
+  s_b36f35545a98fd::t_9c2d3e11f8819d 156-161
+  s_b36f35545a98fd::t_487b8bd5c75a28 3-10,21
+packages/core/src/assembly/rules/__tests__/images.spec.ts
+  s_76e4c2895f6d97::t_b5f07e6f0545d3 147-158
+  s_3e6ccc6231323a::t_b6c5280231342a 1-3,6-26,31-70,73-79,83-90,92-105,107,111-112,132-134,136-146,159-169,171-193,195,197-198
+  s_3e6ccc6231323a::t_cfba9b96dd3c60 4-5,27-30,71-72,80-82,196
+  s_3e6ccc6231323a::t_ebdd9096944798 91,106,125,135,170,194
+  s_3e6ccc6231323a::t_38b1812f051163 113-124,126-131
+  s_3e6ccc6231323a::t_9b6e6e2cfbca3f 108-110
+apps/tui/src/ui/components/working-line.tsx
+  ai_agent 5
+packages/harness/src/container/__tests__/child-runner-wiring.spec.ts
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 65,79
+  s_301a123170cbf9::t_ebaebc25e489df 67,69,80
+packages/harness/src/loop/__tests__/context-reading.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 52
+packages/core/src/workspace/worktree.ts
+  s_301a123170cbf9::t_8e8d11de7f0535 3-6,9-15,18,21,23-25
+packages/harness/src/loop/__tests__/prompt-on-model-switch.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 66,79
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 65
+packages/core/src/assembly/rules/system-prompt.ts
+  s_301a123170cbf9::t_fe23d2e6bf74b0 2,7,9-15,18-23
+packages/harness/src/container/index.ts
+  s_301a123170cbf9::t_caa97c91769cc8 22
+apps/tui/src/ui/components/lost-children.tsx
+  s_098172864cf888::t_a5ecf031c492de 1-92
+packages/harness/src/agents/registry/__tests__/child-runner.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 92,94,102
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 101
+packages/harness/src/skills/skill.ts
+  s_e3b55646d2e132::t_bb65c1aa9e541a 1-2,7-9,11-12,17-21,26-29,39-45,48-50,57-58,62-64,71,73,77-85
+apps/tui/src/store/tools/agents.ts
+  s_098172864cf888::t_ac64b1b169aef2 5
+  s_098172864cf888::t_ebdf24006a9814 79,89,97-98
+  s_098172864cf888::t_6c5e4eddfa9136 1-4,6-78,80-88,90-96,99-138
+apps/tui/src/store/__tests__/pending-queue.spec.ts
+  s_76e4c2895f6d97::t_bae4a04424d5ee 24,83
+docs/architecture.md
+  s_098172864cf888::t_3a8892739e8581 485-496
+  s_098172864cf888::t_5dd7a7edd01bbb 270-271
+  s_098172864cf888::t_ac5b4447700f91 1009-1010
+  s_098172864cf888::t_89c1c1a126dd6a 506-514
+  s_301a123170cbf9::t_3abf8a723f3e22 770,790
+  s_098172864cf888::t_a04f47f80c7b05 434-449
+  s_098172864cf888::t_77c337719f57f2 268-269,272-285,295,333-366,374,391,409-433,450-476,482-484,497-505,572-575,590
+  s_098172864cf888::t_a74cad09faa3b3 515,517,519-542,548,562,570-571
+  s_6b99d2f1c83513::t_b3520bdaa61c01 392-408
+  s_098172864cf888::t_86e265b5e01dda 477-481
+  s_098172864cf888::t_aef710aab38af5 296-301
+  s_098172864cf888::t_e654621140a9f2 516,518
+  s_098172864cf888::t_4372b131317852 591-597
+  s_098172864cf888::t_46f7d2b8833345 598-609
+  s_098172864cf888::t_a183364b2ac84b 582-589
+  s_098172864cf888::t_5812c09887c9b7 302-330
+  s_098172864cf888::t_08a3380041362a 332
+  s_098172864cf888::t_b5a46089ebf9d7 543-547,549-561,563-569
+  s_098172864cf888::t_5114de71b58ca6 576-581
+  s_098172864cf888::t_44490e434110fd 1123
+  s_098172864cf888::t_0bfcc941d6d9f1 331
+  s_098172864cf888::t_1d6dd570d0c144 657-662
+  s_098172864cf888::t_b4ab5ce7a885bf 619-633
+  s_098172864cf888::t_bd0f4c14c4b61e 644-656,663-678
+  s_098172864cf888::t_cff4e3e293ebb4 1044
+  s_1cb203f76f0ee1::t_27b1c5d05f30a7 1006-1007,1047
+  s_32840269673571::t_30d7ac4209b845 897-913
+  s_098172864cf888::t_45477b02550993 367-373,375-390
+  s_42422f1a5c5a2b::t_7761b97028be87 771-789,791-800,803-804,806-812
+  s_098172864cf888::t_ada2b4ca2bfb6f 286-294
+  s_098172864cf888::t_5778c15ee03447 982-983
+packages/harness/src/tools/builtin/__tests__/read-whole-file.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 32
+packages/harness/src/loop/__tests__/steerable-turn.ts
+  s_301a123170cbf9::t_2449c3576b97a0 139
+packages/harness/src/hooks/registry.ts
+  s_301a123170cbf9::t_c3bce22d418b97 23,35-40,44-45,56,60,72-76,102
+apps/tui/src/store/__tests__/crew-retirement.spec.ts
+  s_e8edbfb6e7f442::t_74d3733777067d 1-284
+packages/harness/src/tools/__tests__/dispatch-totality.spec.ts
+  s_42422f1a5c5a2b::t_3c2c6fbf3f4eb4 59
+packages/harness/src/tools/builtin/__tests__/worktree-round-trip.spec.ts
+  s_42422f1a5c5a2b::t_d4f134e616f317 101,112
+  s_301a123170cbf9::t_3da9f82d0039ca 1-100,102-111,113-116
+packages/harness/src/channel/__tests__/settled-tool-results.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 51,80
+apps/tui/src/composition/__tests__/app-agent-view.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 65
+  s_098172864cf888::t_2e16b24bb2ffad 84-90
+  s_e54c4d80a3afc5::t_048bdcd980a2ed 27-28,260-264,266-289
+  s_098172864cf888::t_d00e5cba20d85f 2
+  s_e54c4d80a3afc5::t_ab9391483626ff 29-30,265,290-291
+  s_e54c4d80a3afc5::t_9e06dc47be1d3e 153
+  s_e54c4d80a3afc5::t_351ede7fe4cc48 1,3-7,9-24,26,39-62,64,66-73,83,91,93-152,154-259,299-303
+  s_098172864cf888::t_2a69ce1d483d6d 74-77,79-82
+  s_098172864cf888::t_a5833bb185cdf7 408-473
+  s_e54c4d80a3afc5::t_fa39c32f67af62 25,78,92
+  s_e54c4d80a3afc5::t_ec472c597086f4 292-298
+  s_098172864cf888::t_ff8be19e0d14ea 31-36
+  s_098172864cf888::t_268252c1e40502 304-407,474-494
+  s_098172864cf888::t_3293e428e0dc78 37-38
+  s_e54c4d80a3afc5::t_abd63dbbe507f3 63
+  s_098172864cf888::t_6c6457329c0f90 8
+packages/harness/src/loop/__tests__/model-steps.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 78,139,219
+apps/tui/src/ui/__tests__/retry-countdown.spec.ts
+  s_69bd1f40697a50::t_ccf2f1641d7e7b 65
+  s_69bd1f40697a50::t_1a1ab7459c5355 3-4,11,29-32,36-38,42-44,48-64,66-68
+  s_e3b55646d2e132::t_62f2cdb783df6e 1-2,5-10,12-28,33-35,39-41,45-47,69-70
+packages/core/src/skills/listing.ts
+  s_e3b55646d2e132::t_c649d5c39eeed6 24-28
+  s_e3b55646d2e132::t_350c6e3d7655ce 1-4,7-23,29-44,74-83,95-96,98
+  s_e3b55646d2e132::t_a50b087118521c 5-6,45-73,84-94,97
+packages/harness/src/skills/embedded-source.ts
+  s_e3b55646d2e132::t_efc5eff3cd725c 4-10,14
+apps/tui/src/composition/use-ticking-now.ts
+  s_e8edbfb6e7f442::t_8be5362ceb5347 1-22
+packages/harness/src/shells/__tests__/shell-registry-prompts.spec.ts
+  s_76e4c2895f6d97::t_fcf04d26670e23 1-86
+apps/tui/src/ui/components/blocks/tool-image.tsx
+  s_3e6ccc6231323a::t_324e0fcfe080fe 32,36,38-41,45,52,55-59
+  s_3e6ccc6231323a::t_380986235a0d5b 6,25,28,37,43-44,64-65,70-71,73-77,79-81,83
+  s_3e6ccc6231323a::t_824bef44666950 7,16-17,26
+  s_3e6ccc6231323a::t_f41ee1110fdd60 12,18-23,27,42,84-92
+  s_3e6ccc6231323a::t_8c5fd266b322d1 1,8-9
+  s_3e6ccc6231323a::t_ae17e33fb5059f 13,35,54,66-69,72,78,82
+  s_3e6ccc6231323a::t_549197eaec6a18 2-4,10-11,14-15,24,30,33-34,46-47,63,93
+  s_3e6ccc6231323a::t_afb1dc38776114 5,29,31,48-51,53,60-62
+apps/tui/src/store/tools/index.ts
+  s_4d236c02d75a05::t_a0dd3228ac2386 26
+  s_3e6ccc6231323a::t_ed16696aa6fdb5 2
+apps/tui/src/ui/images/transcript-image.tsx
+  s_3e6ccc6231323a::t_8c5fd266b322d1 1-39
+packages/harness/src/model/message-conversion.ts
+  s_3e6ccc6231323a::t_17303ff39bcc32 78-87
+  s_3e6ccc6231323a::t_d8733c38b3436f 130-135
+  s_3e6ccc6231323a::t_09f7bd02e985f2 189-194,202-204,206-210
+  s_3e6ccc6231323a::t_f677f40b665e53 98
+  s_3e6ccc6231323a::t_970f613876bd18 60-64
+  s_3e6ccc6231323a::t_1bd1ba2e930d52 136-145,148-152
+  s_3e6ccc6231323a::t_c8e286840e969f 12
+  s_3e6ccc6231323a::t_2aa520df1db769 53-59,65-69,74
+  s_3e6ccc6231323a::t_37592c350d4b33 195-201,205
+  s_3e6ccc6231323a::t_00a7fe7f75c707 29-30
+packages/core/src/hooks/hooks.ts
+  s_301a123170cbf9::t_a466e77bb41088 24-27
+  s_301a123170cbf9::t_21c369c3a69124 33-36
+apps/tui/src/composition/__tests__/session-rename.spec.ts
+  ai_agent 1-52
+apps/tui/src/ui/components/sidebar/turn.tsx
+  s_69bd1f40697a50::t_843ded2b599a66 14-23,35,41
+packages/harness/src/prompt/register-prompt-fragments.ts
+  s_e3b55646d2e132::t_7e3f899d93f175 7,21
+  s_99c19674ed59d0::t_14a18cc1c49702 5,20
+packages/core/src/assembly/rules/__tests__/messages-from-events-images.spec.ts
+  s_3e6ccc6231323a::t_e5917db410494c 3,18-19,21-22,24-26,28,32-34,36-37,39-40,43-63
+  s_3e6ccc6231323a::t_8860335b73324e 1-2,4-17,20,23,27,29-31,35,38,41-42,64-65
+packages/harness/src/tools/builtin/glob.ts
+  s_42422f1a5c5a2b::t_5fdbb64f85fe7a 75,78
+apps/tui/src/store/subagent-row.ts
+  s_e8edbfb6e7f442::t_6021439debb1ce 1-199
+packages/harness/src/loop/__tests__/hooked-turn.ts
+  s_301a123170cbf9::t_2449c3576b97a0 62
+apps/tui/src/store/agent-ended-line.ts
+  s_098172864cf888::t_6233f41bb8d8c3 1-20
+apps/tui/src/ui/subagent-ink.ts
+  s_e8edbfb6e7f442::t_afb32633a4bbe3 2-20
+  s_e8edbfb6e7f442::t_be57405594cbdb 1
+apps/tui/src/ui/hooks/use-draft-images.ts
+  s_0124412df34243::t_3b812abbe0a3d6 1,4,13-17,23,26-30,33,35-36,38-39,41,43,46-47
+  s_3e6ccc6231323a::t_711fc3c6357cf7 3
+  s_3e6ccc6231323a::t_9e7ee783d819e8 2,5-7,9-12,18-22,24-25,34,37,40,42,44-45,48-49
+  s_0124412df34243::t_9ffc2267b48ba8 8,31-32
+apps/tui/src/composition/__tests__/app-settings.spec.tsx
+  s_3e6ccc6231323a::t_49aaf1ed670654 62
+  s_76e4c2895f6d97::t_bae4a04424d5ee 45
+apps/tui/src/store/shell-retirement.ts
+  s_e8edbfb6e7f442::t_c9e541db9b54e3 140,149-150
+  s_e8edbfb6e7f442::t_e2ed7e62bc2e80 60
+  s_e8edbfb6e7f442::t_8e5e900aa71150 2,4,6
+  s_e8edbfb6e7f442::t_b8a12eeb2d09cd 101-111,113-139,141-148,151-156
+  s_e8edbfb6e7f442::t_fdbb94494f38f0 1,3,5,7-59,61-100
+  s_e8edbfb6e7f442::t_c5686c718e00bb 112
+apps/tui/src/composition/awake-clock.ts
+  ai_agent 1-31
+packages/core/src/assembly/rules/tail-block.ts
+  s_6b99d2f1c83513::t_b318403a493207 1-29
+packages/harness/src/container/tokens.ts
+  s_301a123170cbf9::t_eb0c0837ffc204 31-34
+apps/tui/src/ui/images/index.ts
+  s_3e6ccc6231323a::t_4316d096096043 1-7
+apps/tui/src/ui/__tests__/threads-model.spec.ts
+  s_e54c4d80a3afc5::t_e55913f4caccc8 29-30,68-84
+packages/harness/src/loop/retrying-step.ts
+  s_b36f35545a98fd::t_e283b32a108812 1-48,78-92,94-99,107,109-111,114-115,117-125,127-128
+  s_f875eed3e73ec7::t_ca816815324987 49-77,93,100-106,108,112-113,116,126
+packages/harness/src/shells/__tests__/shell-registry.spec.ts
+  s_76e4c2895f6d97::t_e48111ce51eb9d 124-128
+  s_76e4c2895f6d97::t_b2c0a8b206d57d 2,6,8
+  s_76e4c2895f6d97::t_919e61c825d1b9 14,25-26,35,37,39,47,50-51,62,65-66,73,75,77-78,87,90-91,98,100,111,120,122,129,138
+packages/harness/src/tools/builtin/__tests__/shell-tools.spec.ts
+  s_42422f1a5c5a2b::t_d4f134e616f317 6-8,11,54,60-61,64-68,86,97,109,117,126,140,143,157,169,181,190,201,223,238,266,276,285,295,304,313,321,342-343,355,365,367,377-378,384,388
+apps/tui/src/ui/sidebar-visibility.ts
+  ai_agent 1,8-18,20-21,24-25,28-35,38-39
+apps/tui/src/ui/__tests__/shells-render.spec.tsx
+  ai_agent 24,89,93-94,98-103,107-112,116
+apps/tui/src/ui/__tests__/sidebar-visibility.spec.ts
+  ai_agent 4-5,7-9,14,16,18,20,22,24,27,29,33-35,38-40,43-47,50-57,60-62,64-65,68-69,71,74-75,77-83,86-121,123-125
+apps/tui/src/ui/components/peek-line.tsx
+  ai_agent 16-21,37
+packages/core/src/assembly/rules/__tests__/messages-from-events.spec.ts
+  ai_agent 180
+packages/harness/src/tools/__tests__/dispatch.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 190,232
+  s_42422f1a5c5a2b::t_3c2c6fbf3f4eb4 30,56,81,107,131,152,165,256,275
+packages/harness/src/workspace/worktrees-parse.ts
+  s_301a123170cbf9::t_13b7559cefb2c3 1-115
+packages/harness/src/channel/signal.ts
+  s_b36f35545a98fd::t_487b8bd5c75a28 3
+apps/tui/src/composition/commands/__tests__/agent-choices.spec.ts
+  s_e8edbfb6e7f442::t_2364eca192a245 1-4,6-14,16-28,30-122,127-146,150,167-204,208-209
+  s_e8edbfb6e7f442::t_1168c588d1cc1b 205-207
+  s_e8edbfb6e7f442::t_be57405594cbdb 5
+  s_e8edbfb6e7f442::t_b8be4262ae9e10 123-126,147-149
+  s_e8edbfb6e7f442::t_f7c7931d112de7 15,29,151-166
+apps/tui/src/composition/__tests__/app-agent-notice.spec.tsx
+  s_098172864cf888::t_6dbad8b2a6416d 1-64,66-69,71-94
+  s_098172864cf888::t_2d62d03738a62e 65,70
+packages/harness/src/store/create-with-events.ts
+  s_76e4c2895f6d97::t_57b5b7022294a0 24,37,52
+apps/tui/src/ui/__tests__/shimmer.spec.ts
+  ai_agent 5-6,40-44
+apps/tui/src/composition/use-agent-spend.ts
+  s_e54c4d80a3afc5::t_a0a8c981aa95db 1-49
+apps/tui/src/store/conversation-store.ts
+  s_098172864cf888::t_9254ed0ff1693a 29-32,87-93
+apps/tui/src/composition/__tests__/app-rewind.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 33
+bun.lock
+  ai_agent 24-26,166-187,194,196,198,200,202,204,206,208,210,212,400
+packages/harness/src/tools/builtin/shell-output.ts
+  ai_agent 26,83-87
+packages/harness/src/loop/settle-pending.ts
+  s_301a123170cbf9::t_690246ed0cf22e 6,39,54-55,70-71,74
+  s_42422f1a5c5a2b::t_7600250102b96c 21,25,28-29,32,61,72
+  s_301a123170cbf9::t_ba101d98203b7c 9,22-24,26-27,30-31,33-34
+packages/harness/src/agents/registry/child-steps.ts
+  ai_agent 52
+packages/harness/src/skills/__tests__/register-skills.spec.ts
+  s_e3b55646d2e132::t_4391a8fb669636 1-45
+packages/harness/src/hooks/__tests__/resolve-hooks.spec.ts
+  s_301a123170cbf9::t_d6cc2807790a07 133-135,153-155
+apps/tui/src/store/crew-visits.ts
+  s_e8edbfb6e7f442::t_54713935039295 1-4,7-19
+  s_e8edbfb6e7f442::t_c5686c718e00bb 5-6
+apps/tui/src/ui/__tests__/settings-previews.spec.tsx
+  ai_agent 1-14
+packages/harness/src/shells/shell-registry.ts
+  ai_agent 1,6,12-17,33-37,40,42,45-56,58,62,65,68-73,75,81-82,106-107,119,121,135,137,141-146,151-155,164-173,176-188,194-200,204-209,212-228,231-236,244-246,248,263-266,269-278,287-306,313-322
+packages/harness/src/tools/builtin/worktree-list.ts
+  ai_agent 1-64
+apps/tui/src/ui/threads-model.ts
+  s_e54c4d80a3afc5::t_c7ddbc75dc4873 63-68
+  s_e54c4d80a3afc5::t_8d2653be2be4eb 9,52-55,60-62
+packages/harness/src/loop/build-harness.ts
+  s_301a123170cbf9::t_60faf2cfb3c8f8 57,85,93
+packages/harness/src/agents/types/__tests__/worktree-tool-access.spec.ts
+  s_3e6ccc6231323a::t_c5d88ca9c76a6c 3,5
+  s_301a123170cbf9::t_b1f70faf95c5ab 1-2,4,6-57
+apps/tui/src/composition/__tests__/app-exit-guard.spec.tsx
+  s_b36f35545a98fd::t_9485b396e0e00d 40,68
+apps/tui/src/store/tools/reading.ts
+  s_4d236c02d75a05::t_a0dd3228ac2386 85-91
+  s_e3b55646d2e132::t_2fad62aaefe450 78-79
+  s_3e6ccc6231323a::t_c79e8e8411f1e8 147-158
+apps/tui/src/store/transcript-model.ts
+  s_0124412df34243::t_7792722b42c9f0 1-2,32
+  s_098172864cf888::t_f275aa99709b48 18-19,82-90,101-110,129-130
+apps/tui/prototype/settings.tsx
+  s_3e6ccc6231323a::t_ceb0c608295867 1-62,64-253
+  s_3e6ccc6231323a::t_e7ae7c59d0c4b8 63
+packages/core/src/assembly/tokens.ts
+  s_3e6ccc6231323a::t_e45db42bf0e11a 13
+  s_3e6ccc6231323a::t_1228113a2e58ad 1
+  s_3e6ccc6231323a::t_3314f7ee7cf369 3,8-9,12,14-18,21,23-25
+packages/core/src/events/__tests__/schema.spec.ts
+  s_3e6ccc6231323a::t_e4d88107ef1e14 192,194,208
+  s_3e6ccc6231323a::t_6789b620a142fd 190-191,193,195-207,209-210
+packages/harness/src/loop/__tests__/model-switch-across-vendors.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 62
+packages/harness/src/hooks/__tests__/registry.spec.ts
+  s_301a123170cbf9::t_f4da81cb87a205 137,224,257
+packages/harness/src/skills/registry.ts
+  s_e3b55646d2e132::t_f5fc660972a206 5-10,12,14-16,19-27
+apps/tui/src/ui/theme.ts
+  ai_agent 15-17
+packages/core/src/prompt/coverage.ts
+  ai_agent 11,13-14,17-22,27
+apps/tui/src/composition/__tests__/turn-progress.spec.ts
+  s_098172864cf888::t_bb649c1f50c7de 411-412
+  s_4d236c02d75a05::t_27c451d19881e6 59-78
+  ai_agent 330-341,352-358,360-410
+  s_69bd1f40697a50::t_d5df64ac600bf1 342-351,359
+  s_e3b55646d2e132::t_572f20388cdc90 107-111
+apps/tui/src/composition/__tests__/app-sidebar.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 36-39,59-60,161,175-176,182,196-199,203-206,208-209,211-236,238-245,248,254-258,261-280,282,296-307,309-316
+  s_32840269673571::t_195f845e6e47c2 2
+  s_32840269673571::t_2e088e7d26cca3 10,89,108,136,163,184,210,237,260,281,308,330
+apps/tui/src/composition/__tests__/app-agents.spec.tsx
+  s_76e4c2895f6d97::t_10cf05a0f32aff 190
+  s_098172864cf888::t_e28aeab42167cd 1-3,5,7
+  s_e54c4d80a3afc5::t_00c0d31373be20 286-306
+  s_3e6ccc6231323a::t_232828ba6ae5de 195,197
+  s_76e4c2895f6d97::t_0ed6b821c47d9e 4,6,191-194,196,198-205,443-475,477-478,480-598,600-609,611
+  s_098172864cf888::t_c48c9d1be0a6f2 71-73
+  s_32840269673571::t_67c5792fee58f1 117
+  s_098172864cf888::t_2c018eed0f86c1 307-402,612-616
+  s_76e4c2895f6d97::t_bae4a04424d5ee 479,599
+  s_098172864cf888::t_199228b97e1d33 154,159-164
+  s_e54c4d80a3afc5::t_a77c765e941a57 134,151,178,272
+  s_32840269673571::t_47bbef01417023 476
+  s_098172864cf888::t_6c99f9bd19b18b 610
+  s_e54c4d80a3afc5::t_c3bcb57edf3b6e 10,24,176,182-183
+  s_e54c4d80a3afc5::t_7d8e0429f72997 32-33
+  s_098172864cf888::t_886ca395937cad 38-67
+  s_e54c4d80a3afc5::t_57538fce550c92 8-9,11-23,25-27,34-37,68-70,74-116,118-133,135-150,152-153,155-158,165-175,177,179-181,184-189,206-271,273-285
+apps/tui/src/store/__tests__/shell-retirement.spec.ts
+  s_e8edbfb6e7f442::t_d65d14003d37a0 1,3-5,14-60,67-213
+  s_e8edbfb6e7f442::t_48c5c8cc6667af 214-268,270-300,302-310
+  s_e8edbfb6e7f442::t_65eec6caef3acc 269,301
+  s_e8edbfb6e7f442::t_2fd34cbffdd1b8 2,6-13
+  s_e8edbfb6e7f442::t_e7a53b91ea913a 61-66
+apps/tui/src/store/__tests__/back-to-back-messages.spec.ts
+  s_0124412df34243::t_d2092fa719c3ce 28
+packages/core/src/events/schema.ts
+  s_3e6ccc6231323a::t_739e4954713808 53-60,66
+  s_76e4c2895f6d97::t_5b56f1d127d688 38-47,49-52,89
+  s_301a123170cbf9::t_f84740a50f5bcc 120-129
+  s_301a123170cbf9::t_a536d6783fcd43 7
+  s_3e6ccc6231323a::t_49e2f366dc2f0a 48
+packages/core/src/settings/registry.ts
+  s_3e6ccc6231323a::t_4bb4db5935e5fe 62-75
+  s_301a123170cbf9::t_32089ede167e81 31-32,205-207
+  s_76e4c2895f6d97::t_b5f07e6f0545d3 13,20,82,91-105,181-194
+  s_3e6ccc6231323a::t_6ca77d8760c791 21
+apps/tui/src/ui/paths.ts
+  s_1cb203f76f0ee1::t_dffdc12d72211a 8-14
+packages/harness/src/hooks/__tests__/track-worktree.spec.ts
+  s_301a123170cbf9::t_0195a13d6cb03b 5,13,15,19,21,25,27-28,30-32,35-39,43-44,46-48,51-52,54,57-60
+apps/tui/src/ui/__tests__/paths.spec.ts
+  s_42422f1a5c5a2b::t_5b59c9e521beda 3
+  s_1cb203f76f0ee1::t_d217f2dec941d8 29-44
+apps/tui/src/composition/__tests__/app-shortcuts.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 41
+packages/harness/src/skills/__tests__/filesystem-source.spec.ts
+  s_e3b55646d2e132::t_4576764cde61a7 1,5,12,34-36,39,77-91,101-148,152-154,177-178,193,202-203,207-223,229
+packages/harness/src/tools/builtin/exit-worktree.ts
+  ai_agent 1-119
+apps/tui/src/composition/use-thread-events.ts
+  s_098172864cf888::t_af6347d93ee078 4,6,32
+  s_098172864cf888::t_403d5edf2142a4 1-3,5,7-31,33,35-40
+  s_f855e34c673785::t_e99f9147761951 34
+packages/harness/src/context/index.ts
+  s_42422f1a5c5a2b::t_459173bde5a28d 8-9
+apps/tui/src/store/durable-entries.ts
+  s_098172864cf888::t_e2e9e7aa3f6366 4,6,152-174
+  s_0124412df34243::t_b46f69f273a0ac 1,79-80,126
+  s_0124412df34243::t_7792722b42c9f0 3,98
+apps/tui/src/composition/compose.ts
+  s_3e6ccc6231323a::t_65877be6d6e25c 344
+  s_6b99d2f1c83513::t_1fe2969e32a538 397
+  s_3e6ccc6231323a::t_c73f0599cc9e75 95
+  s_301a123170cbf9::t_7377c65aceca53 73,171-178
+  s_76e4c2895f6d97::t_9416af53f5d19e 352
+  s_098172864cf888::t_04ca434b60a7b4 1,9,14,28-35,65,77-79,90-91,94,116,123-124,201-217,219-220,226,237,274-275,278-310,312-320,328-333,335-336,338,340-343,345-348,351,353-383,392,394-396,408-410,423,430
+  s_3e6ccc6231323a::t_e11407ce670385 393
+  s_301a123170cbf9::t_b2a3add90b21e0 13
+  s_301a123170cbf9::t_da7f782e1edfac 182,228-233,235,334,339,384-391
+  s_301a123170cbf9::t_32089ede167e81 11
+  s_76e4c2895f6d97::t_cae068bc78f114 218
+  s_3e6ccc6231323a::t_e04c5b31a203ca 321-326,337
+  s_3e6ccc6231323a::t_5f2bf812b57623 12,17,20
+packages/core/src/yaml/__tests__/parse.spec.ts
+  s_e3b55646d2e132::t_ca6967a016afe5 1-161
+apps/tui/src/ui/welcome-state.ts
+  s_32840269673571::t_c48ffd23de6bd7 1-8,10-16
+  s_32840269673571::t_c5de68b91ee6ba 9
+apps/tui/prototype/shell.tsx
+  s_0124412df34243::t_d2092fa719c3ce 40
+  s_32840269673571::t_6426bc0a7d1277 28
+apps/tui/src/ui/agent-types-model.ts
+  s_098172864cf888::t_fa0ce6ffcae71e 1-128
+packages/harness/src/shells/background-shell.ts
+  ai_agent 23,51,56,58,86-88,92-127,132,139,148-151,166-167,187
+packages/harness/src/context/repository-root.ts
+  s_42422f1a5c5a2b::t_c92b3acfb82dfd 1-15
+apps/tui/src/composition/use-agent-view.ts
+  s_098172864cf888::t_e0f91d01bd8f0c 2,17
+  s_098172864cf888::t_3d46775e40f450 48,50
+  s_e54c4d80a3afc5::t_28f8d9db14b4c8 1,3-5,7-15,19-31,34,36-47,49,51-81,83-85,91,97-98,103,122,131,133-134,148-158,171-180,183-184,186-187
+  s_098172864cf888::t_d00d6f139e9952 104-121,123-130,132
+  s_098172864cf888::t_bdcece55690321 181
+  s_e54c4d80a3afc5::t_de3f71a008844c 32,86-90,92-96,99-102
+  s_e8edbfb6e7f442::t_002defe7fe20d5 82,185
+  s_098172864cf888::t_6673bef962440e 135-147,159-170,182
+  s_098172864cf888::t_a2064dd48ffd2e 33,35
+  s_098172864cf888::t_8078f79b7520c5 16,18
+  s_e8edbfb6e7f442::t_be57405594cbdb 6
+packages/harness/src/tools/builtin/__tests__/grep-reveals.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 28
+apps/tui/src/composition/thread-spend.ts
+  s_098172864cf888::t_7fdf73f56256bc 1-24
+packages/harness/src/store/__tests__/create-with-first-events.spec.ts
+  s_32840269673571::t_95ec13d4595be0 54-69
+packages/harness/src/tools/builtin/__tests__/edit-write-atomicity.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 21
+docs/core-contract.md
+  s_098172864cf888::t_98336ceb4c8676 42
+  s_098172864cf888::t_9337071bdf88dc 100-101,104-105
+  s_098172864cf888::t_ba40158477890e 102-103,106-115
+  s_098172864cf888::t_eba140f7fd88e1 26-27,35-38
+  s_098172864cf888::t_669c9c9d13bde2 165-171
+  s_098172864cf888::t_17f9912c53ff47 58-60
+  s_098172864cf888::t_27423be6920672 90-99
+  s_098172864cf888::t_e30138879f34ad 61-62
+  s_098172864cf888::t_e35eb93bf3d6ee 195-201
+apps/tui/src/composition/use-agent-wake.ts
+  s_e54c4d80a3afc5::t_4161f1f8b4d1c7 1-46
+apps/tui/src/composition/__tests__/fake-backend.ts
+  s_098172864cf888::t_c1348bc34ce69b 369
+  s_098172864cf888::t_7daedd3f8cf869 349-358
+  s_76e4c2895f6d97::t_57b5b7022294a0 150,158
+  s_32840269673571::t_a9e1759bd1fe13 5,8,23-32
+  s_098172864cf888::t_e6063080733c7b 370-377
+  s_098172864cf888::t_b49f332411ce69 151-157,159-172,177-181
+packages/core/src/events/body.ts
+  s_301a123170cbf9::t_a536d6783fcd43 17-21
+  s_3e6ccc6231323a::t_1a2c5cd77a1b7c 32-39,41-46
+  s_3e6ccc6231323a::t_d2386a1a68d399 3
+  s_3e6ccc6231323a::t_e877fc7c7fa0a8 55
+  s_301a123170cbf9::t_f84740a50f5bcc 64-65
+apps/tui/src/composition/__tests__/app-accounts.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 82
+apps/tui/src/store/pending-rows.ts
+  s_098172864cf888::t_b649cccf8f6359 1,3,5,10,16,24-51,61-63,74-75
+  s_098172864cf888::t_61de660e3e1ca0 58,60
+packages/harness/src/loop/__tests__/run-turn.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 204,242
+apps/tui/src/ui/components/exit-guard.tsx
+  s_e54c4d80a3afc5::t_d722555f646e9f 58,66-67,75,77,150
+apps/tui/src/composition/__tests__/app-crew-fold.spec.tsx
+  s_e8edbfb6e7f442::t_9a8c5d0e84f40c 65
+  s_e8edbfb6e7f442::t_960568f0847483 117-145
+  s_e8edbfb6e7f442::t_e6e8787ec36e23 22-23
+  s_e8edbfb6e7f442::t_1209f45da5950a 1-21,24-64,66-116,146-190
+apps/tui/src/composition/__tests__/config.spec.ts
+  s_1cb203f76f0ee1::t_9cb5b8337edb53 103-127
+  s_76e4c2895f6d97::t_457f5aebaa5925 128-148
+packages/harness/src/prompt/__tests__/skill-listing.spec.ts
+  s_e3b55646d2e132::t_6ab826d0c814d0 18-22,86-89
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 13
+  s_e3b55646d2e132::t_f8a89bc17ac735 1-12,14-17,23-85,90-134
+packages/harness/prisma/embed-migrations.ts
+  s_1cb203f76f0ee1::t_d7150726ed4710 1-48
+apps/tui/src/store/index.ts
+  s_098172864cf888::t_f9cca30432afbd 5,8
+  s_098172864cf888::t_b130ed0a4a4086 1
+  s_e54c4d80a3afc5::t_409cef7b601d99 4,9,11
+  s_098172864cf888::t_4ea323f95e1eba 33,71-72
+  s_e54c4d80a3afc5::t_6a97fa223e3758 6
+  s_098172864cf888::t_ba3616f546f5b1 3,7,10
+  s_3e6ccc6231323a::t_6ecc7dd802a5dd 29
+  s_e8edbfb6e7f442::t_c5a57e1e39a040 95
+apps/tui/src/ui/components/blocks/user-block.tsx
+  s_0124412df34243::t_2ba8f98e8996d1 1,5,38,44,87-91
+apps/tui/src/composition/app.tsx
+  s_e8edbfb6e7f442::t_c4a152006ded70 98,441,453,705,739,745-759,887
+  s_e54c4d80a3afc5::t_5edc8f7cc2853b 96,301-304,322,329,645,651,654-655,863-864,883
+  s_3c5c6e6e101e43::t_fabb056159ebf2 631
+  s_3e6ccc6231323a::t_d6c391800c6a51 39
+  s_3e6ccc6231323a::t_4762cb4ffdcb62 85,765-767
+  s_e3b55646d2e132::t_5e7ed054a2eaa5 466
+  s_e8edbfb6e7f442::t_1a829aeb10cdd7 869-870
+  s_3e6ccc6231323a::t_1943ce8e2856ab 306-307,314-321,323-324
+  s_0124412df34243::t_14ccaf177d8434 17-19,480-483,524,538-541,844
+  s_098172864cf888::t_ac584b6ddb0eb5 442
+  s_098172864cf888::t_eca7bcd61aebfe 42,208,438,661,697,817-819,823
+  s_098172864cf888::t_aba3465539986a 298
+  s_0124412df34243::t_d763e9fdff3fdf 491-523,626,629
+  s_098172864cf888::t_975e2023c9a449 567-568,570-571
+  s_0124412df34243::t_af8b181a9b5b20 484-490,529-536
+  s_e8edbfb6e7f442::t_c9e1a45095558b 308-313
+  s_3e6ccc6231323a::t_f610a807426de8 588
+  s_2feab2e45d45ee::t_3b52456589f0d5 263
+  s_3e6ccc6231323a::t_afbad8dbc2c93d 142,153,164,192-194
+  s_e3b55646d2e132::t_0b7a206b87e46c 25,424-429
+  s_b391e026d4f658::t_3d5e8bd2f8ec04 668
+  s_3e6ccc6231323a::t_3d2a0d976f679f 675-693,734,787
+  s_098172864cf888::t_76ffd3220c0d5e 265-283
+  s_e54c4d80a3afc5::t_de3f71a008844c 180-181,297
+  s_0124412df34243::t_a9a8219a21f5b2 546
+  s_098172864cf888::t_0b2fd2b6d2d8d8 667
+  s_301a123170cbf9::t_c29e5b53867674 867
+  s_3e6ccc6231323a::t_38c63fd4649bd6 35
+  s_e54c4d80a3afc5::t_da48a87180852a 53,97,293-296,299-300,305,564,572-573,872
+  s_0124412df34243::t_9ffc2267b48ba8 525-528,537,778-782
+  s_e54c4d80a3afc5::t_ab9391483626ff 106-107,120-123
+  s_0124412df34243::t_37bfccf5f0118f 542-544
+  s_32840269673571::t_0daa3a7bc26341 47,69
+  s_babe8d051442b0::t_ea73d99a455ebf 64-65,197-199
+  s_098172864cf888::t_b0c0194b4f6caf 44
+  s_301a123170cbf9::t_ba101d98203b7c 325-328
+  s_098172864cf888::t_c97a448624706c 43,117,443,820-822
+  s_098172864cf888::t_5dd9a099dd0712 110-116,118-119
+  s_0124412df34243::t_684d7b685ade05 627,665
+  s_32840269673571::t_74797d9d1745c7 793-815,824-843,846-853
+  s_32840269673571::t_b6e8a0fdcbdb1a 792
+  s_3e6ccc6231323a::t_90409dfd3a0dfc 36-38,549-550,556,559-563,565-566,569,583,594-599,601-610,622-623,625
+  s_51b74899a9c548::t_cd1c9b0b8cfa48 447-449,462,580
+apps/tui/src/composition/commands/index.ts
+  s_e8edbfb6e7f442::t_dfd9232507dd17 10-17
+packages/harness/src/prompt/__tests__/registry.spec.ts
+  s_42422f1a5c5a2b::t_d7f4be75730e19 195-196
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 17
+packages/harness/src/loop/__tests__/settle-pending.spec.ts
+  s_42422f1a5c5a2b::t_613606b55b811b 199-201,204,209,211,215-224,233,245,251,255,260,263,272-274,276,285
+  s_301a123170cbf9::t_ebaebc25e489df 238,256,281
+apps/tui/src/ui/components/entry-view.tsx
+  s_0124412df34243::t_2ba8f98e8996d1 49
+  s_098172864cf888::t_76e484fe882275 7,13-16,102,104,107-113,116-118,121-122,130,132
+  s_098172864cf888::t_a791d2dfbd3903 17-20,100-101,103,105-106,119-120,123-129,135-136
+apps/tui/src/composition/__tests__/skills-reload.spec.ts
+  s_e3b55646d2e132::t_7a7c2b9cc1da0c 1-62
+packages/core/src/assembly/rules/messages-from-events.ts
+  s_3e6ccc6231323a::t_7fb664f111f96a 10-13,66-68,176-181
+  s_3e6ccc6231323a::t_9d9897285b089b 119
+  s_3e6ccc6231323a::t_c09abeac04bfab 95-118
+  s_3e6ccc6231323a::t_a9fca84b41fa0f 133
+  s_3e6ccc6231323a::t_ef63c0f9c0d4c4 6
+  s_3e6ccc6231323a::t_71afee531daaba 17
+  s_3e6ccc6231323a::t_246a0d584e1515 7
+packages/harness/src/model/titler.ts
+  ai_agent 5-6
+apps/tui/src/ui/agents-picker-model.ts
+  s_e8edbfb6e7f442::t_8eddaad699f4a4 3-8,10-46,48-54
+  s_e8edbfb6e7f442::t_002defe7fe20d5 47
+  s_e8edbfb6e7f442::t_be57405594cbdb 1
+  s_e8edbfb6e7f442::t_79f22eb12a5692 2,9
+packages/harness/src/model/failure.ts
+  s_b36f35545a98fd::t_384db610398df5 1-49
+apps/tui/src/composition/__tests__/app-threads.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 36,137-162
+packages/harness/src/tools/builtin/bash.ts
+  s_42422f1a5c5a2b::t_2acc4feca47aef 192,198-208,222,235-236
+  s_42422f1a5c5a2b::t_e262a91c889d67 6-8,13,38,46-50,58
+  s_42422f1a5c5a2b::t_5af38e07846bb3 145-152
+packages/harness/src/prompt/fragments/skills.ts
+  s_e3b55646d2e132::t_3d6924410d09e4 7
+  s_e3b55646d2e132::t_6ec1d04124fe14 1-6,8-56
+apps/tui/src/composition/use-compaction.ts
+  ai_agent 1-142
+apps/tui/src/ui/components/blocks/resume-block.tsx
+  ai_agent 21,26,36
+apps/tui/src/ui/components/settings/previews.tsx
+  ai_agent 1-104
+packages/harness/src/ledger/__tests__/exit-path-harness.ts
+  s_301a123170cbf9::t_2449c3576b97a0 159
+apps/tui/src/composition/__tests__/awake-clock.spec.ts
+  ai_agent 1-110
+apps/tui/src/composition/use-agents-picker.ts
+  s_e8edbfb6e7f442::t_329343b71be34f 1-84
+apps/tui/src/store/__tests__/streaming-tool-input.spec.ts
+  s_4d236c02d75a05::t_544c6ab8292d1c 1-57,63-103
+  s_4d236c02d75a05::t_0d7015c3602969 58-62
+packages/core/src/assembly/rules/__tests__/running-agents-block.spec.ts
+  s_6b99d2f1c83513::t_804adf947d6c05 1-93,95-105
+  s_6b99d2f1c83513::t_2fb7dff00619b0 94
+packages/harness/src/tools/builtin/__tests__/skill.spec.ts
+  s_e3b55646d2e132::t_db5f0e34fc248a 1-14,21,23-31,33-70,72-73,83-85,90-105,107-111,114-115,124-178
+  s_e3b55646d2e132::t_6ab826d0c814d0 86-89
+  s_e3b55646d2e132::t_6a3d938a8e3b5e 106,112-113,116-123
+  s_301a123170cbf9::t_2449c3576b97a0 32
+  s_e3b55646d2e132::t_b0100a0ea631dc 15-20,22
+  s_e3b55646d2e132::t_39f00fd0f0e3e0 71,74-82
+packages/harness/src/hooks/register-hooks.ts
+  s_301a123170cbf9::t_457d5f64e499e3 8,15
+packages/harness/src/tools/__tests__/skill-wiring.spec.ts
+  s_e3b55646d2e132::t_aa12c4ed73e0d8 1-4,14-20,27-56,58-68,71,73,78
+  s_301a123170cbf9::t_2449c3576b97a0 57
+  s_e3b55646d2e132::t_4e05b5fe2c5d86 69-70,72
+  s_e3b55646d2e132::t_1001d1810c198b 74-77
+  s_e3b55646d2e132::t_9242aab76f7b07 5-13
+  s_e3b55646d2e132::t_bf048487a1588d 21-23,25-26
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 24
+packages/core/src/images/limits.ts
+  s_3e6ccc6231323a::t_d3edf68bd8df47 1-25,29-55,81-195,225-231
+  s_0124412df34243::t_03065573b9aa6c 26-28,56-80
+  s_3e6ccc6231323a::t_8253bb706c4f83 196-224
+packages/harness/src/tools/builtin/shell-kill.ts
+  ai_agent 33-37
+apps/tui/src/composition/skills-reload.ts
+  s_e3b55646d2e132::t_fcbfc02b4a4e4c 1-45
+packages/core/src/assembly/rules/__tests__/messages-from-events-output.spec.ts
+  s_3e6ccc6231323a::t_93b55c673b7007 152-184
+apps/tui/package.json
+  s_0124412df34243::t_1f361d5353a459 28
+  s_3e6ccc6231323a::t_f2d2c759879ea8 29-30
+  s_f855e34c673785::t_ae63a767ae3bb9 15
+  s_f855e34c673785::t_c5cfdfcc0a516a 16
+packages/core/src/skills/__tests__/validate.spec.ts
+  s_e3b55646d2e132::t_c649d5c39eeed6 45-47
+  s_e54c4d80a3afc5::t_bbb8ded10e0680 1-44,48-92
+apps/tui/src/ui/components/settings/band.tsx
+  ai_agent 1,4-6,8,10,12,14,16,18-19,21-25,28-43
+packages/harness/src/tools/builtin/__tests__/read-limits.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 31
+packages/harness/src/loop/run-turn.ts
+  s_301a123170cbf9::t_60faf2cfb3c8f8 31,58-59,80,98,106,278,284
+  s_301a123170cbf9::t_18fc76e8fafea6 13,79,97,187-192
+apps/tui/src/composition/__tests__/app-shell-wake.spec.tsx
+  s_32840269673571::t_2124a209e8366b 5,30-32,35,54,74,92
+packages/core/src/hooks/__tests__/hooks.spec.ts
+  s_301a123170cbf9::t_e567d7614156eb 24,36
+  s_301a123170cbf9::t_70e7c2ff7071c9 76-81,90-92
+apps/tui/docs/daily-driver-gaps.md
+  s_098172864cf888::t_9a6c42dfc313ed 15-16
+  s_3e6ccc6231323a::t_c07907cb33e633 74-80
+  s_098172864cf888::t_c53edfaad2b715 91
+  s_098172864cf888::t_babeeac97eaf37 126-133
+  s_098172864cf888::t_c71300cc83b022 39,42-44
+  s_098172864cf888::t_961f95a9d919d6 40-41
+  s_098172864cf888::t_8be787185796a4 45
+  s_098172864cf888::t_b86d38871b4e6e 112,134
+  s_098172864cf888::t_7494755efd6ca3 46-48
+  s_098172864cf888::t_92a5c3973c2f54 53-58
+  s_098172864cf888::t_3fb3d4df41fc64 95-102
+  s_098172864cf888::t_a893084ca7d1b4 113-125
+packages/harness/src/tools/builtin/worktree-support.ts
+  s_301a123170cbf9::t_eb0c0837ffc204 1-64
+apps/tui/src/composition/__tests__/global-bindings.spec.ts
+  s_3e6ccc6231323a::t_49e2f366dc2f0a 15
+  s_098172864cf888::t_ea5336b9c37388 17
+  s_098172864cf888::t_67e406e3384523 89-102
+apps/tui/src/ui/components/sidebar/cells.ts
+  s_5dc27c351b7aaf::t_cf95614c79d7b6 8-14
+apps/tui/src/composition/skills-binding.ts
+  s_e3b55646d2e132::t_9ea4b15c0039a2 14,17,29,32
+  s_e3b55646d2e132::t_094fb20e65fc60 1-13,15-16,18-28,30-31,33-42,55-59
+  s_e3b55646d2e132::t_5fef504d69ae04 43-54
+apps/tui/src/store/tools/kinds.ts
+  s_3e6ccc6231323a::t_e799391f4e899b 42-43
+packages/harness/src/tools/builtin/shell-list.ts
+  ai_agent 21,54-58,69
+packages/harness/src/hooks/resolve-project-paths.ts
+  s_301a123170cbf9::t_9ac46cd693202a 14,30
+  s_301a123170cbf9::t_21c369c3a69124 35,50
+apps/tui/src/composition/commands/dispatch.ts
+  s_e3b55646d2e132::t_9acaf54e32dfdf 65-67
+  s_e3b55646d2e132::t_c92d24cdbd5831 21
+packages/harness/src/store/migrations.ts
+  s_1cb203f76f0ee1::t_61f3d756f3effe 5-7,14-18,20-21
+apps/tui/src/store/sidebar-text.ts
+  s_e8edbfb6e7f442::t_6021439debb1ce 1-9
+packages/harness/src/skills/filesystem-source.ts
+  s_e3b55646d2e132::t_82f8c0c25354d6 1-3,5-11,15-21,31-52,55,59,66-77,84-108,112-113,115-120
+apps/tui/src/ui/components/blocks/tool-run-block.tsx
+  s_3e6ccc6231323a::t_fd2680af78388d 213
+  s_f855e34c673785::t_dee2b4234fdd59 46-47,81-90,145,214,216-220,231-242
+  s_3e6ccc6231323a::t_a0990e392c3f37 209
+apps/tui/src/composition/turn-progress.ts
+  s_4d236c02d75a05::t_27c451d19881e6 20-23,33-34
+  s_b36f35545a98fd::t_5d69b2700213db 2-7
+  s_e3b55646d2e132::t_01a688844718b4 51,58-77,79-82,87,89-91,94-100,103,106-107,111
+  s_69bd1f40697a50::t_133ba7b0e628ee 78
+packages/harness/src/model/__tests__/faulting-model.spec.ts
+  s_f875eed3e73ec7::t_8ec2f8eb8b4f35 1-137
+apps/tui/src/composition/__tests__/boot-curtain.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 44
+packages/harness/src/store/database.ts
+  s_1cb203f76f0ee1::t_613c4ad0325ef1 7,46-48,51,56-67
+packages/harness/src/tools/builtin/read-image.ts
+  s_3e6ccc6231323a::t_082d8fbcc5d120 38
+  s_3e6ccc6231323a::t_358ac120b3132f 1-4,6-37,39-80,82-101,103-118
+  s_3e6ccc6231323a::t_48c090a746d6b0 102
+  s_3e6ccc6231323a::t_eae80c6a84c8a5 81
+  s_0124412df34243::t_03065573b9aa6c 5
+apps/tui/src/store/agent-spend.ts
+  s_e54c4d80a3afc5::t_409cef7b601d99 1-27
+packages/harness/src/agents/registry/supervisor.ts
+  ai_agent 115,234-237,272-285
+apps/tui/src/store/sidebar-model.ts
+  s_e8edbfb6e7f442::t_27b4f1bfff3577 130-134,138,143-146
+  s_e54c4d80a3afc5::t_4dc4e1821b548e 129,135-137,139,142
+  s_e54c4d80a3afc5::t_71d0228824a88f 140-141
+  s_e54c4d80a3afc5::t_d5ec28b54d4768 147
+  s_e8edbfb6e7f442::t_4cca8ac5bebae1 10,12-13
+  s_e8edbfb6e7f442::t_d948a8189c2153 51
+apps/tui/src/composition/use-session-name.ts
+  s_3e6ccc6231323a::t_5bf3056a9dce87 1-83
+apps/tui/src/composition/__tests__/open-conversation.spec.ts
+  s_098172864cf888::t_1775deb622c1b9 18,55-66,146
+  s_098172864cf888::t_9ce3004349b0ab 2-3,8,13-14,16-17,19-20,317-323,325-327,333,336-346,348-360,362-384,386-403,405-420,422-426
+  s_098172864cf888::t_fa1a4419c664a0 324,328-332,334-335,347
+  s_32840269673571::t_a9e1759bd1fe13 27,99,118,136,153,170,188,207,222,237,256,274,290,307,361,385,421,427-428
+  s_32840269673571::t_730dc57cc0c521 91,162
+  s_098172864cf888::t_1b9aabb00d921c 26,98
+  s_098172864cf888::t_3fddcd12c36430 117,169,187,206,221,236,255,273,289,306
+  s_3e6ccc6231323a::t_b6fe3b3641b93f 404
+  s_098172864cf888::t_3bdb69c585b05e 49-54,67-73,135
+  s_32840269673571::t_b68570a78d2874 106-107,175-176,195-196
+  s_098172864cf888::t_6f2017fab2ea2f 15,22,144-145,147-152,154-159
+apps/tui/src/composition/use-shell-wake.ts
+  ai_agent 1-46
+apps/tui/src/ui/components/blocks/tool-created-file.tsx
+  s_4d236c02d75a05::t_a0dd3228ac2386 16,19,46,48,51,54,72
+packages/harness/src/tools/builtin/enter-worktree.ts
+  s_301a123170cbf9::t_a6239b7f8858ff 8-13,102-103,118
+  s_32840269673571::t_f10cc078b35a90 1-7,14-101,104-117,119-145
+apps/tui/src/ui/__tests__/draft-images.spec.ts
+  s_3e6ccc6231323a::t_6b1db84714343b 26-29,76-82
+  s_3e6ccc6231323a::t_5e7cef53ae00b3 2-6,8-25,30,33-39,54-55,58,63-65,68,71-73,75,83-85,88,91-94,96-98,101-103,126-129,153,155-156
+  s_0124412df34243::t_287c37771f96b7 1,7,31-32,40-53,56-57,59-62,66-67,69-70,74,86-87,89-90,95,99-100,104-125,130-152,154
+apps/tui/src/ui/components/agent-types.tsx
+  s_098172864cf888::t_9f08199b29c091 1-156
+packages/harness/src/prompt/index.ts
+  s_e3b55646d2e132::t_7e3f899d93f175 2
+packages/harness/src/tools/builtin/read.ts
+  s_3e6ccc6231323a::t_eda6d555aeeff2 8,38,40
+  s_3e6ccc6231323a::t_7aec9f5912ff45 19,29,192-199
+packages/harness/src/model/__tests__/tool-input-conversion.spec.ts
+  ai_agent 1-53
+apps/tui/src/ui/__tests__/agents-picker-model.spec.ts
+  s_e8edbfb6e7f442::t_be57405594cbdb 3
+  s_e8edbfb6e7f442::t_79f22eb12a5692 12,16
+  s_e8edbfb6e7f442::t_002defe7fe20d5 24-26,34-37,47-50
+  s_e8edbfb6e7f442::t_bf84d00cfef399 1-2,4-11,13-15,17-23,27-33,38-46,51-98
+packages/harness/src/tools/dispatch.ts
+  s_3e6ccc6231323a::t_3899dea6fcc6a7 233
+  s_301a123170cbf9::t_8ad546cd923645 36,67,86,104,154,157,166-169,174-178,191,199
+  s_3e6ccc6231323a::t_be43f620686e90 69
+apps/tui/src/composition/use-settings.ts
+  s_3e6ccc6231323a::t_ceb0c608295867 16,34,39,44,69-74,77-78,146,155-158
+packages/harness/src/hooks/__tests__/read-before-write.spec.ts
+  s_42422f1a5c5a2b::t_af97d22adbdf74 89
+packages/harness/src/channel/publishing-turn-runner.ts
+  ai_agent 64-75
+packages/harness/src/hooks/load-instructions.ts
+  s_301a123170cbf9::t_6d5cfca3ad7d64 12,26-29,31
+packages/harness/src/skills/__tests__/live-registry.spec.ts
+  s_e3b55646d2e132::t_70160411963a71 1-169
+apps/tui/src/ui/__tests__/exit-guard-render.spec.tsx
+  s_e54c4d80a3afc5::t_8b92f2e22777e9 18,64-65,146-148
+apps/tui/src/ui/components/sidebar/crew.tsx
+  s_098172864cf888::t_3b103360fbc31b 34-35,38,42-46,49-51,53,55-60
+  s_098172864cf888::t_036363bc4bdaad 98,110
+  s_e8edbfb6e7f442::t_a933d1ab8e0d87 12
+  s_e8edbfb6e7f442::t_002defe7fe20d5 4-11
+  s_e8edbfb6e7f442::t_324f8006d466e0 77-80
+  s_e54c4d80a3afc5::t_6d48af7c1b34b9 24-25,27-28,32-33,85
+  s_e8edbfb6e7f442::t_bce5485b639d9e 15
+  s_098172864cf888::t_2d68297b3c9955 17
+  s_e8edbfb6e7f442::t_9a8c5d0e84f40c 72,113
+  s_3e6ccc6231323a::t_8641aee2cd4714 14
+  s_e54c4d80a3afc5::t_7cf50a63a41997 105
+  s_e54c4d80a3afc5::t_8bbe3c16ae13d3 100
+  s_e8edbfb6e7f442::t_be57405594cbdb 3
+  s_e54c4d80a3afc5::t_98452788dd8e28 13,87,90,92,96,99,101-104,106-109,111
+  s_098172864cf888::t_80221b971256dd 39-40,47,52,54
+  s_098172864cf888::t_1e569bc53b641f 48
+  s_e8edbfb6e7f442::t_9abe10a6c8d4a2 61-71,73-76,84,91,94
+  s_76e4c2895f6d97::t_10cf05a0f32aff 36-37
+  s_098172864cf888::t_9bb2b7930cb47f 22,29-31
+  s_098172864cf888::t_9ba317ba4b2e04 26
+apps/tui/src/composition/__tests__/app-fixture.tsx
+  s_32840269673571::t_3ff022a5656b79 7,46-53,75,77-84
+  s_32840269673571::t_1d4ee712bdb108 1,54-67
+  s_0124412df34243::t_af8b181a9b5b20 40,104
+  s_0124412df34243::t_420cf9ecb70f1a 37,101
+  s_32840269673571::t_47bbef01417023 68-69
+  s_0124412df34243::t_d2092fa719c3ce 70
+packages/core/src/assembly/rules/running-shells-block.ts
+  s_6b99d2f1c83513::t_c1eead1d9139f7 1-49
+packages/core/src/assembly/rules/background-shell-block.ts
+  ai_agent 8-10,39-60
+packages/harness/src/skills/__tests__/embedded-source.spec.ts
+  s_e3b55646d2e132::t_ede122d0b6ccba 17-19,32
+packages/harness/src/store/migrations.generated.ts
+  ai_agent 1-164
+packages/core/src/commands/frontmatter.ts
+  s_e3b55646d2e132::t_bf078ac0eac5d0 1-2,4,7,10-11,14
+apps/tui/prototype/tools.tsx
+  s_42422f1a5c5a2b::t_012db885bdd921 180
+packages/harness/src/prompt/registry.ts
+  s_e3b55646d2e132::t_b9a38cea5ae0b2 12
+  s_e3b55646d2e132::t_0bb6f2c907411c 53-54,66-71,76,78,81
+apps/tui/src/ui/selection/use-word-select.ts
+  s_3e6ccc6231323a::t_0e3e589c88c0bf 8-9
+apps/tui/src/composition/commands/__tests__/dispatch.spec.ts
+  s_098172864cf888::t_c8ad866a0554c5 289-290
+  s_e8edbfb6e7f442::t_6c7a491c75bf75 7,9,277
+  s_e3b55646d2e132::t_8a42723fa63553 169,176,184-231,233-276,278-287,292-293,345
+  s_098172864cf888::t_87e91275ad3d7d 288
+packages/core/src/json/partial.ts
+  s_098172864cf888::t_04ca434b60a7b4 1-16,18-137,141-167
+  s_4d236c02d75a05::t_c9129484a39d57 17,138-139
+apps/tui/.aspect/a.spec.tsx
+  s_3e6ccc6231323a::t_10655f789f13c9 1-37
+apps/tui/src/composition/config.ts
+  s_1cb203f76f0ee1::t_b0bb45f08ea2ab 1-4,26,40-41,77-92,104,109
+packages/harness/src/skills/__tests__/roots.spec.ts
+  s_e3b55646d2e132::t_250fe9d5876ec5 1-79,81-172
+  s_e3b55646d2e132::t_a67406c143c600 80
+apps/tui/src/composition/use-turn-driver.ts
+  s_b36f35545a98fd::t_5d69b2700213db 119
+  s_32840269673571::t_ba44e7950191db 76-79
+apps/tui/src/composition/user-said.ts
+  s_3e6ccc6231323a::t_b65feaed7ce6a8 1-9
+apps/tui/src/composition/__tests__/instruction-plan.spec.ts
+  s_301a123170cbf9::t_baefeca1f4ed95 7,15,25
+apps/tui/src/store/derive-transcript.ts
+  s_098172864cf888::t_5238310d567fe3 86,88
+  s_098172864cf888::t_f9cca30432afbd 87
+packages/harness/src/tools/register-tools.ts
+  s_301a123170cbf9::t_633528eed41d03 11-12,22,42-44
+  s_e3b55646d2e132::t_af657ea561e2bf 19,36
+apps/tui/src/composition/open-conversation.ts
+  s_32840269673571::t_fca38138d00e95 3,22-26,32-33,36-43,51-52,95-97,99,101,104,116-120,124-126,142-143
+  s_098172864cf888::t_af6347d93ee078 19,132,140
+  s_098172864cf888::t_403d5edf2142a4 130
+apps/tui/src/ui/components/blocks/tool-detail.tsx
+  s_76e4c2895f6d97::t_57b5b7022294a0 243,252
+  s_3e6ccc6231323a::t_ed16696aa6fdb5 29,32,52-55,58,60,70,81,84,93,98-103,105,112,117,119,135,140-145,147,154,188,193-195,234,236,242,244-248,251,253-254,257,260-263
+packages/core/src/message/parts.ts
+  s_3e6ccc6231323a::t_d376e915db2387 39
+  s_3e6ccc6231323a::t_3d2b020c28ad95 8-11,13-15,29
+  s_3e6ccc6231323a::t_12f960debca58e 12
+packages/harness/src/agents/registry/child-runner.ts
+  s_301a123170cbf9::t_ca4897807005ed 15,33-34
+apps/tui/src/ui/__tests__/sidebar-render.spec.tsx
+  s_5dc27c351b7aaf::t_dd9386cf69a4b5 10,23-26,140,234
+  s_098172864cf888::t_8ad5599430f618 6,68-78,90
+  s_e54c4d80a3afc5::t_cbc3b849e615ea 79,91
+  s_098172864cf888::t_469811f2a47e7b 261
+  s_69bd1f40697a50::t_685e5eb23bd8f2 1,385-401
+  s_098172864cf888::t_caf4ad3cf252a5 286-289,296-303,355-374
+  s_5dc27c351b7aaf::t_eefb0738a14890 27,110-115,117,126,144
+  s_76e4c2895f6d97::t_be1e86fc3bea74 100-109,290-295
+  s_e54c4d80a3afc5::t_81dfe5e68a917e 59-63,80-83,85,92
+  s_e54c4d80a3afc5::t_4bbe56f9434647 35
+  s_76e4c2895f6d97::t_10cf05a0f32aff 304-318,346-354,402-403
+  s_098172864cf888::t_304aceb71c785e 64-67,86-88
+  s_098172864cf888::t_b6ce0785ad8a18 262,267-283
+  s_098172864cf888::t_3bd97113106db0 84,89
+  s_e8edbfb6e7f442::t_be57405594cbdb 8
+  s_3e6ccc6231323a::t_976f52884115d8 319-345
+packages/core/src/json/__tests__/partial.spec.ts
+  s_4d236c02d75a05::t_b8eec8280e2969 1-64,66-80
+  s_4d236c02d75a05::t_c9129484a39d57 65
+apps/tui/src/ui/__tests__/agent-types-render.spec.tsx
+  s_098172864cf888::t_6a8e7530ba0a09 1-94,96-97,99-106
+  s_098172864cf888::t_aafe4b7c2c9c9e 95,98
+apps/tui/src/composition/use-turn-clock.ts
+  ai_agent 1-30
+apps/tui/src/store/in-flight-steps.ts
+  s_4d236c02d75a05::t_46336455420a6d 49,105-110
+  s_4d236c02d75a05::t_6039dbaa5b9965 1-8,18-21,31,40,50-64,85-91,93-99,111-116,163-164,166,187
+apps/tui/src/composition/__tests__/app-mentions.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 43
+packages/harness/src/agents/types/index.ts
+  s_301a123170cbf9::t_ca4897807005ed 4
+packages/harness/src/prompt/__tests__/agent-axis.spec.ts
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 10
+packages/harness/src/agents/types/__tests__/tool-access.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 63
+packages/harness/src/container/create-harness-container.ts
+  s_e3b55646d2e132::t_68b84879b58163 28
+  s_e3b55646d2e132::t_5156b46c43ddb0 132
+packages/harness/src/shells/__tests__/shell-registry-fixture.ts
+  s_76e4c2895f6d97::t_3fa001b80f05ee 1-77,79-132
+  s_76e4c2895f6d97::t_fc8cce6cdaf9d4 78
+packages/harness/src/index.ts
+  s_301a123170cbf9::t_fee8a1914a4f4f 23
+packages/core/src/skills/roots.ts
+  s_e3b55646d2e132::t_390322d7bc120b 1-14,34-37
+  s_e3b55646d2e132::t_350c6e3d7655ce 15-33,38,40-41,45-58
+  s_e3b55646d2e132::t_c649d5c39eeed6 39,42-44
+packages/harness/src/store/__tests__/migrations.spec.ts
+  s_1cb203f76f0ee1::t_d970544a879fe8 7,35,37,39
+  s_1cb203f76f0ee1::t_3d3a7594138a85 1-6,8,10-32,34,36,38,40-42
+  s_1cb203f76f0ee1::t_9b285a3222cd0e 9
+  s_1cb203f76f0ee1::t_88b0345ced0ac3 33
+apps/tui/src/ui/components/sidebar.tsx
+  s_5dc27c351b7aaf::t_e5bbb739d1f5ee 12,24,86,93-96,98
+  s_42422f1a5c5a2b::t_5b59c9e521beda 6,20-21,25,120
+  s_e8edbfb6e7f442::t_002defe7fe20d5 115
+  s_e8edbfb6e7f442::t_be57405594cbdb 11
+  s_5dc27c351b7aaf::t_866ae19a3c7461 97
+  s_e8edbfb6e7f442::t_f0eccfc103d224 114
+  s_e8edbfb6e7f442::t_d98babd7750a65 107
+  s_e8edbfb6e7f442::t_06f9b2b175f3dd 68
+  s_e54c4d80a3afc5::t_456fdf82698f15 70
+  s_e54c4d80a3afc5::t_c45e823d102932 3,34-53,77-85,87-92,99-106,108-113,116-119,121-122
+packages/harness/src/agents/types/agent-type.ts
+  s_301a123170cbf9::t_ca4897807005ed 18-23
+packages/harness/src/shells/notifications.ts
+  ai_agent 22-38
+packages/core/src/yaml/scalar.ts
+  s_e3b55646d2e132::t_d5fbb3388cc0b9 1-73
+packages/harness/src/tools/__tests__/dispatch-hooks.spec.ts
+  s_42422f1a5c5a2b::t_3c2c6fbf3f4eb4 45,76,110,144,174,193,217,239
+  s_301a123170cbf9::t_2449c3576b97a0 281,313
+apps/tui/src/ui/__tests__/clipboard-image.spec.ts
+  s_0124412df34243::t_b09a7064776579 28
+  s_0124412df34243::t_4425dbe20a9f2b 6-10,21-22,25,31
+  s_3e6ccc6231323a::t_5f5488d32c9012 1-5,12-20,23-24,26-27,29-30,32-33
+packages/harness/src/hooks/track-worktree.ts
+  s_301a123170cbf9::t_6de6cceec8562c 4-5,7,14-15,21-25,27-33
+apps/tui/src/store/pending-queue.ts
+  s_3e6ccc6231323a::t_17b5c4d5f0baec 91
+packages/core/src/assembly/rules/running-agents-block.ts
+  s_6b99d2f1c83513::t_8c4ca2861a3f5e 1-48
+packages/harness/src/channel/__tests__/delta-channel.spec.ts
+  ai_agent 91-95
+apps/tui/src/store/crew-retirement.ts
+  s_e8edbfb6e7f442::t_dd5563ba8c8c0d 1-148
+packages/harness/src/store/paths.ts
+  s_1cb203f76f0ee1::t_61f3d756f3effe 30-33,39
+packages/harness/src/loop/__tests__/turn-ledger-wiring.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 54,186
+packages/harness/src/skills/__tests__/registry.spec.ts
+  s_e3b55646d2e132::t_ede122d0b6ccba 9,93-117
+packages/harness/src/shells/__tests__/shell-registry-ownership.spec.ts
+  s_76e4c2895f6d97::t_8234cb0141bb13 1-61
+packages/harness/src/tools/builtin/__tests__/glob.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 28
+packages/harness/src/skills/roots.ts
+  s_e3b55646d2e132::t_c6656caeeb923c 1-46
+apps/tui/src/store/shell-ended-line.ts
+  ai_agent 11-15,39-41
+apps/tui/src/ui/components/transcript.tsx
+  s_3e6ccc6231323a::t_ae17e33fb5059f 8,77-78
+  s_098172864cf888::t_ae1a58e6473a00 15,18-19,26,35,152,162
+  s_3e6ccc6231323a::t_6081b5b3e0935c 75-76,79
+  s_3e6ccc6231323a::t_f41ee1110fdd60 1
+packages/harness/src/skills/port.ts
+  s_e3b55646d2e132::t_833b2904044901 1-7
+packages/harness/src/skills/live-registry.ts
+  s_e3b55646d2e132::t_f6f16bd7f922d5 3-4,18,34-35,37,39,41-49,51-55,57-60,67,69,71-73
+  s_e3b55646d2e132::t_71f705133de724 1-2,5-17,19-33,36,38,40,50,56,61-66,68,70
+packages/core/src/images/__tests__/limits.spec.ts
+  s_0124412df34243::t_03065573b9aa6c 11,15,155-192
+  s_3e6ccc6231323a::t_d04cb7ce8b1be8 1-10,12-14,16-154,193-239
+apps/tui/src/ui/__tests__/settings-model.spec.ts
+  s_3e6ccc6231323a::t_28450cf828d3e6 43
+  s_3e6ccc6231323a::t_4385eefe8fc8c1 40,80
+  s_3e6ccc6231323a::t_21d162c94c1cbf 36
+  s_3e6ccc6231323a::t_bf81c690c95f66 37,39
+packages/harness/src/skills/index.ts
+  s_e3b55646d2e132::t_b286b7a40aeafa 9,15-16
+  s_e3b55646d2e132::t_c5b4c42818ada7 1-8,12,14
+packages/core/src/workspace/__tests__/worktree.spec.ts
+  s_301a123170cbf9::t_15b96833944c45 7-9,21,28-29,31-46,49-54,56,59-64,66,69-77,79-81,84-85,87,90-94,96
+  s_301a123170cbf9::t_1ede5842688e53 4-5
+apps/tui/src/ui/images/__tests__/transcript-image.spec.tsx
+  s_3e6ccc6231323a::t_8c5fd266b322d1 6
+  s_3e6ccc6231323a::t_4a7715957aac28 10-11,38,44,50,56
+  s_3e6ccc6231323a::t_7db5fe2c8166b3 1-5,7-9,12-37,39-43,45-49,51-55,57-58
+packages/harness/src/loop/__tests__/retrying-step.spec.ts
+  s_f875eed3e73ec7::t_15d0dec14ee746 9,40,178-257
+  s_b36f35545a98fd::t_e283b32a108812 1-8,10-39,41-177
+packages/core/src/assembly/rules/worktree-block.ts
+  s_301a123170cbf9::t_f047f6d11916cd 3,6-10,14-17,24,26,28-29,41
+packages/harness/src/container/__tests__/worktree-tool-wiring.spec.ts
+  s_301a123170cbf9::t_ea6535a629630e 1-27,29-30
+  s_301a123170cbf9::t_d0764bfc1c2817 28
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_76e4c2895f6d97::t_1cd61701bb0e6c 66
+  s_098172864cf888::t_76ecccec6332da 39
+  s_3e6ccc6231323a::t_c54655203dabd5 423
+  s_301a123170cbf9::t_a6239b7f8858ff 421
+  s_e3b55646d2e132::t_9d81ded9bb5dc8 18-19,33,37,176,178,184-187,189,193,195,200-222,229-230,237-239,244-245,254-257,259-260,266-267,269-274,277-278,291,298-301,308-379,387,414,433-434
+  s_e54c4d80a3afc5::t_4c10dbc5c2e08f 54,386,413,494
+  s_e3b55646d2e132::t_447e1bec192fb0 30
+  s_098172864cf888::t_b238ad728b1cda 40,403,435
+  s_3e6ccc6231323a::t_3100080b4f5e5c 49
+apps/tui/src/composition/__tests__/app-turn-line.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 118
+packages/harness/src/model/__tests__/message-conversion.spec.ts
+  s_3e6ccc6231323a::t_2218c90a253941 96,105-123,131-137,142-199
+  s_3e6ccc6231323a::t_21ea9dab1e30ae 8-9
+apps/tui/src/ui/__tests__/lost-children-model.spec.ts
+  s_098172864cf888::t_0784c2e8f00f2c 2-99
+packages/harness/src/tools/builtin/__tests__/bash.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 24,148,193
+  s_42422f1a5c5a2b::t_3ee6924ea42adb 160-161,165,167,170-171,173-183
+  s_42422f1a5c5a2b::t_63b980b39b9c63 2
+apps/tui/src/composition/paste-directory.ts
+  s_3e6ccc6231323a::t_baa67401fe684f 1-12
+packages/harness/src/channel/__tests__/published-turn.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 39
+packages/harness/src/loop/__tests__/hook-phases.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 173
+apps/tui/src/composition/__tests__/workspace-directory.spec.ts
+  s_1cb203f76f0ee1::t_fea7db7fb44ba6 1-41
+apps/tui/src/ui/shells-model.ts
+  ai_agent 62-63,65
+apps/tui/src/store/expandable.ts
+  s_098172864cf888::t_e2e9e7aa3f6366 12-15
+packages/core/src/assembly/__tests__/assemble.spec.ts
+  s_301a123170cbf9::t_7f438ddb1dc2a8 11-12
+  s_301a123170cbf9::t_e567d7614156eb 23-24
+  s_301a123170cbf9::t_b6846a28df4c4d 99
+  s_42422f1a5c5a2b::t_267b0605ec0f5e 100
+packages/core/src/models/retry.ts
+  ai_agent 1-72
+apps/tui/prototype/round2-data.ts
+  s_098172864cf888::t_ce870af460bc45 5
+  s_e54c4d80a3afc5::t_cbc3b849e615ea 49,61
+  s_098172864cf888::t_79201fe35bd9b9 34-37,56-58
+  s_098172864cf888::t_8ad5599430f618 38-48,60
+  s_098172864cf888::t_f5824ede70e8c5 54,59
+  s_e54c4d80a3afc5::t_81dfe5e68a917e 29-33,50-53,55,62
+  s_e54c4d80a3afc5::t_8b92f2e22777e9 3-4
+packages/harness/src/hooks/__tests__/load-instructions.spec.ts
+  s_301a123170cbf9::t_1f794b3bbcd790 8,14-26,36-37,50,52,58-59,61,69-70,72,81-83,87-111
+apps/tui/src/store/tools/__tests__/images.spec.ts
+  s_3e6ccc6231323a::t_60cb3058094b5c 1-96
+packages/core/src/assembly/__tests__/agent-endings-pipeline.spec.ts
+  s_098172864cf888::t_46a6478afdcd61 70
+  s_e54c4d80a3afc5::t_7ae11d73ecf9b4 119,131-134
+  s_098172864cf888::t_e9a5e5663f4299 1-49,51-69,71-118,120-130,135-171,178-181,183-187,189-195,197-205
+  s_301a123170cbf9::t_b6846a28df4c4d 50,182,196
+  s_42422f1a5c5a2b::t_81c0a03e30e682 172-177,188
+packages/harness/src/prompt/fragments/environment.ts
+  s_42422f1a5c5a2b::t_ee2b9af87974a8 11-12,24
+  s_301a123170cbf9::t_274a840d4eb388 1,3,9
+packages/core/src/skills/__tests__/roots.spec.ts
+  s_e54c4d80a3afc5::t_bbb8ded10e0680 1-76
+packages/harness/src/prompt/fragments/files.ts
+  s_99c19674ed59d0::t_0371c33f7073dd 1-20
+apps/tui/src/ui/__tests__/appearance.spec.ts
+  s_42422f1a5c5a2b::t_25e436721c48a3 12,41,50,57,64,88,96
+  s_42422f1a5c5a2b::t_caa47209e14e54 75,83
+apps/tui/src/composition/commands/agent-choices.ts
+  s_e8edbfb6e7f442::t_9bb4b8bc952c34 1-3,6-9,11-27,29-49,51-66
+  s_e8edbfb6e7f442::t_e1cfe6d4d2a2a1 5,10,28,50
+  s_e8edbfb6e7f442::t_be57405594cbdb 4
+apps/tui/src/ui/components/blocks/__tests__/tool-image.spec.tsx
+  s_3e6ccc6231323a::t_1061fff9ebde40 33-36
+  s_3e6ccc6231323a::t_e25041cc0977b8 63-66
+  s_3e6ccc6231323a::t_664a9e0f069013 86,103
+  s_3e6ccc6231323a::t_bb73f487718590 2,4-8,11-17,26-32,37-62,67-85,87-102,104-123,148-149
+  s_e8edbfb6e7f442::t_9854b1732c163d 1,10,19
+  s_3e6ccc6231323a::t_eb356208117391 3
+  s_3e6ccc6231323a::t_c51ce9fa399748 9,18,25,124-147
+apps/tui/src/composition/__tests__/app-unstarted.spec.tsx
+  s_32840269673571::t_3ff022a5656b79 2,4,7-8,10-25,31-32,68-76,78-129
+  s_32840269673571::t_6dc5ce0cbf105d 1,3,5-6,26-30,33-67
+  s_32840269673571::t_ed596c72c78e4e 9,77
+apps/tui/src/store/__tests__/crew-visits.spec.ts
+  s_e8edbfb6e7f442::t_c5686c718e00bb 15,34,41-42,49
+  s_e8edbfb6e7f442::t_c5f6e0132dae37 21
+  s_e8edbfb6e7f442::t_138c7e06d66e64 1-14,16-20,22-33,35-40,43-48,50-51
+apps/tui/src/composition/use-conversation.ts
+  s_3e6ccc6231323a::t_60123e8f059f6e 46
+  s_32840269673571::t_74a836c7e864d8 126,219,223-227
+  s_e54c4d80a3afc5::t_4161f1f8b4d1c7 26,28,30-31,34-42,75,97-99,116-125,127-130,134-135,148-163,165-183,185,187,191-197,200-205,235-236,241,249,252-258,283,288,290,300-301,305,308-311
+  s_32840269673571::t_8c3bbc73a1152a 95,164,244
+  s_3e6ccc6231323a::t_f0adc265135513 11,20,33
+  s_098172864cf888::t_d156c209bc1c84 29,50,289
+  s_32840269673571::t_9599125a9f8f7c 189
+  s_098172864cf888::t_175e82972d0b32 277
+  s_3e6ccc6231323a::t_ef7e4f6a7ea69d 62-67
+  s_301a123170cbf9::t_50940d65e5f37d 2,5-6,264,266-273,286-287
+  s_098172864cf888::t_61de660e3e1ca0 199,276,278-279
+  s_3e6ccc6231323a::t_fbd26a7c1356f3 208-215,218,232
+  s_42422f1a5c5a2b::t_5b59c9e521beda 265
+  s_301a123170cbf9::t_b21cb8520af3a3 58-59
+  s_3e6ccc6231323a::t_517b94b6002809 44
+packages/harness/src/workspace/worktrees.ts
+  s_301a123170cbf9::t_68a4f3f0565714 3,30,33,74,138-139,257
+  s_301a123170cbf9::t_09a5e096c01b5a 1-2,4-29,31-32,34-73,75-137,140-256,258-268
+packages/harness/src/prompt/volatile.ts
+  s_e3b55646d2e132::t_a0ac85e97312f1 1-9
+apps/tui/src/composition/__tests__/app-skills.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 39,210
+  s_e3b55646d2e132::t_0f548319f1a6ea 1-38,40-66,86-209,211-241
+  s_e3b55646d2e132::t_00dcf8e81234ff 67-85
+packages/harness/src/tools/builtin/grep.ts
+  s_42422f1a5c5a2b::t_5fdbb64f85fe7a 214,217,232
+apps/tui/src/composition/use-agents.ts
+  s_e54c4d80a3afc5::t_8c85fe68225995 1-2,4,20,23-24,26,28,32,93-96,98,110-118,125,140-141,143,145,147,149
+  s_e8edbfb6e7f442::t_97f4c7c8455386 120-121,123,127-132,142,148
+  s_e8edbfb6e7f442::t_0ad8494b88adaa 22,122
+  s_098172864cf888::t_c4479d3667168a 3,29-31
+  s_e8edbfb6e7f442::t_4d64aea76b64fc 5-12
+  s_e8edbfb6e7f442::t_228d1f8fe897e4 53-62,64-91
+  s_e8edbfb6e7f442::t_c9e541db9b54e3 137
+  s_e8edbfb6e7f442::t_401ac93c6af9e2 33-52,92
+  s_e8edbfb6e7f442::t_bfb6ee507d1eda 133-136,138-139
+  s_098172864cf888::t_75fa080aa3edf4 124,146
+  s_e54c4d80a3afc5::t_c4269ece3d3b18 25,99-102,104-107,109
+  s_e8edbfb6e7f442::t_c5686c718e00bb 63
+  s_e8edbfb6e7f442::t_002defe7fe20d5 14-19
+  s_e8edbfb6e7f442::t_be57405594cbdb 13
+  s_e8edbfb6e7f442::t_6ad67f86cc6208 119,144
+  s_e54c4d80a3afc5::t_63e2875565d5a8 97,103,108
+  s_e8edbfb6e7f442::t_8075f768f563ce 27
+  s_098172864cf888::t_f5b5b23539dfd8 21,126
+apps/tui/src/ui/__tests__/shells-model.spec.ts
+  ai_agent 20
+packages/harness/src/agents/registry/snapshot.ts
+  ai_agent 20
+packages/core/src/assembly/rules/images.ts
+  s_3e6ccc6231323a::t_6cbd463c1e9f31 20-22,25
+  s_3e6ccc6231323a::t_ebdd9096944798 9-10,105-106,115
+  s_3e6ccc6231323a::t_9b6e6e2cfbca3f 80,85-88
+  s_3e6ccc6231323a::t_b04f5a9f99fd99 1-8,11-19,23-24,26-79,81-84,89-104,107-114,116-126
+apps/tui/src/ui/said-images.ts
+  s_0124412df34243::t_41db7e5dfe68b6 1-23
+packages/core/src/yaml/parse.ts
+  s_e3b55646d2e132::t_c649d5c39eeed6 166-167
+  s_e3b55646d2e132::t_15e6c8b0b4182b 1-165,168-206
+apps/tui/src/composition/commands/__tests__/local-handlers.ts
+  s_e8edbfb6e7f442::t_f0fb93c8444868 1-21,23-32
+  s_e8edbfb6e7f442::t_6cd8d614a6c65c 22
+packages/harness/src/agents/registry/__tests__/child-context.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 158,165
+apps/tui/src/ui/__tests__/settings-render.spec.tsx
+  s_3e6ccc6231323a::t_ceb0c608295867 15-19,32-37,55,66-93,199-233
+  s_3e6ccc6231323a::t_ee5c1e9d053dc2 133
+apps/tui/src/composition/use-thread-swap.ts
+  s_32840269673571::t_0500402b4d7ae5 1-72
+apps/tui/src/composition/use-accounts.ts
+  s_0124412df34243::t_36dfd18afc4734 1,8
+packages/core/src/stream/chunk.ts
+  s_4d236c02d75a05::t_7cfc55bad27edd 27-29
+packages/harness/src/tools/builtin/__tests__/agent-tools.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 96
+packages/core/src/message/message.ts
+  s_3e6ccc6231323a::t_d3108044064546 2,6
+packages/harness/src/tools/builtin/__tests__/read-images.spec.ts
+  s_3e6ccc6231323a::t_971755b374211f 8-47,49-58,60-65,67-78,80-95,103-138,141,152-153,155-191
+  s_0124412df34243::t_03065573b9aa6c 1-7,48,59,66,139-140,142-151,154
+  s_301a123170cbf9::t_2449c3576b97a0 79
+  s_3e6ccc6231323a::t_082d8fbcc5d120 96
+  s_3e6ccc6231323a::t_49e2f366dc2f0a 97-102
+apps/tui/src/ui/__tests__/agent-types-model.spec.ts
+  s_098172864cf888::t_ffc1eb2bb42a6f 1-140
+packages/core/src/assembly/pipeline.ts
+  s_6b99d2f1c83513::t_e7962a044f6e08 7,21,27,38,50,56
+  s_301a123170cbf9::t_f047f6d11916cd 10,19,25,36,48,54,60
+  s_301a123170cbf9::t_fe23d2e6bf74b0 31
+  s_098172864cf888::t_3d50fb9cd888b7 3
+  s_3e6ccc6231323a::t_0b953fc85bda44 22,35,51
+  s_3e6ccc6231323a::t_ebdd9096944798 5,28,57
+  s_098172864cf888::t_1052eb94a2abc6 49,55,59,61-62
+  s_098172864cf888::t_c1ff6e977fef06 33
+apps/tui/src/ui/retry-countdown.ts
+  s_69bd1f40697a50::t_1abf9d02a33afb 1-30
+apps/tui/src/ui/pasted-text.ts
+  s_0124412df34243::t_91151bf0da9104 1-16
+apps/tui/src/ui/__tests__/agent-ended-render.spec.tsx
+  s_098172864cf888::t_f14a2b5dd0af14 1-4,6-15,17-78
+  s_1cb203f76f0ee1::t_b7847aa8b02640 5,16
+apps/tui/src/ui/lost-children-model.ts
+  s_098172864cf888::t_da98b8d3654ef3 46
+  s_098172864cf888::t_dc0a3461a60ae8 1-45,47-54
+apps/tui/src/composition/commands/registry.ts
+  s_098172864cf888::t_6a446bd714c351 107-108,112-114,130
+  s_e3b55646d2e132::t_cbec2de9748808 192-201
+  s_098172864cf888::t_ef9be5dc6aea42 55
+  s_e8edbfb6e7f442::t_757809b37ef721 29
+  s_e8edbfb6e7f442::t_8530eab759c4cd 34,41,109-110
+  s_098172864cf888::t_417f4439bedd32 36,43
+  s_e8edbfb6e7f442::t_6cd8d614a6c65c 53,128
+  s_e3b55646d2e132::t_6339b7560db241 6
+  s_098172864cf888::t_3abdafa2becdec 7
+  s_098172864cf888::t_171e3007ab3dff 26-27
+  s_e3b55646d2e132::t_77c162874c6fb6 61
+  s_098172864cf888::t_ee1d704d6f9d62 111,122-125
+  s_098172864cf888::t_b1920fdb7c5c09 28,30,33,35,37-40,42,44-45,54
+  s_098172864cf888::t_01658ad6b2d1dd 115-121,126-127,129
+packages/harness/src/prompt/__tests__/fake-skills.ts
+  s_e3b55646d2e132::t_f9b809b543d350 47
+  s_e3b55646d2e132::t_07cc530f34d17e 71-72
+  s_e3b55646d2e132::t_034958a52e0a11 1-46,48-70,73-103
+apps/tui/src/composition/fault-injection.ts
+  ai_agent 1-7
+apps/tui/src/composition/__tests__/app-commands.spec.tsx
+  s_e3b55646d2e132::t_b9d9e3d03c6fa7 1,9-13,15
+apps/tui/src/ui/components/agents-picker.tsx
+  s_e8edbfb6e7f442::t_f1724f8e7f2d5e 1-8,10-156
+  s_e8edbfb6e7f442::t_ace61a674b7aaf 9
+packages/harness/src/container/__tests__/harness-graph.spec.ts
+  s_e3b55646d2e132::t_5337507b8142aa 50
+  s_301a123170cbf9::t_2449c3576b97a0 90
+packages/core/src/images/__tests__/attached.spec.ts
+  s_0124412df34243::t_7c5101e45f951b 29-41
+  s_0124412df34243::t_b1e6a71545723f 1-6,8-10,12-28,42-89
+  s_0124412df34243::t_af40baabec7090 90-92
+  s_0124412df34243::t_a7c0bf14ddda9f 7,11,93-111
+apps/tui/src/composition/session-rename.ts
+  ai_agent 1-28
+apps/tui/src/composition/__tests__/fake-agents.ts
+  s_098172864cf888::t_0817d4f4c4b6fd 16,26
+  s_098172864cf888::t_cfd437c0c6945d 37
+  s_098172864cf888::t_9c0a49b1ed5649 2
+  s_098172864cf888::t_745a6be852e03d 54
+  s_e54c4d80a3afc5::t_72ea3221c3894d 1,3-15,17-25,27-34,39-45,48-53,55-102,107,116-129,142-144,160-163,166-182,184-210
+  s_098172864cf888::t_fbafccc523bf5b 165
+  s_098172864cf888::t_a994ded5dba2bb 164
+  s_098172864cf888::t_29671bee7b456c 145-159
+  s_e54c4d80a3afc5::t_9e06dc47be1d3e 35,38,47,103-106,108-115,134,137-141
+  s_098172864cf888::t_79d5ccf282b47e 130-133,135-136
+  s_098172864cf888::t_35e3bd6ac57355 183
+  s_098172864cf888::t_cc9f33206f40a6 46
+  s_098172864cf888::t_415a49091b3dd1 36
+packages/harness/src/agents/registry/__tests__/child-drains.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 56,64
+packages/harness/src/context/__tests__/repository-root.spec.ts
+  s_42422f1a5c5a2b::t_383aebc25c56ec 1-58
+packages/core/src/skills/validate.ts
+  s_e3b55646d2e132::t_7f2fb0a08d1cee 1-98
+apps/tui/src/composition/__tests__/app-titling.spec.tsx
+  s_f875eed3e73ec7::t_20b7138a0a5614 123-124,140,168,193-266
+  s_76e4c2895f6d97::t_bae4a04424d5ee 267-269
+apps/tui/src/ui/exit-guard-model.ts
+  s_e54c4d80a3afc5::t_82cd32e4cee5f2 1,12-15,17-18,52-58,60
+  s_e8edbfb6e7f442::t_be57405594cbdb 3
+packages/harness/src/tools/__tests__/filtered-registry.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 175
+apps/tui/src/composition/__tests__/app-shell-fold.spec.tsx
+  s_e8edbfb6e7f442::t_82a2c2db9397da 92,101
+  s_e8edbfb6e7f442::t_0364e73285f3aa 1-51,53-76,78-91,93-100,102-150
+  s_e8edbfb6e7f442::t_9854b1732c163d 52
+  s_e8edbfb6e7f442::t_1b4ec5e19ce2fa 77
+apps/tui/src/ui/appearance.ts
+  ai_agent 1,11,21,45-49,57
+apps/tui/src/ui/viewport-rows-store.ts
+  s_3e6ccc6231323a::t_217057aba3b69b 7-8,22-30,34-36
+  s_3e6ccc6231323a::t_fedac246ae0b8f 1-6,9-21,31-33,37-47
+packages/core/src/skills/spec.ts
+  s_e3b55646d2e132::t_d9eb35723fb163 1-62
+packages/harness/src/tools/builtin/__tests__/worktree-tools.spec.ts
+  ai_agent 1-277
+packages/harness/src/loop/__tests__/builtin-turn.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 55
+packages/harness/src/model/index.ts
+  s_f875eed3e73ec7::t_8ec2f8eb8b4f35 5-6
+apps/tui/src/composition/instruction-plan.ts
+  s_42422f1a5c5a2b::t_b88d3a000ad375 2-7,24
+  s_301a123170cbf9::t_c94f5ebd7e9050 17,25
+packages/harness/src/providers/__tests__/anthropic-cache-breakpoints.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 67
+apps/tui/src/store/__tests__/crew-fold.spec.ts
+  s_e8edbfb6e7f442::t_e1549a27a37935 1-3,5-6,8,23-32,34-35,37-43,48-56,61-71,76-82,84-90,92-103,108-121,126-132,134-139,144-151,156-164,169-174,176-181,183-187
+  s_e8edbfb6e7f442::t_bdc6e523494281 7,10-20,33,36,133
+  s_e8edbfb6e7f442::t_f830db561fbd1b 4,9,21-22,46,59,74,83,91,106,124,142,154,167,175,182
+  s_e8edbfb6e7f442::t_7a3da01d02b65d 44-45,47,57-58,60,72-73,75,104-105,107,122-123,125,140-141,143,152-153,155,165-166,168
+apps/tui/src/ui/components/blocks/notice-block.tsx
+  s_098172864cf888::t_c90b7ef005a407 11,13,16-17,22-23,32-33,35-36,38,49,58,63
+apps/tui/src/composition/__tests__/skills-binding.spec.ts
+  s_e3b55646d2e132::t_95a3b3f110ef9d 1-12,14-20,41,43,45,47-65,72-93,95-104,106-110,112-127
+  s_e3b55646d2e132::t_9cb973f3ac339d 13,21-40,42,44,46,94,111
+  s_e3b55646d2e132::t_6b86b1b08d184d 66-71
+  s_e3b55646d2e132::t_45aa5b27021837 105
+apps/tui/src/store/__tests__/pending-rows.spec.ts
+  s_098172864cf888::t_05090c37281723 3-4,8,25-38,80-129
+  s_76e4c2895f6d97::t_bae4a04424d5ee 130-131
+  s_098172864cf888::t_aa1470b28e22df 41,45-49,58,69,75,136
+packages/harness/src/hooks/__tests__/file-state-wiring.spec.ts
+  s_42422f1a5c5a2b::t_d05470d8e70c16 274
+  s_42422f1a5c5a2b::t_7cebbc183a46a4 100
+  s_301a123170cbf9::t_ebaebc25e489df 116,137,158,306
+apps/tui/prototype/settings-previews.tsx
+  ai_agent 1-93
+apps/tui/src/ui/__tests__/viewport-rows.spec.ts
+  s_3e6ccc6231323a::t_4af2e1c2fd47ed 1-21
+apps/tui/src/ui/components/settings.tsx
+  ai_agent 7-8,68,129-133
+apps/tui/src/composition/open-session.ts
+  s_32840269673571::t_0500402b4d7ae5 74
+  s_1cb203f76f0ee1::t_35e1ae699d9ad9 8,47-51
+packages/harness/src/agents/registry/__tests__/notice-delivery.spec.ts
+  ai_agent 1-197
+packages/harness/src/agents/registry/child-state.ts
+  ai_agent 26,56,76
+packages/core/src/assembly/rules/__tests__/system-prompt-characterization.spec.ts
+  s_301a123170cbf9::t_7937bd51cdb6f8 30,89
+  s_301a123170cbf9::t_7f438ddb1dc2a8 8-9
+packages/core/src/index.ts
+  s_3e6ccc6231323a::t_5e9296be4c2da1 37
+  s_6b99d2f1c83513::t_e7962a044f6e08 56
+  s_301a123170cbf9::t_1ede5842688e53 65
+  s_e3b55646d2e132::t_b6588e2869b2de 138-141
+  s_3e6ccc6231323a::t_021b754585a9db 38-39
+  s_3e6ccc6231323a::t_0b953fc85bda44 51
+  s_301a123170cbf9::t_cec3e122bd119d 54
+  s_e54c4d80a3afc5::t_c05642ac87f13e 57
+  s_4d236c02d75a05::t_741fbb3391383a 4
+apps/tui/src/ui/images/__tests__/cell-span.spec.ts
+  s_3e6ccc6231323a::t_1b1b82627b1109 1-111
+packages/core/src/models/__tests__/retry.spec.ts
+  s_b36f35545a98fd::t_384db610398df5 53-54,56-58
+  s_e54c4d80a3afc5::t_fdddac8c209e0d 1-52,55,59-128
+apps/tui/src/composition/overlay-stack.tsx
+  s_e54c4d80a3afc5::t_dfed4b9ef10533 9,20,36,121-124,139
+  s_e8edbfb6e7f442::t_be57405594cbdb 17
+  s_e8edbfb6e7f442::t_6cd8d614a6c65c 15,21,37,47-48,85-91
+apps/tui/src/ui/images/cell-span.ts
+  s_3e6ccc6231323a::t_086d9e06be851a 1-25,28-45
+  s_3e6ccc6231323a::t_31fc9a36f72c83 26
+apps/tui/src/ui/shimmer-style.ts
+  ai_agent 6,8-9,17,24
+apps/tui/src/store/__tests__/sidebar-crew.spec.ts
+  s_76e4c2895f6d97::t_40008a68618fdc 201-202
+  s_e8edbfb6e7f442::t_be57405594cbdb 6,209-222,231
+  s_76e4c2895f6d97::t_4b2ff96a2f4ff6 205-208
+  s_e8edbfb6e7f442::t_002defe7fe20d5 5,7-15
+  s_76e4c2895f6d97::t_80c67b73e6b25f 288-308
+  s_098172864cf888::t_f6be15c711ba4c 23-26,36,41-43,57,60-62,66-68,71,86,89,93,97-143,145-146,149-150,196-197,263
+  s_098172864cf888::t_10ae038ee23af6 44
+  s_3e6ccc6231323a::t_f275222cac54e5 223-230
+  s_e54c4d80a3afc5::t_58e899c2c66206 2-4,16,18-22,27-35,37-40,58-59,63-65,69-70,72-77,82-85,87-88,90-92,94-96,144,147-148,204,252-262,282,284-287,309
+  s_76e4c2895f6d97::t_9563bc4ecaeef5 232-251
+  s_e54c4d80a3afc5::t_77a518bd8db490 1,17,78-81
+  s_76e4c2895f6d97::t_3e22e912aba778 198-200,203
+  s_098172864cf888::t_e1a6a209e92c2e 45-56,151-195,264-281,283
+packages/core/src/prompt/context.ts
+  s_301a123170cbf9::t_a57258678a0741 10,16,20,22,25-26
+apps/tui/src/store/__tests__/agent-ended-entry.spec.ts
+  s_098172864cf888::t_b130ed0a4a4086 10-11
+  s_098172864cf888::t_d2a8f893ff021c 1-2,4-9,12-79,90-91,93,100-149
+  s_098172864cf888::t_093c2399d49039 3,80-89,92,94-99
+packages/harness/src/hooks/__tests__/resolve-project-paths.spec.ts
+  s_42422f1a5c5a2b::t_f1d6fd78b67d99 52
+  s_42422f1a5c5a2b::t_f2d02359e0bdb5 14,24,36-46,70-73,75,77-78
+apps/tui/src/ui/__tests__/transcript-fixture.tsx
+  s_098172864cf888::t_bb649c1f50c7de 186,199
+  s_0124412df34243::t_f2a2bc3b122432 58
+packages/core/src/skills/__tests__/parse.spec.ts
+  s_e3b55646d2e132::t_c649d5c39eeed6 20-22,139-141
+  s_e3b55646d2e132::t_aeb52735745370 194-205
+  s_e3b55646d2e132::t_4d5a6b65d9d514 1-19,23-138,142-193
+apps/tui/src/ui/components/blocks/more-toggle.tsx
+  ai_agent 1-47
+apps/tui/src/composition/__tests__/app-switcher.spec.tsx
+  s_76e4c2895f6d97::t_bae4a04424d5ee 20
+packages/core/src/images/attached.ts
+  s_0124412df34243::t_2ff67048d0806c 28-39,41-44,47-54,77-81
+  s_3e6ccc6231323a::t_32c0fd80372f21 1-27
+  s_0124412df34243::t_7c5101e45f951b 40,45-46,55-63
+  s_0124412df34243::t_a7c0bf14ddda9f 64-76
+packages/harness/src/prompt/fragments/index.ts
+  s_e3b55646d2e132::t_7e3f899d93f175 4
+apps/tui/src/ui/__tests__/said-images.spec.ts
+  s_0124412df34243::t_41db7e5dfe68b6 1-23
+packages/harness/src/files/__tests__/write-guard.spec.ts
+  s_301a123170cbf9::t_2449c3576b97a0 48
+packages/harness/src/tools/builtin/skill.ts
+  s_e3b55646d2e132::t_d30aea1b0efd23 123-129
+  s_e3b55646d2e132::t_a72485cdbc54b6 1-55,60-122,130-133
+  s_e3b55646d2e132::t_6ab826d0c814d0 56-59
+apps/tui/src/ui/__tests__/tool-run-render.spec.tsx
+  s_f855e34c673785::t_1b0afe96ada3c6 214-242
+  s_f855e34c673785::t_6901f1beeaa3af 243,250,252-253,256,263,387
+  s_3e6ccc6231323a::t_afe43e87b490a0 278-300
+  s_e3b55646d2e132::t_3ec50a328f2c73 3,18-19,51-55,64,277,301-317,319-386,389-410
+  s_6b99d2f1c83513::t_124e3ba954bb31 185-199
+  s_e3b55646d2e132::t_57e5a67d82bb6f 318
+apps/tui/src/ui/images/__tests__/png-fixture.ts
+  s_3e6ccc6231323a::t_0656537ec92c54 1-15,19,22,24-25,28,32-33,35,37-43,52-54,56-58,60-64
+  s_3e6ccc6231323a::t_5651fce8c93d4b 16-18,20-21,23,26-27,29-31,34,36,44-51,55,59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "cc4103ed31b5b5d47ae805ba6811fa81b359e992",
+  "prompts": {},
+  "sessions": {
+    "s_0124412df34243": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8499c0a1-769b-4e95-99f0-c26f886794a7",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_098172864cf888": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77c97d66-e7c0-4fef-8998-dfad371bcad0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_1cb203f76f0ee1": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "6f9c520f-d959-4943-af9c-bbc22836b598",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_2feab2e45d45ee": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b871ace6-8e2a-4076-9f7d-a528d2feb1e8",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_301a123170cbf9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "afc5c5d6-d9fa-4d2a-bf60-8d5093d2396f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_32840269673571": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "465ef076-8814-47ce-a5d7-89a3e7ef9be1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3c5c6e6e101e43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "c92d248c-a8ed-4639-b523-aadc7013b3d1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3e6ccc6231323a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f83d7ad6-02f6-407b-8198-9bca3ab32ff1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_42422f1a5c5a2b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "acd4a051-c0d3-4dd1-9d65-fb822ee13432",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_4d236c02d75a05": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dee7197e-70ed-42e3-99cc-4ab17acbe9ab",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_51b74899a9c548": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5f75bf07-72f8-42b3-9a0d-90554cdf4242",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_5dc27c351b7aaf": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b94ec098-f213-415b-88d6-1611f5198be4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_69bd1f40697a50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f2e45b1-4f86-44b4-ba07-c8092a81f968",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_6b99d2f1c83513": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3231262c-45fd-4222-9bd5-b87c928d36ac",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_76e4c2895f6d97": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81a864ca-fa61-4cf9-b296-60d7c11e0426",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_99c19674ed59d0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5b260db9-7e12-4bfe-b398-9d01d18d7d0f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b36f35545a98fd": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50b0cafb-c15e-4934-a0ba-a60db1b4ce83",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b391e026d4f658": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "760b684a-4408-425b-98b3-04fe839261f6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b497bbab0c8dc0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "bb584ea0-5857-44a0-8fc5-cb2908572f6c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_babe8d051442b0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0251aeb7-0dd6-46f8-904b-67dd5b9bfa4b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_e3b55646d2e132": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0ca48c2-bc99-4feb-9054-c79080772fae",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_e54c4d80a3afc5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "03da6b09-1f31-4a98-8ca8-63ea259cb7ee",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_e8edbfb6e7f442": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d793539e-28ba-456b-ad52-2e9e85421f82",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_f855e34c673785": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "514a4e0a-322e-4174-937a-0a7095401b6c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_f875eed3e73ec7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "77291fbd-087d-4bbc-bfb9-7357600484b0",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
