@@ -37,6 +37,7 @@ export * from './message/parts'
 export * from './images/attached'
 export * from './images/limits'
 export * from './images/projection'
+export * from './images/region'
 
 export * from './assembly/assembled'
 export * from './assembly/provider-prompt'

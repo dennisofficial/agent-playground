@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
 
+import { decodePng, encodePng } from '../../../images/png'
 import { ReadTool } from '../read'
 import type { ImageReadOutput } from '../read-image'
 
@@ -40,6 +41,34 @@ const png = (args: { width: number; height: number; padding?: number }): Uint8Ar
     ...Array.from({ length: args.padding ?? 0 }, (_, index) => index % 251),
   ])
 
+const QUADRANT_COLOURS = {
+  topLeft: [255, 0, 0],
+  topRight: [0, 255, 0],
+  bottomLeft: [0, 0, 255],
+  bottomRight: [255, 255, 0],
+} as const
+
+function quadrantPng(edge: number): Uint8Array {
+  const pixels = new Uint8Array(edge * edge * 3)
+
+  for (let y = 0; y < edge; y += 1) {
+    for (let x = 0; x < edge; x += 1) {
+      const left = x < edge / 2
+      const top = y < edge / 2
+      const colour = top
+        ? left
+          ? QUADRANT_COLOURS.topLeft
+          : QUADRANT_COLOURS.topRight
+        : left
+          ? QUADRANT_COLOURS.bottomLeft
+          : QUADRANT_COLOURS.bottomRight
+      pixels.set(colour, (y * edge + x) * 3)
+    }
+  }
+
+  return encodePng({ size: { width: edge, height: edge }, channels: 3, pixels })
+}
+
 let root = ''
 
 const paths = {
@@ -49,6 +78,7 @@ const paths = {
   heavy: '',
   text: '',
   misnamed: '',
+  quadrants: '',
 }
 
 beforeAll(async () => {
@@ -60,6 +90,7 @@ beforeAll(async () => {
   paths.heavy = join(root, 'huge.png')
   paths.text = join(root, 'notes.txt')
   paths.misnamed = join(root, 'not-really.txt')
+  paths.quadrants = join(root, 'quadrants.png')
 
   await writeFile(paths.small, png({ width: 1024, height: 768, padding: 400 * 1024 }))
   await writeFile(paths.wide, png({ width: 4000, height: 3000 }))
@@ -67,13 +98,17 @@ beforeAll(async () => {
   await writeFile(paths.heavy, png({ width: 800, height: 600, padding: MAX_INLINE_BYTES + 1 }))
   await writeFile(paths.text, 'alpha\nbravo\n')
   await writeFile(paths.misnamed, png({ width: 32, height: 16 }))
+  await writeFile(paths.quadrants, quadrantPng(400))
 })
 
 const tool = new ReadTool()
 
-const read = async (path: string): Promise<ToolOutcome> =>
+const read = async (
+  path: string,
+  region?: { x: number; y: number; width: number; height: number },
+): Promise<ToolOutcome> =>
   await tool.invoke({
-    input: { path },
+    input: { path, ...(region === undefined ? {} : { region }) },
     signal: new AbortController().signal,
     idempotencyKey: 'read-images',
     projectDirectory: '/workspace',
@@ -189,5 +224,66 @@ describe('read on a text file', () => {
       ok: false,
       reason: `${path} looks like a binary file and cannot be read as text.`,
     })
+  })
+})
+
+describe('read on one region of an image', () => {
+  const centreColourOf = (outcome: ToolOutcome): string => {
+    const part = outcome.ok ? outcome.modelParts?.[1] : undefined
+    if (part === undefined || part.type !== 'image') throw new Error('expected an image part')
+
+    const image = decodePng(decodeBase64(part.data))
+    if (image === null) throw new Error('expected a readable png')
+
+    const x = image.size.width >> 1
+    const y = image.size.height >> 1
+    const at = (y * image.size.width + x) * image.channels
+
+    return [...image.pixels.subarray(at, at + 3)].join(',')
+  }
+
+  it('sends only the pane asked for, at the resolution it already had', async () => {
+    const outcome = await read(paths.quadrants, { x: 200, y: 0, width: 200, height: 200 })
+    if (!outcome.ok) throw new Error(outcome.reason)
+
+    expect(centreColourOf(outcome)).toBe('0,255,0')
+    expect(imageOutput(outcome.output)).toMatchObject({ width: 200, height: 200, inlined: true })
+  })
+
+  it('cuts the bottom-left pane, the corner a shell-out to sips silently refused', async () => {
+    const outcome = await read(paths.quadrants, { x: 0, y: 200, width: 200, height: 200 })
+    if (!outcome.ok) throw new Error(outcome.reason)
+
+    expect(centreColourOf(outcome)).toBe('0,0,255')
+  })
+
+  it('tells the model what the crop saved, so it can judge whether to crop again', async () => {
+    const outcome = await read(paths.quadrants, { x: 0, y: 0, width: 200, height: 200 })
+    if (!outcome.ok) throw new Error(outcome.reason)
+
+    expect(outcome.modelText).toContain('64 visual tokens')
+    expect(outcome.modelText).toContain('225 for the whole 400×400 image')
+  })
+
+  it('trims a region that overhangs and says it did', async () => {
+    const outcome = await read(paths.quadrants, { x: 300, y: 300, width: 500, height: 500 })
+    if (!outcome.ok) throw new Error(outcome.reason)
+
+    expect(outcome.modelText).toContain('trimmed to fit the image')
+    expect(imageOutput(outcome.output)).toMatchObject({ width: 100, height: 100 })
+  })
+
+  it('refuses an origin outside the picture instead of returning something else', async () => {
+    const outcome = await read(paths.quadrants, { x: 900, y: 0, width: 10, height: 10 })
+
+    expect(outcome.ok).toBe(false)
+    expect(!outcome.ok && outcome.reason).toContain('past the right edge')
+  })
+
+  it('says region does not apply to a text file rather than ignoring it', async () => {
+    const outcome = await read(paths.text, { x: 0, y: 0, width: 10, height: 10 })
+
+    expect(outcome.ok).toBe(false)
+    expect(!outcome.ok && outcome.reason).toContain('not an image')
   })
 })
