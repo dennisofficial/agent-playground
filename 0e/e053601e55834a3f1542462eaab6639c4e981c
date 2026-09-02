@@ -1,0 +1,33 @@
+apps/tui/package.json
+  s_2ee334b9d0aff9::t_cc6e73a15d62f3 8-9
+packages/harness/src/store/paths.ts
+  s_2ee334b9d0aff9::t_18ca93b081d437 2,21
+packages/core/src/memory/__tests__/recognise.spec.ts
+  s_2ee334b9d0aff9::t_c0e082a83b8887 18-19,58,63
+packages/core/src/memory/recognise.ts
+  s_2ee334b9d0aff9::t_18ca93b081d437 1,7,21,46
+packages/core/src/workspace/__tests__/atlas-home.spec.ts
+  s_2ee334b9d0aff9::t_7aef080cef5598 8-9,12,19-21,25
+  s_2ee334b9d0aff9::t_245945b2bc49a6 13-15,26
+apps/tui/bin/atlas-dev
+  s_2ee334b9d0aff9::t_7e24fd8ccb4833 1-27
+.gitignore
+  s_2ee334b9d0aff9::t_aeba46ced2c270 55-57
+  s_2ee334b9d0aff9::t_7e24fd8ccb4833 68-70
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "0ee053601e55834a3f1542462eaab6639c4e981c",
+  "prompts": {},
+  "sessions": {
+    "s_2ee334b9d0aff9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d3cde86-230c-45c2-b31b-701e60787293",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
