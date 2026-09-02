@@ -17,7 +17,8 @@ import { GrantsSection } from './sidebar/grants'
 import { HeadSection } from './sidebar/head'
 import { ShellsSection } from './sidebar/shells'
 import { TodoSection } from './sidebar/todo'
-import { ApprovalsSection, TurnSection } from './sidebar/turn'
+import { TurnSection } from './sidebar/turn'
+import { useRelaxedThumb } from '../scrollbar-thumb'
 import type { TurnClock } from './transcript'
 
 const worktreeLabel = (args: { worktree: string; root: string }): string =>
@@ -95,6 +96,7 @@ export function Sidebar(props: {
   const { model } = props
   const cells = sidebarCells({ width: props.width })
   const floating = props.overlay === true
+  const attachThumb = useRelaxedThumb()
 
   return (
     <>
@@ -114,6 +116,7 @@ export function Sidebar(props: {
         right={0}
       >
         <scrollbox
+          ref={attachThumb}
           flexGrow={1}
           flexShrink={1}
           flexBasis={0}
@@ -127,7 +130,6 @@ export function Sidebar(props: {
               cells={cells}
             />
             <TurnSection turn={props.turn} now={props.now} cells={cells} />
-            <ApprovalsSection model={model} cells={cells} />
             <ShellsSection
               shells={props.shells ?? []}
               now={props.shellNow ?? Date.now()}

@@ -30,6 +30,14 @@ const THUMB = /[█▀▄]/
 
 const OVERFLOWING_HEIGHT = 20
 
+const BARELY_OVERFLOWING_HEIGHT = 36
+
+const MANY_TASKS = Array.from({ length: 30 }, (_, task) => ({
+  id: `m${task}`,
+  label: `task ${task}`,
+  state: ESidebarTaskState.Pending,
+}))
+
 const RUNNING: TurnClock = {
   startedAt: 1_000,
   outputTokens: 1_280,
@@ -171,6 +179,13 @@ const rowWith = (args: { rows: readonly string[]; text: string }): string =>
 
 const written = (row: string): string => row.slice(0, CONTENT_END)
 
+const trackHeight = (setup: Awaited<ReturnType<typeof testRender>>): number => {
+  const scroller = setup.renderer.root.getChildren()[0]?.getChildren()[0]?.getChildren()[0]
+  if (scroller === undefined) throw new Error('the sidebar scrollbox never mounted')
+
+  return scroller.height
+}
+
 describe('the scroll gutter', () => {
   it('runs the scrollbar down the last column, a clear gutter away from the text', async () => {
     const rows = await rowsOf({ model: FED, height: OVERFLOWING_HEIGHT })
@@ -179,6 +194,35 @@ describe('the scroll gutter', () => {
     expect(track.length).toBeGreaterThan(0)
 
     for (const row of rows) expect(row.slice(CONTENT_END, SIDEBAR_WIDTH - 1).trim()).toBe('')
+  }, 30_000)
+
+  it('fills nearly the whole track when nearly the whole panel is on screen', async () => {
+    const setup = await testRender(
+      <box flexDirection="row" width={TERMINAL_WIDTH} height={BARELY_OVERFLOWING_HEIGHT}>
+        <Sidebar
+          width={SIDEBAR_WIDTH}
+          model={{ ...IDLE_SIDEBAR, title: 'Barely over', todo: MANY_TASKS }}
+          turn={IDLE_TURN}
+          now={42_000}
+          root={CWD}
+          worktree={null}
+        />
+      </box>,
+      { width: TERMINAL_WIDTH, height: BARELY_OVERFLOWING_HEIGHT },
+    )
+
+    try {
+      await setup.flush()
+      const track = trackHeight(setup)
+      const thumb = setup
+        .captureCharFrame()
+        .split('\n')
+        .filter((row) => THUMB.test(row.slice(SIDEBAR_WIDTH - 1, SIDEBAR_WIDTH))).length
+
+      expect(thumb).toBeGreaterThan(track * 0.8)
+    } finally {
+      await teardown(setup)
+    }
   }, 30_000)
 })
 
@@ -503,14 +547,19 @@ describe('what the sidebar says', () => {
     expect(frame).not.toContain('60.7k')
   }, 30_000)
 
-  it('keeps the live turn and the approval in view', async () => {
+  it('keeps the live turn in view', async () => {
     const rows = await rowsOf({ model: FED })
     const frame = rows.join('\n')
 
     expect(frame).toContain('TURN')
     expect(rowWith({ rows, text: 'working' })).toContain('41s')
-    expect(rowWith({ rows, text: 'APPROVALS' })).toContain('1')
-    expect(frame).toContain('runs a shell command')
+  }, 30_000)
+
+  it('says nothing about the classifier, which does not belong in the column', async () => {
+    const frame = (await rowsOf({ model: FED })).join('\n')
+
+    expect(frame).not.toContain('APPROVALS')
+    expect(frame).not.toContain('pauses')
   }, 30_000)
 
   it('calls a stalled turn retrying rather than working', async () => {
@@ -678,48 +727,4 @@ describe('a section a plugin contributed', () => {
 
     expect(rows.some((row) => row.includes('DEPLOYS'))).toBe(false)
   })
-})
-
-describe('the nudge figure', () => {
-  const watched = (over: Partial<SidebarModel['classifier']> = {}): SidebarModel => ({
-    ...IDLE_SIDEBAR,
-    classifier: {
-      pauses: 2,
-      turns: 40,
-      topDimension: ERiskDimension.Contention,
-      quietedCalls: 0,
-      judgeUnreachable: false,
-      ...over,
-    },
-  })
-
-  it('says how often it stopped the operator, against how many turns it watched', async () => {
-    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
-
-    expect(rowWith({ rows, text: 'pauses' })).toContain('2 / 40 turns')
-  }, 30_000)
-
-  it('names the dimension it interrupted about most', async () => {
-    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
-
-    expect(rowWith({ rows, text: 'most often' })).toContain(ERiskDimension.Contention)
-  }, 30_000)
-
-  it('stands under its own heading with no outstanding question to answer', async () => {
-    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
-
-    expect(rows.join('\n')).toContain('APPROVALS')
-  }, 30_000)
-
-  it('says when a thread has spent its interruptions and gone quiet', async () => {
-    const rows = await rowsOf({ model: watched({ quietedCalls: 3 }), turn: IDLE_TURN })
-
-    expect(rowWith({ rows, text: 'went quiet' })).toContain('3')
-  }, 30_000)
-
-  it('keeps the quiet row away when nothing has been waved through', async () => {
-    const rows = await rowsOf({ model: watched(), turn: IDLE_TURN })
-
-    expect(rowWith({ rows, text: 'went quiet' })).toBe('')
-  }, 30_000)
 })
