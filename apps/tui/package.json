@@ -5,7 +5,8 @@
   "description": "Atlas \u2014 a coding-agent harness in the shape of Claude Code.",
   "type": "module",
   "bin": {
-    "atlas": "./bin/atlas"
+    "atlas": "./bin/atlas",
+    "atlas-dev": "./bin/atlas-dev"
   },
   "scripts": {
     "dev": "bun run --filter @dltech/atlas-harness db:ensure && bun src/main.tsx",

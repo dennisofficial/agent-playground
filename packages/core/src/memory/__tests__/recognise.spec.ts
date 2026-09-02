@@ -8,7 +8,6 @@ import {
 } from '../recognise'
 
 const GLOBAL = '/Users/d/.atlas/memory/git-trailers.md'
-const DEV = '/Users/d/Developer/atlas/.atlas-home/memory/git-trailers.md'
 const PROJECT = '/Users/d/.atlas/projects/-Users-d-Developer-atlas/memory/bun-deflate.md'
 
 describe('looksLikeMemoryPath', () => {
@@ -16,8 +15,8 @@ describe('looksLikeMemoryPath', () => {
     expect(looksLikeMemoryPath(GLOBAL)).toBe(true)
   })
 
-  it('recognises a memory under the development home', () => {
-    expect(looksLikeMemoryPath(DEV)).toBe(true)
+  it('leaves a checkout that once held a development home alone', () => {
+    expect(looksLikeMemoryPath('/Users/d/Developer/atlas/.atlas-home/memory/old.md')).toBe(false)
   })
 
   it('recognises a memory under a project directory', () => {
@@ -56,12 +55,12 @@ describe('memoryNameOf', () => {
 
 describe('mentionsMemoryPath', () => {
   it('sees a memory directory named in a shell line', () => {
-    expect(mentionsMemoryPath('ls -la .atlas-home/memory')).toBe(true)
+    expect(mentionsMemoryPath('ls -la .atlas/memory')).toBe(true)
   })
 
   it('sees a project memory index behind a redirect', () => {
     expect(
-      mentionsMemoryPath('cat .atlas-home/projects/-Users-d-code/memory/MEMORY.md 2>/dev/null'),
+      mentionsMemoryPath('cat .atlas/projects/-Users-d-code/memory/MEMORY.md 2>/dev/null'),
     ).toBe(true)
   })
 

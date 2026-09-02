@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+set -eu
+
+# Bun resolves its tsconfig from the process working directory, so a source launch has to start
+# inside this workspace or it loses `emitDecoratorMetadata` and every injected constructor with it.
+# The directory to work in travels as --cwd instead.
+# https://bun.com/docs/runtime/typescript
+
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+
+tui=$(cd "$(dirname "$self")/.." && pwd)
+project=$PWD
+
+cd "$tui"
+
+if [ "${ATLAS_DEV_SKIP_DB:-}" = "" ]; then
+  bun run --filter @dltech/atlas-harness db:ensure >/dev/null 2>&1 || true
+fi
+
+exec bun src/main.tsx --cwd "$project" "$@"
