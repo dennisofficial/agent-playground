@@ -1,0 +1,20 @@
+packages/core/src/memory/prompt.ts
+  s_b30e873f60912a::t_0c449fc9ce157e 38
+  s_b30e873f60912a::t_fa3f1d07a4ba9c 37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "acea008ca346edc6b92930246f62b24a3a582564",
+  "prompts": {},
+  "sessions": {
+    "s_b30e873f60912a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d65e122b-c13a-4b8b-97bc-2f2af364e50b",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
