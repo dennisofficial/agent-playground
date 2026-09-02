@@ -2,6 +2,7 @@ export enum ECredentialFailure {
   StoreUnavailable = 'store-unavailable',
   NotFound = 'not-found',
   Unreadable = 'unreadable',
+  Unsupported = 'unsupported',
   Expired = 'expired',
   RefreshFailed = 'refresh-failed',
 }

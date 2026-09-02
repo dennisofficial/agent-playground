@@ -12,6 +12,7 @@ const adviceFor: Record<ECredentialFailure, string | null> = {
   [ECredentialFailure.StoreUnavailable]: null,
   [ECredentialFailure.NotFound]: SIGN_IN,
   [ECredentialFailure.Unreadable]: SIGN_IN,
+  [ECredentialFailure.Unsupported]: 'Update Atlas to a build that can read it.',
   [ECredentialFailure.Expired]: SIGN_IN,
   [ECredentialFailure.RefreshFailed]: 'Check the network, then try the turn again.',
 }

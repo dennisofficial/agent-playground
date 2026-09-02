@@ -6,7 +6,18 @@ import { accountSecretSchema, type AccountSecret } from '@dltech/atlas-core'
 
 import { CredentialError, ECredentialFailure } from './credential-error'
 import type { SecretCipher } from './secret-cipher'
-import { emptyVault, vaultFileSchema, type VaultFile } from './vault-file'
+import {
+  emptyRemainder,
+  emptyVault,
+  readVaultEnvelope,
+  vaultEnvelopeSchema,
+  VAULT_VERSION,
+  versionedFileSchema,
+  withRemainder,
+  type VaultFile,
+  type VaultReading,
+  type VaultRemainder,
+} from './vault-file'
 
 const OWNER_ONLY = 0o600
 
@@ -27,7 +38,13 @@ const unreadable = (where: string, detail: string): CredentialError =>
     message: `The account vault at ${where} could not be read: ${detail}. Move it aside and sign in again with /auth.`,
   })
 
-export const parseVault = (args: { text: string; where: string }): VaultFile => {
+const writtenByANewerAtlas = (where: string, version: number): CredentialError =>
+  new CredentialError({
+    failure: ECredentialFailure.Unsupported,
+    message: `The account vault at ${where} is version ${version}, and this build of Atlas understands version ${VAULT_VERSION}. The accounts in it are intact — update Atlas rather than moving the vault aside.`,
+  })
+
+export const parseVault = (args: { text: string; where: string }): VaultReading => {
   let json: unknown
   try {
     json = JSON.parse(args.text)
@@ -35,34 +52,51 @@ export const parseVault = (args: { text: string; where: string }): VaultFile => 
     throw unreadable(args.where, 'the file is not valid JSON')
   }
 
-  const parsed = vaultFileSchema.safeParse(json)
-  if (!parsed.success) throw unreadable(args.where, 'the file does not hold an account vault')
+  const versioned = versionedFileSchema.safeParse(json)
+  if (versioned.success && versioned.data.version > VAULT_VERSION)
+    throw writtenByANewerAtlas(args.where, versioned.data.version)
 
-  return parsed.data
+  const envelope = vaultEnvelopeSchema.safeParse(json)
+  if (!envelope.success) throw unreadable(args.where, 'the file does not hold an account vault')
+
+  const reading = readVaultEnvelope(envelope.data)
+  if (reading === undefined)
+    throw unreadable(args.where, 'an account in it is not in the shape Atlas writes')
+
+  return reading
 }
 
-export const fileVaultBackend = (file: string): VaultBackend => ({
-  name: file,
+export const fileVaultBackend = (file: string): VaultBackend => {
+  let remainder: VaultRemainder = emptyRemainder()
 
-  load: () => {
-    let text: string
-    try {
-      text = readFileSync(file, 'utf8')
-    } catch {
-      return emptyVault()
-    }
+  return {
+    name: file,
 
-    return parseVault({ text, where: file })
-  },
+    load: () => {
+      let text: string
+      try {
+        text = readFileSync(file, 'utf8')
+      } catch {
+        remainder = emptyRemainder()
+        return emptyVault()
+      }
 
-  save: (vault) => {
-    mkdirSync(dirname(file), { recursive: true })
+      const reading = parseVault({ text, where: file })
+      remainder = reading.remainder
 
-    const temporary = join(dirname(file), `.${randomUUID()}.tmp`)
-    writeFileSync(temporary, `${JSON.stringify(vault, null, 2)}\n`, { mode: OWNER_ONLY })
-    renameSync(temporary, file)
-  },
-})
+      return reading.vault
+    },
+
+    save: (vault) => {
+      mkdirSync(dirname(file), { recursive: true })
+
+      const written = JSON.stringify(withRemainder({ vault, remainder }), null, 2)
+      const temporary = join(dirname(file), `.${randomUUID()}.tmp`)
+      writeFileSync(temporary, `${written}\n`, { mode: OWNER_ONLY })
+      renameSync(temporary, file)
+    },
+  }
+}
 
 export const memoryVaultBackend = (): VaultBackend => {
   let held: VaultFile = emptyVault()
