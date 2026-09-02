@@ -1,6 +1,7 @@
 import { homedir } from 'node:os'
 
 import { EAgentStatus, ERetryReason, ERiskDimension, toCallId } from '@dltech/atlas-core'
+import { parseColor, type RGBA } from '@opentui/core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React, { act } from 'react'
@@ -14,7 +15,7 @@ import { SIDEBAR_GUTTER } from '../components/sidebar/cells'
 import { IDLE_TURN, type TurnClock } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
 import { ESidebarPlace } from '../sidebar-section'
-import { glyph, SPINNER_FRAMES, SIDEBAR_WIDTH } from '../theme'
+import { glyph, SPINNER_FRAMES, SIDEBAR_WIDTH, theme } from '../theme'
 
 const TERMINAL_WIDTH = 80
 
@@ -382,6 +383,60 @@ describe('what the sidebar says', () => {
       await setup.flush()
 
       expect(opened).toEqual([PR_URL])
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('washes the pull request row under the pointer, and only that row', async () => {
+    const setup = await testRender(
+      <box flexDirection="row" width={TERMINAL_WIDTH} height={HEIGHT}>
+        <Sidebar
+          width={SIDEBAR_WIDTH}
+          model={FED}
+          turn={RUNNING}
+          now={42_000}
+          root={CWD}
+          worktree={null}
+        />
+      </box>,
+      { width: TERMINAL_WIDTH, height: HEIGHT },
+    )
+
+    try {
+      await setup.flush()
+      const rows = setup.captureCharFrame().split('\n')
+      const pullRequest = rows.findIndex((line) => line.includes('#412 draft'))
+      const branch = rows.findIndex((line) => line.includes('auth/rotation'))
+      const column = (rows[pullRequest] ?? '').indexOf('#412')
+
+      const groundAt = (row: number): RGBA | undefined => {
+        let at = 0
+        for (const span of setup.captureSpans().lines[row]?.spans ?? []) {
+          at += [...span.text].length
+          if (column < at) return span.bg
+        }
+        return undefined
+      }
+
+      const hoverBg = parseColor(theme.hoverBg)
+
+      expect(groundAt(pullRequest)?.equals(hoverBg) ?? false).toBe(false)
+
+      await act(async () => {
+        await setup.mockMouse.moveTo(column, pullRequest)
+      })
+      await setup.flush()
+
+      expect(groundAt(pullRequest)?.equals(hoverBg)).toBe(true)
+      expect(groundAt(branch)?.equals(hoverBg) ?? false).toBe(false)
+
+      await act(async () => {
+        await setup.mockMouse.moveTo(column, branch)
+      })
+      await setup.flush()
+
+      expect(groundAt(pullRequest)?.equals(hoverBg) ?? false).toBe(false)
     } finally {
       await teardown(setup)
     }

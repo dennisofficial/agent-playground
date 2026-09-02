@@ -30,6 +30,12 @@ function liftViewportClamp(slider: SliderRenderable): void {
   })
 }
 
+export function useRelaxedThumb(): (box: ScrollBoxRenderable | null) => void {
+  return useCallback((box: ScrollBoxRenderable | null) => {
+    if (box) relaxScrollbarThumb(box)
+  }, [])
+}
+
 export function useProportionalThumb(
   ref: RefObject<ScrollBoxRenderable | null>,
 ): (box: ScrollBoxRenderable | null) => void {
