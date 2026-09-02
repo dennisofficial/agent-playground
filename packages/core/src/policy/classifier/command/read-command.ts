@@ -1,4 +1,5 @@
 import { normalisePath, resolveAgainst } from '../path-set'
+import { assignmentsVisibleAcross, isAssignment } from './assignments'
 import { cwdAfterSegment, cwdForSegment } from './cwd'
 import { EExpansionKind } from './expansion'
 import { splitArguments } from './flags'
@@ -24,27 +25,7 @@ import {
 export { EReadConfidence }
 export type { CommandReading, CommandSegment }
 
-const assignmentPattern = /^[A-Za-z_][A-Za-z0-9_]*=/
 const uriPattern = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//
-
-function harvestAssignments({
-  segments,
-}: {
-  segments: readonly TokenSegment[]
-}): Map<string, string> {
-  const assignments = new Map<string, string>()
-
-  for (const segment of segments) {
-    for (const word of segment.words) {
-      if (!assignmentPattern.test(word.text)) break
-      if (word.expansions.length > 0) break
-      const equals = word.text.indexOf('=')
-      assignments.set(word.text.slice(0, equals), word.text.slice(equals + 1))
-    }
-  }
-
-  return assignments
-}
 
 function expansionsOf({ tokens }: { tokens: readonly LexedToken[] }): readonly string[] {
   const seen = new Set<string>()
@@ -75,7 +56,7 @@ function meaningfulWords({ words }: { words: readonly LexedToken[] }): readonly 
     const word = words[start]
     if (word === undefined) break
     if (word.isHeredocBody) break
-    if (!assignmentPattern.test(word.text) && !segmentIntroducers.has(word.text)) break
+    if (!isAssignment({ text: word.text }) && !segmentIntroducers.has(word.text)) break
     start += 1
   }
 
@@ -176,7 +157,7 @@ function readWithin(args: {
   depth: number
 }): Pass {
   const survey = splitSegments({ tokens: lexCommand({ command: args.command }).tokens })
-  const assignments = harvestAssignments({ segments: survey })
+  const assignments = assignmentsVisibleAcross({ segments: survey })
 
   const lexed = lexCommand({
     command: args.command,
