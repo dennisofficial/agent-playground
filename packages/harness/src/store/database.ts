@@ -1,11 +1,17 @@
 import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import { PrismaBunSqlite, runMigrations } from 'prisma-adapter-bun-sqlite'
+import {
+  getAppliedMigrations,
+  PrismaBunSqlite,
+  runMigrations,
+  type Migration,
+} from 'prisma-adapter-bun-sqlite'
 
 import { PrismaClient } from '../../prisma/generated/client'
 import { atlasMigrationsDirectory, loadAtlasMigrations } from './migrations'
 import { atlasDatabaseUrl, databaseFileFromUrl } from './paths'
+import { retryOnWriteConflict } from './retry'
 
 // `bun:sqlite` is synchronous, so SQLite's own `busy_timeout` blocks the thread rather than the
 // promise. A second writer in the same process would therefore stall the writer it is waiting for,
@@ -19,6 +25,19 @@ export type AtlasDatabase = {
   close: () => Promise<void>
 }
 
+export class DatabaseFromNewerAtlasError extends Error {
+  readonly migrations: readonly string[]
+
+  constructor(args: { file: string; migrations: readonly string[] }) {
+    super(
+      `The Atlas database at ${args.file} already holds migrations this build does not know: ${args.migrations.join(', ')}. ` +
+        'It was written by a newer Atlas and is untouched — update Atlas rather than pointing this build at it.',
+    )
+    this.name = 'DatabaseFromNewerAtlasError'
+    this.migrations = args.migrations
+  }
+}
+
 export async function openAtlasDatabase({
   databaseUrl = atlasDatabaseUrl(),
 }: { databaseUrl?: string } = {}): Promise<AtlasDatabase> {
@@ -30,7 +49,7 @@ export async function openAtlasDatabase({
     wal: { enabled: true, busyTimeout: BUSY_TIMEOUT_MS },
   })
 
-  await applyMigrations(factory)
+  await applyMigrations(factory, file)
 
   const prisma = new PrismaClient({ adapter: factory })
   return {
@@ -42,16 +61,37 @@ export async function openAtlasDatabase({
   }
 }
 
-async function applyMigrations(factory: PrismaBunSqlite): Promise<void> {
+// Two TUIs launched in the same instant both find a migration unapplied and both run its DDL, so
+// each attempt is one transaction behind the retry loop: the loser fails with SQLITE_BUSY, rolls
+// back cleanly, and retries into a world where the winner's run has already landed.
+async function applyMigrations(factory: PrismaBunSqlite, file: string): Promise<void> {
   const migrations = await loadAtlasMigrations()
   if (migrations.length === 0) throw new Error(noMigrations())
 
-  const adapter = await factory.connect()
-  try {
-    await runMigrations(adapter, migrations, { logger: () => undefined })
-  } finally {
-    await adapter.dispose()
-  }
+  await retryOnWriteConflict({
+    run: async () => {
+      const adapter = await factory.connect()
+      try {
+        await refuseDatabaseFromANewerAtlas({ adapter, migrations, file })
+        await runMigrations(adapter, migrations, { logger: () => undefined, useTransaction: true })
+      } finally {
+        await adapter.dispose()
+      }
+    },
+  })
+}
+
+async function refuseDatabaseFromANewerAtlas(args: {
+  adapter: Awaited<ReturnType<PrismaBunSqlite['connect']>>
+  migrations: Migration[]
+  file: string
+}): Promise<void> {
+  const known = new Set(args.migrations.map((migration) => migration.name))
+  const applied = await getAppliedMigrations(args.adapter)
+  const foreign = applied.filter((name) => !known.has(name))
+  if (foreign.length === 0) return
+
+  throw new DatabaseFromNewerAtlasError({ file: args.file, migrations: foreign })
 }
 
 /**
