@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it } from 'bun:test'
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, rm, symlink } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -193,6 +193,75 @@ describe('adopting a worktree the session did not create', () => {
 
     expect(enteredWorktreeOf(outcome.output)).toBeUndefined()
     expect(outcome.modelText).toContain('already in the worktree')
+  })
+})
+
+describe('naming the worktree to enter', () => {
+  it('accepts a path relative to the directory the session is standing in', async () => {
+    const root = await repoWithOrigin()
+    const tree = join(root, WORKTREE_DIRECTORY, 'eng-659')
+    await git(['worktree', 'add', '-b', 'eng-659', tree], root)
+
+    const { enter } = toolsFor(root)
+    const outcome = await enter.invoke(
+      invocation({ input: { path: `${WORKTREE_DIRECTORY}/eng-659` }, projectDirectory: root }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+
+    expect(enteredWorktreeOf(outcome.output)?.path).toBe(tree)
+    expect(enteredWorktreeOf(outcome.output)?.branch).toBe('eng-659')
+  })
+
+  it('resolves a relative path against the worktree the session already moved into', async () => {
+    const root = await repoWithOrigin()
+    const here = join(root, 'here')
+    const sibling = join(root, 'sibling')
+    await git(['worktree', 'add', '-b', 'here', here], root)
+    await git(['worktree', 'add', '-b', 'sibling', sibling], root)
+
+    const { enter } = toolsFor(root)
+    const outcome = await enter.invoke(
+      invocation({ input: { path: '../sibling' }, projectDirectory: here }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+
+    expect(enteredWorktreeOf(outcome.output)?.path).toBe(sibling)
+  })
+
+  it('accepts a path that reaches the worktree through a symlink', async () => {
+    const root = await repoWithOrigin()
+    const tree = join(root, 'linked')
+    await git(['worktree', 'add', '-b', 'linked', tree], root)
+
+    const alias = join(await scratch(), 'alias')
+    await symlink(tree, alias)
+
+    const { enter } = toolsFor(root)
+    const outcome = await enter.invoke(
+      invocation({ input: { path: alias }, projectDirectory: root }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+
+    expect(enteredWorktreeOf(outcome.output)?.path).toBe(tree)
+  })
+
+  it('says what a path it cannot find resolved to, so the mismatch is visible', async () => {
+    const root = await repoWithOrigin()
+    const { enter } = toolsFor(root)
+
+    const outcome = await enter.invoke(
+      invocation({ input: { path: 'nowhere/at-all' }, projectDirectory: root }),
+    )
+
+    expect(outcome.ok).toBe(false)
+    expect(reasonOf(outcome)).toContain('nowhere/at-all')
+    expect(reasonOf(outcome)).toContain(join(root, 'nowhere/at-all'))
   })
 })
 

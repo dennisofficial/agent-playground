@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
 import { listWorktrees, type Worktree } from '../../workspace/worktrees'
@@ -25,6 +25,21 @@ export async function repositoryAt({ cwd }: { cwd: string }): Promise<Repository
   }
 
   return { ok: true, view: { root: main.path, worktrees: listing.worktrees } }
+}
+
+export async function canonicalPath({
+  base,
+  path,
+}: {
+  base: string
+  path: string
+}): Promise<string> {
+  const absolute = isAbsolute(path) ? path : resolve(base, path)
+  try {
+    return await realpath(absolute)
+  } catch {
+    return absolute
+  }
 }
 
 export const worktreeAt = (args: {

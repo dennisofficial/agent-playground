@@ -4,7 +4,13 @@ import {
   upstreamOf,
   type Worktree,
 } from '../../workspace/worktrees'
-import { hideWorktreeHome, isUnder, worktreeAt, type RepositoryView } from './worktree-support'
+import {
+  canonicalPath,
+  hideWorktreeHome,
+  isUnder,
+  worktreeAt,
+  type RepositoryView,
+} from './worktree-support'
 
 export type AdoptedWorktree = {
   path: string
@@ -68,14 +74,17 @@ function stateLine({
 export async function adoptWorktree(args: {
   view: RepositoryView
   path: string
+  cwd: string
   worktreeHome: string
 }): Promise<AdoptOutcome> {
-  const target = worktreeAt({ view: args.view, path: args.path })
+  const path = await canonicalPath({ base: args.cwd, path: args.path })
+  const target = worktreeAt({ view: args.view, path })
   if (target === undefined) {
     const known = args.view.worktrees.map((worktree) => worktree.path).join(', ')
+    const named = path === args.path ? path : `${args.path}, which is ${path},`
     return {
       ok: false,
-      reason: `git does not list ${args.path} as a worktree of the repository at ${args.view.root}. It lists: ${known}`,
+      reason: `git does not list ${named} as a worktree of the repository at ${args.view.root}. It lists: ${known}`,
     }
   }
 
