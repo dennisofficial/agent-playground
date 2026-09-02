@@ -1,0 +1,38 @@
+packages/harness/src/hooks/registry.ts
+  s_8ae1fa940f8094::t_bba10e75814776 48,101
+packages/harness/src/tools/__tests__/dispatch-budget.spec.ts
+  s_8ae1fa940f8094::t_1db498ee0b07ac 12,51,69,110
+  s_8ae1fa940f8094::t_39afdb7a27c6b1 1-11,13-50,52-68,70-109,111-152
+packages/harness/src/classifier/__tests__/no-judge.spec.ts
+  s_8ae1fa940f8094::t_ad567b8cbf55da 1-95
+packages/harness/src/classifier/judge-memo.ts
+  s_8ae1fa940f8094::t_8e75e5876f6d48 22-24,98
+packages/harness/src/tools/dispatch.ts
+  s_8ae1fa940f8094::t_bba10e75814776 27,79,204-205,269
+packages/harness/src/classifier/__tests__/judge-memo.spec.ts
+  s_8ae1fa940f8094::t_fb75400dfc25f4 15-26
+packages/harness/src/classifier/__tests__/judge-memo-kit.ts
+  s_8ae1fa940f8094::t_8a7b4d0140ca36 1-117
+packages/harness/src/classifier/__tests__/judge-memo-unreachable.spec.ts
+  s_8ae1fa940f8094::t_a810262b793dac 1-57
+packages/harness/src/tools/hook-silence.ts
+  s_8ae1fa940f8094::t_57f75803709141 1-24
+packages/harness/src/classifier/register-classifier.ts
+  s_8ae1fa940f8094::t_109c4754da9d16 4,8,16-30,33-34,47
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "9cf170b3ef31fb8a35e75d032894c72bcab68852",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
