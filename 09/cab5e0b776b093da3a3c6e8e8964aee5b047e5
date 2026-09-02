@@ -1,0 +1,39 @@
+packages/harness/src/container/__tests__/shell-hook-cycle.spec.ts
+  s_8ae1fa940f8094::t_71c84c6fd16d01 45,69-72
+apps/tui/src/plugins/github/index.ts
+  s_8ae1fa940f8094::t_5fd0e18e69daa8 2-7
+  s_8ae1fa940f8094::t_fdb41773f0e23a 73-78
+packages/harness/src/shells/register-shells.ts
+  s_8ae1fa940f8094::t_1d178e6b962b31 1-2,5-9,26-30
+packages/harness/src/prompt/register-prompt-fragments.ts
+  s_8ae1fa940f8094::t_ce575bae8710df 3
+  s_8ae1fa940f8094::t_bb1d9238ae0a69 79-80,84-86
+packages/harness/src/container/create-harness-container.ts
+  s_8ae1fa940f8094::t_a5d8d110f02436 100-118
+  s_8ae1fa940f8094::t_1d178e6b962b31 51
+packages/harness/src/tools/register-tools.ts
+  s_8ae1fa940f8094::t_7d9c744f82b4ee 4-14,39-42,44-52,55-63,65-96,99-105
+packages/harness/src/container/__tests__/harness-graph.spec.ts
+  s_8ae1fa940f8094::t_71c84c6fd16d01 6,12-17,30-31,51-52,61-63
+packages/harness/src/files/register-file-state.ts
+  s_8ae1fa940f8094::t_bb1d9238ae0a69 7
+  s_8ae1fa940f8094::t_1d178e6b962b31 10-12
+apps/tui/scripts/generate-plugins.ts
+  s_8ae1fa940f8094::t_fdb41773f0e23a 33,35-38,45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "09cab5e0b776b093da3a3c6e8e8964aee5b047e5",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    }
+  }
+}
