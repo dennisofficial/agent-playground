@@ -13,6 +13,7 @@ import { SIDEBAR_GUTTER, SIDEBAR_PADDING, sidebarCells } from './sidebar/cells'
 import { ESidebarPlace } from '../sidebar-section'
 import { ContributedSections } from './sidebar/contributed'
 import { SubagentsSection, TeammatesSection } from './sidebar/crew'
+import { GrantsSection } from './sidebar/grants'
 import { HeadSection } from './sidebar/head'
 import { ShellsSection } from './sidebar/shells'
 import { TodoSection } from './sidebar/todo'
@@ -89,6 +90,7 @@ export function Sidebar(props: {
   shellFold?: SidebarCrewFold
   onOpenShell?: (shellId: string) => void
   onSelectSubagent?: (agentId: string) => void
+  onRevokeGrant?: (grantId: string) => void
 }): React.ReactNode {
   const { model } = props
   const cells = sidebarCells({ width: props.width })
@@ -132,6 +134,11 @@ export function Sidebar(props: {
               cells={cells}
               fold={props.shellFold}
               {...(props.onOpenShell === undefined ? {} : { onOpen: props.onOpenShell })}
+            />
+            <GrantsSection
+              grants={model.grants ?? []}
+              cells={cells}
+              {...(props.onRevokeGrant === undefined ? {} : { onRevoke: props.onRevokeGrant })}
             />
             <TodoSection tasks={model.todo ?? []} cells={cells} />
             <SubagentsSection

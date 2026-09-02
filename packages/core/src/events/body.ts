@@ -2,7 +2,7 @@ import type { EAgentStart } from '../agents/start'
 import type { EAgentStatus } from '../agents/status'
 import type { ImagePart, ReasoningPart, TextPart } from '../message/parts'
 import type { ERiskDimension } from '../policy/classifier/dimension'
-import type { EGrantScope } from '../policy/classifier/grant'
+import type { EGrantScope, GrantOffer } from '../policy/classifier/grant'
 import type { EClassifierMode, ETriage } from '../policy/classifier/triage'
 import type { EJudgment } from '../policy/classifier/verdict'
 import type { EKilledBy, EShellStatus } from '../shells/status'
@@ -140,6 +140,7 @@ export type EventBody =
       judgedDimension?: ERiskDimension | undefined
       signalIds: readonly string[]
       details?: readonly string[] | undefined
+      grantables?: readonly GrantOffer[] | undefined
       reason: string
       consulted: boolean
       wouldAsk?: boolean | undefined

@@ -28,6 +28,7 @@ import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
 import type { RecoveredAgents } from '@dltech/atlas-harness'
 import { ECompactScope } from './compact-turn'
+import { useRevokeGrant } from './revoke-grant'
 import type { Renaming } from './session-rename'
 import { threadHandle } from './thread-slug'
 import { userSaidDraft } from './user-said'
@@ -78,6 +79,7 @@ export type Conversation = {
   handleCompact: (scope: ECompactScope) => void
   handleCompactAround: (args: { anchor: ECompactionAnchor; seq: number }) => void
   handleRewindTo: (toSeq: number) => void
+  handleRevokeGrant: (grantId: string) => void
 }
 
 export function useConversation(args: {
@@ -121,6 +123,8 @@ export function useConversation(args: {
     store,
     initial: args.opened.events,
   })
+
+  const handleRevokeGrant = useRevokeGrant({ app, threadId, refresh })
 
   const { name, setName, nameSession, renameSession } = useSessionName({
     app,
@@ -312,5 +316,6 @@ export function useConversation(args: {
     handleCompact: compaction.compact,
     handleCompactAround: compaction.compactAround,
     handleRewindTo: turnDriver.handleRewindTo,
+    handleRevokeGrant,
   }
 }

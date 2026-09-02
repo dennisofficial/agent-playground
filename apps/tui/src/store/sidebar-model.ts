@@ -1,10 +1,12 @@
 import {
   EPlanStatus,
   eventsOfType,
+  grantsFrom,
   outstandingApproval,
   planFromEvents,
   type CallId,
   type Event,
+  type Grant,
 } from '@dltech/atlas-core'
 
 import { classifierFold, type ClassifierFold } from './classifier-fold'
@@ -45,6 +47,7 @@ export type SidebarModel = {
   teammates?: readonly SidebarTeammate[]
   sections?: readonly SidebarSection[]
   classifier?: ClassifierFold
+  grants?: readonly Grant[]
 }
 
 export const IDLE_SIDEBAR: SidebarModel = {
@@ -110,6 +113,7 @@ export function deriveSidebar(args: {
 
   const todo = todoOf(events)
   const classifier = classifierFold({ events })
+  const grants = grantsFrom(events)
 
   return {
     title: titleOf({ events, name }),
@@ -121,6 +125,7 @@ export function deriveSidebar(args: {
     lastTurnOutputTokens,
     ...(todo.length === 0 ? {} : { todo }),
     ...(classifier === null ? {} : { classifier }),
+    ...(grants.length === 0 ? {} : { grants }),
   }
 }
 

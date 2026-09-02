@@ -1,6 +1,7 @@
 import type { EventDraft } from '../../events/body'
 import type { ToolCall } from '../../tools/tool'
 import { EBeforeToolDecision, type BeforeToolOutcome } from '../before-tool'
+import { grantOffersOf } from './grant'
 import { reachesSeverity, type RiskSignal } from './signals'
 import { EClassifierMode, ETriage, type ClassifierPolicy, type Triage } from './triage'
 import { dimensionCitedIn, EJudgment, type Verdict } from './verdict'
@@ -122,6 +123,9 @@ function draftFor(args: {
       : {}),
     signalIds: triage.standing.map((signal) => signal.id),
     details: triage.standing.map((signal) => signal.detail),
+    ...(triage.standing.length === 0
+      ? {}
+      : { grantables: grantOffersOf({ signals: triage.standing }) }),
     reason,
     consulted: verdict !== undefined,
     wouldAsk: args.asks,

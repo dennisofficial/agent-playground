@@ -62,6 +62,11 @@ const saidImageSchema = z.object({
   height: z.number().int().positive().optional(),
 })
 
+const grantOfferSchema = z.object({
+  subject: z.string().min(1),
+  dimensions: z.array(z.enum(ERiskDimension)),
+})
+
 export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('user-said'),
@@ -199,6 +204,7 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     judgedDimension: z.enum(ERiskDimension).optional(),
     signalIds: z.array(z.string()),
     details: z.array(z.string()).optional(),
+    grantables: z.array(grantOfferSchema).optional(),
     reason: z.string(),
     consulted: z.boolean(),
     wouldAsk: z.boolean().optional(),

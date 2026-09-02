@@ -51,3 +51,26 @@ export function grantCovering({
     (grant) => grant.subject === signal.subject && grant.dimensions.includes(signal.dimension),
   )
 }
+
+export type GrantOffer = { subject: string; dimensions: readonly ERiskDimension[] }
+
+export function grantOffersOf({
+  signals,
+}: {
+  signals: readonly RiskSignal[]
+}): readonly GrantOffer[] {
+  if (signals.some((signal) => signal.ungrantable)) return []
+
+  const dimensionsBySubject = new Map<string, ERiskDimension[]>()
+
+  for (const signal of signals) {
+    const gathered = dimensionsBySubject.get(signal.subject)
+    if (gathered === undefined) {
+      dimensionsBySubject.set(signal.subject, [signal.dimension])
+      continue
+    }
+    if (!gathered.includes(signal.dimension)) gathered.push(signal.dimension)
+  }
+
+  return [...dimensionsBySubject].map(([subject, dimensions]) => ({ subject, dimensions }))
+}

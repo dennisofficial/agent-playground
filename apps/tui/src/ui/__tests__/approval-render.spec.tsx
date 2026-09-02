@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { ERiskDimension, toCallId } from '@dltech/atlas-core'
+import { ERiskDimension, toCallId, type GrantOffer } from '@dltech/atlas-core'
 
 import {
   APPROVAL_EVIDENCE_HEADING,
@@ -26,6 +26,7 @@ const drawer = (
     selected?: number
     evidence?: readonly string[]
     dimensions?: readonly ERiskDimension[]
+    grantables?: readonly GrantOffer[]
   } = {},
 ) => (
   <Approval
@@ -35,6 +36,7 @@ const drawer = (
       reason: over.reason ?? REASON,
       evidence: over.evidence ?? [],
       dimensions: over.dimensions ?? [],
+      grantables: over.grantables ?? [],
       selected: over.selected ?? 0,
     }}
     overlay
@@ -88,6 +90,28 @@ describe('the drawer that asks the operator to double-check a call', () => {
     expect(frame).toContain('Esc to decline')
   })
 
+  it('offers the standing grant as a third line naming its subject', async () => {
+    const frame = await frameOf(
+      drawer({
+        grantables: [
+          { subject: 'worktree:eng-412-sidebar', dimensions: [ERiskDimension.Contention] },
+        ],
+      }),
+      WIDTH,
+    )
+
+    expect(rowWith(frame, 'worktree:eng-412-sidebar')).toContain('2. Proceed, and stop asking')
+    expect(rowWith(frame, labelOf(EApprovalChoice.Decline))).toContain('3. Decline')
+    expect(frame).toContain('a to stop asking')
+  })
+
+  it('never shows a third line when the pause cannot be waived in advance', async () => {
+    const frame = await frameOf(drawer(), WIDTH)
+
+    expect(frame).not.toContain('stop asking')
+    expect(rowWith(frame, labelOf(EApprovalChoice.Decline))).toContain('2. Decline')
+  })
+
   it('wraps a long reason inside the card rather than spilling past it', async () => {
     const frame = await frameOf(drawer({ reason: `${REASON} ${'and on '.repeat(20)}` }), WIDTH)
 
@@ -113,6 +137,7 @@ describe('the drawer that asks the operator to double-check a call', () => {
             reason: REASON,
             evidence: ['the sibling worktree carries twelve uncommitted changes'],
             dimensions: [ERiskDimension.Contention],
+            grantables: [],
             selected: 0,
           }}
           overlay

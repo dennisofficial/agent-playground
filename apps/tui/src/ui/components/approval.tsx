@@ -3,8 +3,10 @@ import React from 'react'
 import {
   APPROVAL_EVIDENCE_HEADING,
   APPROVAL_HEADING,
-  APPROVAL_OPTIONS,
   APPROVAL_REWIND_NOTE,
+  offersToStopAsking,
+  optionsFor,
+  STOP_ASKING_KEY,
   type ApprovalOption,
   type ApprovalState,
   type EApprovalChoice,
@@ -35,6 +37,11 @@ const HINTS: readonly Hint[] = [
   { key: 'Esc', label: 'to decline' },
   { key: '↑↓', label: 'to choose' },
 ]
+
+const STOP_ASKING_HINT: Hint = { key: STOP_ASKING_KEY, label: 'to stop asking' }
+
+const hintsFor = (state: ApprovalState): readonly Hint[] =>
+  offersToStopAsking(state) ? [...HINTS, STOP_ASKING_HINT] : HINTS
 
 function Line(props: {
   spans: readonly Span[]
@@ -131,7 +138,7 @@ export function Approval(props: {
       <Reason reason={props.state.reason} cells={cells} />
       <Evidence state={props.state} cells={cells} />
       <Gap />
-      {APPROVAL_OPTIONS.map((option, index) => (
+      {optionsFor(props.state).map((option, index) => (
         <Line
           key={option.choice}
           spans={optionSpans({ option, position: index + 1, selected: index === props.state.selected })}
@@ -141,7 +148,7 @@ export function Approval(props: {
       ))}
       <Gap />
       <Line spans={[{ text: APPROVAL_REWIND_NOTE, fg: theme.meta }]} cells={cells} />
-      <DrawerHints hints={HINTS} cells={cells} onDismiss={props.onDismiss} />
+      <DrawerHints hints={hintsFor(props.state)} cells={cells} onDismiss={props.onDismiss} />
     </BottomDrawer>
   )
 }

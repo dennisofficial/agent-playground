@@ -928,6 +928,7 @@ function Workspace(props: {
             shellFold={shells.fold}
             onOpenShell={shells.handleOpen}
             onSelectSubagent={agentView.handleSelect}
+            onRevokeGrant={conversation.handleRevokeGrant}
           />
         ) : null}
         <OverlayStack

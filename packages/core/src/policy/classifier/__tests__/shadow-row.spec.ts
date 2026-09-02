@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EBeforeToolDecision } from '../../before-tool'
+import { ERiskDimension } from '../dimension'
 import { EClassifierMode, ETriage } from '../triage'
 import {
   CHECK,
@@ -10,6 +11,7 @@ import {
   EVERY_TRIAGE,
   GRAVE,
   SERIOUS,
+  SERIOUS_UNGRANTABLE,
   triageOver,
 } from './adjudicate-fixtures'
 
@@ -63,6 +65,32 @@ describe('the row a shadow run leaves behind', () => {
     expect(draft.details).toEqual([SERIOUS.detail, GRAVE.detail])
   })
 
+  it('names what the operator could stop being asked about, subject by subject', () => {
+    const draft = draftOf(
+      decide({
+        mode: EClassifierMode.Nudge,
+        triage: triageOver({ triage: ETriage.Consult, standing: [SERIOUS, GRAVE] }),
+        consultation: CHECK,
+      }),
+    )
+
+    expect(draft.grantables).toEqual([
+      { subject: SERIOUS.subject, dimensions: [ERiskDimension.Contention] },
+    ])
+  })
+
+  it('offers nothing when one surviving signal can never be waived in advance', () => {
+    const draft = draftOf(
+      decide({
+        mode: EClassifierMode.Nudge,
+        triage: triageOver({ triage: ETriage.Consult, standing: [SERIOUS, SERIOUS_UNGRANTABLE] }),
+        consultation: CHECK,
+      }),
+    )
+
+    expect(draft.grantables).toEqual([])
+  })
+
   it('carries no evidence lines when nothing survived triage', () => {
     const draft = draftOf(
       decide({
@@ -73,6 +101,7 @@ describe('the row a shadow run leaves behind', () => {
     )
 
     expect(draft.details).toEqual([])
+    expect(draft.grantables).toBeUndefined()
     expect(draft.fatigued).toBe(false)
   })
 })

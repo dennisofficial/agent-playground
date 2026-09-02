@@ -55,6 +55,7 @@ describe('the approval drawer', () => {
       reason: REASON,
       evidence: [],
       dimensions: [],
+      grantables: [],
       selected: 0,
     })
     expect(selectedOption(opened)?.choice).toBe(EApprovalChoice.Proceed)
@@ -104,6 +105,7 @@ describe('finding the question a pause stopped on', () => {
       reason: REASON,
       evidence: [],
       dimensions: [],
+      grantables: [],
     })
   })
 

@@ -6,8 +6,10 @@ import {
   answerDrafts,
   EApprovalChoice,
   moveSelection,
+  offersToStopAsking,
   openApproval,
   resolve,
+  STOP_ASKING_KEY,
   type ApprovalQuestion,
   type ApprovalState,
 } from '../ui/approval-model'
@@ -36,7 +38,14 @@ export function useApproval(args: {
       if (state === null) return
 
       setState(null)
-      onAnswer(answerDrafts({ callId: state.callId, choice }))
+      onAnswer(
+        answerDrafts({
+          callId: state.callId,
+          choice,
+          grantables: state.grantables,
+          reason: state.reason,
+        }),
+      )
     },
     [onAnswer, state],
   )
@@ -49,6 +58,11 @@ export function useApproval(args: {
 
       if (key.name === 'escape') {
         handleDismiss()
+        return
+      }
+
+      if (key.name === STOP_ASKING_KEY && !key.ctrl && !key.meta && offersToStopAsking(state)) {
+        handlePick(EApprovalChoice.Always)
         return
       }
 

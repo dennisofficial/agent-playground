@@ -1,6 +1,7 @@
 import {
   EClassifierMode,
   EDecision,
+  EGrantScope,
   EJudgment,
   ERiskDimension,
   ETriage,
@@ -235,5 +236,33 @@ describe('the nudge figure the operator reads before arming it', () => {
       quietedCalls: 0,
       judgeUnreachable: false,
     })
+  })
+})
+
+describe('the grants a thread is running under', () => {
+  const given = {
+    type: 'permission-granted' as const,
+    grantId: 'grant:call-1:worktree:eng-412-sidebar',
+    dimensions: [ERiskDimension.Contention],
+    scope: EGrantScope.Thread,
+    subject: 'worktree:eng-412-sidebar',
+    reason: 'the operator chose to stop being asked about this',
+  }
+
+  it('lists what the operator has waived, so no permission is invisible', () => {
+    const model = deriveSidebar({ events: log([given]), turn: IDLE_TURN })
+
+    expect(model.grants?.map((grant) => grant.subject)).toEqual(['worktree:eng-412-sidebar'])
+    expect(model.grants?.at(0)?.dimensions).toEqual([ERiskDimension.Contention])
+  })
+
+  it('drops a grant the operator took back rather than leaving a dead row', () => {
+    const events = log([given, { type: 'permission-revoked', grantId: given.grantId }])
+
+    expect(deriveSidebar({ events, turn: IDLE_TURN }).grants).toBeUndefined()
+  })
+
+  it('shows no section at all on a thread that granted nothing', () => {
+    expect(deriveSidebar({ events: [], turn: IDLE_TURN }).grants).toBeUndefined()
   })
 })
