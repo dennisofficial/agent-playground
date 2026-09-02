@@ -23,7 +23,8 @@ const signal = (args: {
   id: 'test:signal',
   subject: args.subject ?? 'worktree:eng-412-sidebar',
   detail: 'a signal written by a test',
-  ungrantable: args.ungrantable ?? false,
+  ungrantable: args.ungrantable ?? false,  unverified: false,
+
 })
 
 const grant = (args: {

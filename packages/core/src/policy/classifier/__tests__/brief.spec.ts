@@ -19,6 +19,7 @@ const STANDING: readonly RiskSignal[] = [
     subject: 'worktree:eng-412-sidebar',
     detail: `removing ${SIBLING}, which is not ours and carries 3 uncommitted change(s)`,
     ungrantable: true,
+    unverified: false,
   },
 ]
 
@@ -167,5 +168,24 @@ describe('briefOf', () => {
 
   it('carries the call id nowhere, because the same deed twice is the same question', () => {
     expect(briefFor({}).prompt).not.toContain('call-1')
+  })
+})
+
+describe('what the judge is shown of the command itself', () => {
+  const SANDBOX = 'T=$(mktemp -d /tmp/check-XXXX) && cd /tmp && rm -rf "$T"'
+
+  it('quotes the command as written, so an in-window assignment is visible', () => {
+    const brief = briefOf({
+      evidence: bashEvidence({
+        command: SANDBOX,
+        workdir: undefined,
+        facts: inAWorktree({ siblingChangedCount: 0, mainChangedCount: 0 }),
+      }),
+      standing: STANDING,
+      policy: DEFAULT_CLASSIFIER_POLICY,
+    })
+
+    expect(brief.prompt).toContain('T=$(mktemp -d /tmp/check-XXXX)')
+    expect(brief.prompt).toContain('unresolved expansions: $T')
   })
 })

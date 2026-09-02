@@ -44,6 +44,7 @@ const segmentSchema = z
 const readingSchema = z.object({
   confidence: z.enum(EReadConfidence),
   segments: z.array(segmentSchema),
+  command: z.string().default(''),
 })
 
 const worktreeFactSchema = z

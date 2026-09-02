@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test'
 
 import { EBeforeToolDecision } from '../../before-tool'
 import { EConsultation } from '../adjudicate'
-import { ERiskDimension } from '../dimension'
+import { ERiskDimension, ESeverity } from '../dimension'
+import type { RiskSignal } from '../signals'
 import { EClassifierMode, ETriage } from '../triage'
 import { EJudgment } from '../verdict'
 import {
@@ -175,5 +176,47 @@ describe('adjudicate', () => {
     expect(outcome.decision === EBeforeToolDecision.Allow ? outcome.input : undefined).toBe(
       CALL.input,
     )
+  })
+})
+
+describe('a doubt the reader could not settle', () => {
+  const UNVERIFIED: RiskSignal = {
+    dimension: ERiskDimension.Blast,
+    severity: ESeverity.Grave,
+    id: 'blast:unresolved-destructive-operand',
+    subject: 'expansion:$T',
+    detail: 'rm destroys operands that expand at run time ($T)',
+    ungrantable: false,
+    unverified: true,
+  }
+
+  it('reaches the judge, because only a model can read what the parser could not', () => {
+    const outcome = decide({
+      mode: EClassifierMode.Nudge,
+      triage: triageOver({ triage: ETriage.Consult, standing: [UNVERIFIED] }),
+      consultation: CHECK,
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+  })
+
+  it('does not refuse on its own when the judge could not be reached', () => {
+    const outcome = decide({
+      mode: EClassifierMode.Nudge,
+      triage: triageOver({ triage: ETriage.Consult, standing: [UNVERIFIED] }),
+      consultation: UNREACHABLE,
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
+  })
+
+  it('still refuses when a verified signal survives beside it', () => {
+    const outcome = decide({
+      mode: EClassifierMode.Nudge,
+      triage: triageOver({ triage: ETriage.Consult, standing: [UNVERIFIED, GRAVE] }),
+      consultation: UNREACHABLE,
+    })
+
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
   })
 })

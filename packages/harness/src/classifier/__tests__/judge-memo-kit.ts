@@ -43,6 +43,7 @@ export const signalAt = (args: {
   subject: args.subject ?? 'path:/repo/src',
   detail: 'a detail line',
   ungrantable: false,
+  unverified: false,
 })
 
 export const evidenceFor = (args: {

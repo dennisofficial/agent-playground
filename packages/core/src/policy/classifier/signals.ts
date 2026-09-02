@@ -15,6 +15,7 @@ export type RiskSignal = {
   subject: string
   detail: string
   ungrantable: boolean
+  unverified: boolean
 }
 
 export type SignalProbe = {

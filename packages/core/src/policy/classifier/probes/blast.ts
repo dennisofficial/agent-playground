@@ -119,6 +119,7 @@ function unreadableShell({ evidence }: { evidence: CallEvidence }): readonly Ris
         severity: ESeverity.Grave,
         id: 'blast:unresolved-destructive-operand',
         subject: `expansion:${first ?? segment.program}`,
+        unverified: true,
         detail: `${segment.program} destroys operands that expand at run time (${segment.unresolvedExpansions.join(', ')})`,
       }),
     )
@@ -135,6 +136,7 @@ function unreadableShell({ evidence }: { evidence: CallEvidence }): readonly Ris
         severity: ESeverity.Serious,
         id: 'blast:opaque-destructive-command',
         subject: `command:${destroying?.program ?? evidence.toolName}`,
+        unverified: true,
         detail: 'a destructive tool was handed a command the reader could not resolve',
       }),
     )

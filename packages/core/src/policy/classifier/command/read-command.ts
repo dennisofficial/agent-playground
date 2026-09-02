@@ -253,5 +253,6 @@ export function readCommand(args: {
   return {
     confidence: decideConfidence(pass),
     segments: pass.built.map((entry) => entry.segment),
+    command: args.command,
   }
 }

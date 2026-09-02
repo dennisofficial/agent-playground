@@ -22,6 +22,7 @@ export type CommandSegment = {
 export type CommandReading = {
   confidence: EReadConfidence
   segments: readonly CommandSegment[]
+  command: string
 }
 
 export type BuiltSegment = {

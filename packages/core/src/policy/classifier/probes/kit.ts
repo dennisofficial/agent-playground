@@ -51,6 +51,7 @@ export function riskSignal(args: {
   subject: string
   detail: string
   ungrantable?: boolean | undefined
+  unverified?: boolean | undefined
 }): RiskSignal {
   return {
     dimension: args.dimension,
@@ -59,6 +60,7 @@ export function riskSignal(args: {
     subject: args.subject,
     detail: args.detail,
     ungrantable: args.ungrantable ?? false,
+    unverified: args.unverified ?? false,
   }
 }
 

@@ -31,7 +31,8 @@ const signalOf = (args: {
   id: `probe:${args.severity}`,
   subject: 'worktree:eng-412-sidebar',
   detail: 'the sibling worktree carries three uncommitted changes',
-  ungrantable: args.ungrantable ?? false,
+  ungrantable: args.ungrantable ?? false,  unverified: false,
+
 })
 
 export const NOTE = signalOf({ severity: ESeverity.Note })

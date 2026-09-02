@@ -49,6 +49,9 @@ const deedLines = ({ deeds }: { deeds: readonly Deed[] }): readonly string[] =>
   ])
 
 const readingLines = ({ reading }: { reading: CommandReading }): readonly string[] => [
+  'the command as it was written:',
+  ...reading.command.split('\n').map((line) => `  ${line}`),
+  '',
   `how completely the command was read: ${reading.confidence}`,
   ...reading.segments.flatMap((segment) => [
     `- program: ${segment.program}${segment.verb === undefined ? '' : ` ${segment.verb}`}`,

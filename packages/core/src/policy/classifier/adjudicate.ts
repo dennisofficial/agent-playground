@@ -79,8 +79,9 @@ function worthAskingUnreached({
 }): boolean {
   return standing.some(
     (signal) =>
-      signal.ungrantable ||
-      reachesSeverity({ severity: signal.severity, floor: policy.askWhenUnreachableAtOrAbove }),
+      !signal.unverified &&
+      (signal.ungrantable ||
+        reachesSeverity({ severity: signal.severity, floor: policy.askWhenUnreachableAtOrAbove })),
   )
 }
 
