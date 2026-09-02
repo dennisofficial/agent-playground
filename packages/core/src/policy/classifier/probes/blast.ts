@@ -93,28 +93,32 @@ function unreadableShell({ evidence }: { evidence: CallEvidence }): readonly Ris
 
   const signals: RiskSignal[] = []
 
-  if (reading.segments.some((segment) => segment.pipesIntoInterpreter)) {
+  reading.segments.forEach((segment, index) => {
+    if (!segment.pipesIntoInterpreter) return
+    const interpreter = reading.segments[index + 1]?.program ?? segment.program
+
     signals.push(
       riskSignal({
         dimension,
         severity: ESeverity.Grave,
         id: 'blast:pipes-into-interpreter',
-        subject: `tool:${evidence.toolName}`,
-        detail: 'pipes fetched bytes straight into an interpreter, so nothing read what runs',
+        subject: `interpreter:${interpreter}`,
+        detail: `pipes fetched bytes straight into ${interpreter}, so nothing read what runs`,
       }),
     )
-  }
+  })
 
   const blind = reading.segments.filter(
     (segment) => destroysItsOperands({ segment }) && segment.unresolvedExpansions.length > 0,
   )
   for (const segment of blind) {
+    const [first] = segment.unresolvedExpansions
     signals.push(
       riskSignal({
         dimension,
         severity: ESeverity.Grave,
         id: 'blast:unresolved-destructive-operand',
-        subject: `tool:${evidence.toolName}`,
+        subject: `expansion:${first ?? segment.program}`,
         detail: `${segment.program} destroys operands that expand at run time (${segment.unresolvedExpansions.join(', ')})`,
       }),
     )
@@ -124,12 +128,13 @@ function unreadableShell({ evidence }: { evidence: CallEvidence }): readonly Ris
     reading.confidence === EReadConfidence.Opaque &&
     evidence.effect === EToolEffect.Destructive
   ) {
+    const destroying = reading.segments.find((segment) => destroysItsOperands({ segment }))
     signals.push(
       riskSignal({
         dimension,
         severity: ESeverity.Serious,
         id: 'blast:opaque-destructive-command',
-        subject: `tool:${evidence.toolName}`,
+        subject: `command:${destroying?.program ?? evidence.toolName}`,
         detail: 'a destructive tool was handed a command the reader could not resolve',
       }),
     )
@@ -147,7 +152,7 @@ function anUnreadableWorkspace({ evidence }: { evidence: CallEvidence }): readon
       dimension,
       severity: ESeverity.Note,
       id: 'blast:workspace-unreadable',
-      subject: `tool:${evidence.toolName}`,
+      subject: `workspace:${evidence.facts.projectDirectory}`,
       detail: 'Atlas could not read the workspace, so the probes that need it stayed silent',
     }),
   ]
@@ -191,7 +196,7 @@ function dependencies({
       dimension,
       severity: forced || trusts ? ESeverity.Serious : ESeverity.Note,
       id: 'blast:dependency-change',
-      subject: `tool:${evidence.toolName}`,
+      subject: `dependencies:${managers[0]?.program ?? evidence.toolName}`,
       detail:
         forced || trusts
           ? 'changes dependencies past the lockfile or the postinstall allowlist'

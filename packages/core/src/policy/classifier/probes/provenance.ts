@@ -20,7 +20,7 @@ function probe(evidence: CallEvidence): readonly RiskSignal[] {
       dimension,
       severity: loses ? ESeverity.Serious : ESeverity.Note,
       id: 'provenance:after-untrusted-content',
-      subject: `tool:${evidence.toolName}`,
+      subject: `source:${ingested[0]?.name ?? evidence.toolName}`,
       detail: `${deeds[0]?.summary ?? 'changes something'} after this turn read content Atlas did not author (${sources})`,
     }),
   ]

