@@ -144,15 +144,13 @@ const readoutOf = (args: {
   card: ModelCard | undefined
   used: number
   meters: readonly FooterMeter[]
-  provider: string | null
 }): FooterContext | null => {
   const { card } = args
-  const named = args.provider === null ? {} : { provider: args.provider }
 
-  if (card === undefined) return { percent: 0, measured: false, meters: args.meters, ...named }
+  if (card === undefined) return { percent: 0, measured: false, meters: args.meters }
 
   const pressure = contextPressure({ used: args.used, window: card.contextWindow })
-  return { percent: pressure.percent, tokensUsed: pressure.used, meters: args.meters, ...named }
+  return { percent: pressure.percent, tokensUsed: pressure.used, meters: args.meters }
 }
 
 export function App(props: {
@@ -257,11 +255,7 @@ function Workspace(props: {
       })
     : []
 
-  const provider = metered
-    ? null
-    : (props.app.models.adapterFor(selection.ref.providerId)?.label ?? null)
-
-  const readout = readoutOf({ card, used: conversation.contextTokens, meters, provider })
+  const readout = readoutOf({ card, used: conversation.contextTokens, meters })
 
   useEffect(() => {
     const warning = unmeasuredWindowWarning({

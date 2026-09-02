@@ -48,20 +48,11 @@ function meterSpans(meters: readonly FooterMeter[]): Span[] {
   ])
 }
 
-function providerSpans(provider: string | undefined): Span[] {
-  if (provider === undefined) return []
-  return [
-    { text: HINT_SEPARATOR, fg: theme.rule },
-    { text: provider, fg: theme.rule },
-  ]
-}
-
 function readoutSpans(args: { readout: FooterReadout; context: FooterContext }): Span[] {
   const fg = isMeasured(args.context) ? contextTone(args.context.percent) : theme.warn
   return [
     ...tinted({ text: args.readout.text, fg }),
     ...meterSpans(args.readout.meters),
-    ...providerSpans(args.readout.provider),
   ]
 }
 
