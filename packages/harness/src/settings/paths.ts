@@ -6,6 +6,8 @@ export const ATLAS_SETTINGS_NAME = 'settings.json'
 
 export const ATLAS_PLUGINS_DIRECTORY_NAME = 'plugins'
 
+export const SKILLS_DIRECTORY_NAME = 'skills'
+
 export function userSettingsFile(): string {
   return join(atlasDirectory(), ATLAS_SETTINGS_NAME)
 }
@@ -16,6 +18,14 @@ export function projectSettingsFile(cwd: string): string {
 
 export function userPluginsDirectory(): string {
   return join(atlasDirectory(), ATLAS_PLUGINS_DIRECTORY_NAME)
+}
+
+export function userSkillsDirectory(): string {
+  return join(atlasDirectory(), SKILLS_DIRECTORY_NAME)
+}
+
+export function projectSkillsDirectory(cwd: string): string {
+  return join(cwd, ATLAS_DIRECTORY_NAME, SKILLS_DIRECTORY_NAME)
 }
 
 export function projectPluginsDirectory(cwd: string): string {

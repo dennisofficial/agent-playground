@@ -23,11 +23,13 @@ import { EnterWorktreeTool } from './builtin/enter-worktree'
 import { ExitWorktreeTool } from './builtin/exit-worktree'
 import { GlobTool } from './builtin/glob'
 import { GrepTool } from './builtin/grep'
+import { McpEditTool } from './builtin/mcp-edit'
 import { ReadTool } from './builtin/read'
 import { ShellKillTool } from './builtin/shell-kill'
 import { ShellListTool } from './builtin/shell-list'
 import { ShellOutputTool } from './builtin/shell-output'
 import { SkillTool } from './builtin/skill'
+import { SkillInstallTool } from './builtin/skill-install'
 import { TaskWriteTool } from './builtin/task-write'
 import { WebFetchTool } from './builtin/web-fetch'
 import { WebSearchTool } from './builtin/web-search'
@@ -65,6 +67,8 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
   container.register(portToken(ToolDefinition), {
     useFactory: (resolver) => new SkillTool(resolver.resolve(portToken(SkillRegistryPort))),
   })
+  container.register(portToken(ToolDefinition), { useClass: SkillInstallTool })
+  container.register(portToken(ToolDefinition), { useClass: McpEditTool })
   container.register(portToken(ToolDefinition), {
     useFactory: (resolver) =>
       new AgentSpawnTool(

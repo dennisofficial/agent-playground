@@ -33,6 +33,8 @@ const BUILTIN_NAMES = [
   'shell_kill',
   'task_write',
   'skill',
+  'skill_install',
+  'mcp-edit',
   'agent_spawn',
   'agent_say',
   'agent_resume',

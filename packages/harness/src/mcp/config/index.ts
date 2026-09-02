@@ -1,5 +1,12 @@
 export { resolveMcpSpecs, type ResolvedMcpSpecs } from './loaders'
 export {
+  EMcpEditAction,
+  EMcpEditLayer,
+  inputSchema,
+  run,
+  type McpEditInput,
+} from './writer'
+export {
   BuiltInMcpSource,
   CompatMcpSource,
   EMcpRejection,

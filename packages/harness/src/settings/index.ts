@@ -6,13 +6,16 @@ export {
   ATLAS_PLUGINS_DIRECTORY_NAME,
   ATLAS_SETTINGS_NAME,
   COMPAT_MCP_FILE_NAME,
+  SKILLS_DIRECTORY_NAME,
   compatMcpFile,
   projectMcpFile,
   projectPluginsDirectory,
   projectSettingsFile,
+  projectSkillsDirectory,
   userMcpFile,
   userPluginsDirectory,
   userSettingsFile,
+  userSkillsDirectory,
 } from './paths'
 export {
   createSettingsService,
