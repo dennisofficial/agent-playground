@@ -2,6 +2,7 @@ export enum EInstructionFamily {
   Claude = 'claude',
   Agents = 'agents',
   Both = 'both',
+  None = 'none',
 }
 
 export enum EInstructionOrigin {
@@ -17,10 +18,14 @@ export type InstructionCandidate = {
 
 const SEPARATOR = '/'
 
-const AGENTS_FILE = 'AGENTS.md'
-const CLAUDE_FILE = 'CLAUDE.md'
-const AGENTS_LOCAL_FILE = 'AGENTS.local.md'
-const CLAUDE_LOCAL_FILE = 'CLAUDE.local.md'
+type InstructionNames = {
+  shared: string
+  local: string
+}
+
+const ATLAS_NAMES: InstructionNames = { shared: 'ATLAS.md', local: 'ATLAS.local.md' }
+const AGENTS_NAMES: InstructionNames = { shared: 'AGENTS.md', local: 'AGENTS.local.md' }
+const CLAUDE_NAMES: InstructionNames = { shared: 'CLAUDE.md', local: 'CLAUDE.local.md' }
 
 const withoutTrailingSeparator = (path: string): string =>
   path.length > 1 && path.endsWith(SEPARATOR) ? path.slice(0, -1) : path
@@ -28,17 +33,17 @@ const withoutTrailingSeparator = (path: string): string =>
 const joined = ({ directory, name }: { directory: string; name: string }): string =>
   directory === SEPARATOR ? `${SEPARATOR}${name}` : `${directory}${SEPARATOR}${name}`
 
-function sharedFilesOf(family: EInstructionFamily): readonly string[] {
-  if (family === EInstructionFamily.Claude) return [CLAUDE_FILE]
-  if (family === EInstructionFamily.Agents) return [AGENTS_FILE]
-  return [AGENTS_FILE, CLAUDE_FILE]
+function borrowedNamesOf(family: EInstructionFamily): readonly InstructionNames[] {
+  if (family === EInstructionFamily.None) return []
+  if (family === EInstructionFamily.Claude) return [CLAUDE_NAMES]
+  if (family === EInstructionFamily.Agents) return [AGENTS_NAMES]
+  return [AGENTS_NAMES, CLAUDE_NAMES]
 }
 
-function localFilesOf(family: EInstructionFamily): readonly string[] {
-  if (family === EInstructionFamily.Claude) return [CLAUDE_LOCAL_FILE]
-  if (family === EInstructionFamily.Agents) return [AGENTS_LOCAL_FILE]
-  return [AGENTS_LOCAL_FILE, CLAUDE_LOCAL_FILE]
-}
+const projectNamesOf = (family: EInstructionFamily): readonly InstructionNames[] => [
+  ...borrowedNamesOf(family),
+  ATLAS_NAMES,
+]
 
 function descentFrom({ root, cwd }: { root: string; cwd: string }): readonly string[] {
   const base = withoutTrailingSeparator(root)
@@ -62,14 +67,11 @@ function descentFrom({ root, cwd }: { root: string; cwd: string }): readonly str
 
 function userCandidates(args: {
   userDirectories: readonly string[]
-  family: EInstructionFamily
 }): readonly InstructionCandidate[] {
-  return args.userDirectories.flatMap((directory) =>
-    sharedFilesOf(args.family).map((name) => ({
-      path: joined({ directory: withoutTrailingSeparator(directory), name }),
-      origin: EInstructionOrigin.UserGlobal,
-    })),
-  )
+  return args.userDirectories.map((directory) => ({
+    path: joined({ directory: withoutTrailingSeparator(directory), name: ATLAS_NAMES.shared }),
+    origin: EInstructionOrigin.UserGlobal,
+  }))
 }
 
 function projectCandidates(args: {
@@ -77,16 +79,15 @@ function projectCandidates(args: {
   cwd: string
   family: EInstructionFamily
 }): readonly InstructionCandidate[] {
-  const shared = sharedFilesOf(args.family)
-  const local = localFilesOf(args.family)
+  const names = projectNamesOf(args.family)
 
   return descentFrom({ root: args.root, cwd: args.cwd }).flatMap((directory) => [
-    ...shared.map((name) => ({
-      path: joined({ directory, name }),
+    ...names.map(({ shared }) => ({
+      path: joined({ directory, name: shared }),
       origin: EInstructionOrigin.Project,
     })),
-    ...local.map((name) => ({
-      path: joined({ directory, name }),
+    ...names.map(({ local }) => ({
+      path: joined({ directory, name: local }),
       origin: EInstructionOrigin.ProjectLocal,
     })),
   ])
@@ -101,7 +102,7 @@ export function instructionCandidates(args: {
   includeProject: boolean
 }): readonly InstructionCandidate[] {
   const ordered = [
-    ...(args.includeUser ? userCandidates({ userDirectories: args.userDirectories, family: args.family }) : []),
+    ...(args.includeUser ? userCandidates({ userDirectories: args.userDirectories }) : []),
     ...(args.includeProject
       ? projectCandidates({ root: args.root, cwd: args.cwd, family: args.family })
       : []),

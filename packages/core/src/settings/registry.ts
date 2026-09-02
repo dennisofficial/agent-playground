@@ -138,7 +138,7 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     group: 'Project context',
     label: 'Personal instructions',
     description:
-      'Also load the instruction files in your home directory, which apply to every project. They are read before the repository, so anything the repository says wins.',
+      'Also load ATLAS.md from your Atlas home directory, which applies to every project. It is read before the repository, so anything the repository says wins.',
     environmentVariable: 'ATLAS_USER_INSTRUCTIONS',
     kind: ESettingKind.Toggle,
     fallback: true,
@@ -147,16 +147,17 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     id: ESettingId.InstructionFilenames,
     page: ESettingPage.General,
     group: 'Project context',
-    label: 'Instruction filenames',
+    label: 'Borrowed instruction files',
     description:
-      'Which filenames count as instructions. AGENTS.md is the cross-vendor convention and CLAUDE.md the Claude-specific one; when both are read, CLAUDE.md is loaded second and therefore wins a disagreement. A .local.md sibling of either is read last and is never checked in.',
+      'Which instruction files borrowed from another harness a repository is read for. ATLAS.md is always read and is loaded last, so it wins a disagreement with either borrowed file; AGENTS.md is the cross-vendor convention and CLAUDE.md the Claude-specific one, and when both are read CLAUDE.md is loaded second. A .local.md sibling of any of the three is read after all of them and is never checked in.',
     environmentVariable: 'ATLAS_INSTRUCTION_FILENAMES',
     kind: ESettingKind.Choice,
     fallback: 'both',
     options: [
-      { value: 'both', label: 'both', detail: 'shipped' },
+      { value: 'both', label: 'AGENTS.md + CLAUDE.md', detail: 'shipped' },
       { value: 'claude', label: 'CLAUDE.md' },
       { value: 'agents', label: 'AGENTS.md' },
+      { value: 'none', label: 'neither', detail: 'ATLAS.md only' },
     ],
   },
   {

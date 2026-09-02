@@ -9,6 +9,7 @@ import {
 const familyOf = (value: unknown): EInstructionFamily => {
   if (value === EInstructionFamily.Claude) return EInstructionFamily.Claude
   if (value === EInstructionFamily.Agents) return EInstructionFamily.Agents
+  if (value === EInstructionFamily.None) return EInstructionFamily.None
   return EInstructionFamily.Both
 }
 

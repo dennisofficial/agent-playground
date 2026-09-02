@@ -33,6 +33,9 @@ describe('instructionPlanOf', () => {
     expect(planWith({ [ESettingId.InstructionFilenames]: 'agents' }).request.family).toBe(
       EInstructionFamily.Agents,
     )
+    expect(planWith({ [ESettingId.InstructionFilenames]: 'none' }).request.family).toBe(
+      EInstructionFamily.None,
+    )
   })
 
   it('honours the toggles that switch a source off', () => {

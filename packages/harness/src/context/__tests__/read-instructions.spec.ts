@@ -61,19 +61,35 @@ describe('readInstructionFiles', () => {
     expect(loaded.map((entry) => entry.content)).toEqual(['root', 'apps', 'tui'])
   })
 
-  it('reads AGENTS.md before CLAUDE.md in the same directory', async () => {
+  it('reads the borrowed files before ATLAS.md in the same directory', async () => {
     write({ at: 'AGENTS.md', content: 'agents' })
     write({ at: 'CLAUDE.md', content: 'claude' })
+    write({ at: 'ATLAS.md', content: 'atlas' })
 
-    expect((await read({})).map((entry) => entry.content)).toEqual(['agents', 'claude'])
+    expect((await read({})).map((entry) => entry.content)).toEqual(['agents', 'claude', 'atlas'])
   })
 
-  it('reads a local file after both shared files', async () => {
+  it('reads a local file after every shared file', async () => {
     write({ at: 'AGENTS.md', content: 'agents' })
     write({ at: 'CLAUDE.md', content: 'claude' })
+    write({ at: 'ATLAS.md', content: 'atlas' })
     write({ at: 'CLAUDE.local.md', content: 'mine' })
 
-    expect((await read({})).map((entry) => entry.content)).toEqual(['agents', 'claude', 'mine'])
+    expect((await read({})).map((entry) => entry.content)).toEqual([
+      'agents',
+      'claude',
+      'atlas',
+      'mine',
+    ])
+  })
+
+  it('reads ATLAS.md even when the borrowed families are switched off', async () => {
+    write({ at: 'CLAUDE.md', content: 'claude' })
+    write({ at: 'ATLAS.md', content: 'atlas' })
+
+    expect((await read({ family: EInstructionFamily.None })).map((entry) => entry.content)).toEqual(
+      ['atlas'],
+    )
   })
 
   it('honours a narrowed family', async () => {
@@ -87,7 +103,8 @@ describe('readInstructionFiles', () => {
 
   it('labels a user-scope file with its own slot', async () => {
     const home = mkdtempSync(join(tmpdir(), 'atlas-home-'))
-    writeFileSync(join(home, 'CLAUDE.md'), 'global')
+    writeFileSync(join(home, 'ATLAS.md'), 'global')
+    writeFileSync(join(home, 'CLAUDE.md'), 'borrowed')
 
     const loaded = await read({
       userDirectories: [home],
@@ -96,7 +113,7 @@ describe('readInstructionFiles', () => {
     })
 
     expect(loaded).toEqual([
-      { path: join(home, 'CLAUDE.md'), slot: EContextSlot.UserInstructions, content: 'global' },
+      { path: join(home, 'ATLAS.md'), slot: EContextSlot.UserInstructions, content: 'global' },
     ])
   })
 
