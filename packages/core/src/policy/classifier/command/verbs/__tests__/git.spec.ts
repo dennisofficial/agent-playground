@@ -27,8 +27,20 @@ describe('the read side of git', () => {
     expect(actionOf('git stash list')).toBe(EDeed.ReadOnly)
     expect(actionOf('git stash show')).toBe(EDeed.ReadOnly)
     expect(actionOf('git stash drop')).toBe(EDeed.MutateStash)
-    expect(actionOf('git stash')).toBe(EDeed.MutateStash)
+    expect(actionOf('git stash clear')).toBe(EDeed.MutateStash)
     expect(actionOf('git stash pop')).toBe(EDeed.MutateStash)
+  })
+
+  it('reads pushing onto the stash as saving work, not as losing it', () => {
+    expect(actionOf('git stash')).toBe(EDeed.WriteFile)
+    expect(actionOf('git stash push')).toBe(EDeed.WriteFile)
+    expect(actionOf('git stash push -m wip')).toBe(EDeed.WriteFile)
+    expect(actionOf('git stash save wip')).toBe(EDeed.WriteFile)
+  })
+
+  it('reads a fast-forward pull as routine and any other pull as a merge', () => {
+    expect(actionOf('git pull --ff-only')).toBe(EDeed.Routine)
+    expect(actionOf('git pull')).toBe(EDeed.WriteFile)
   })
 
   it('separates the worktree verbs the operator uses every day', () => {
@@ -102,12 +114,15 @@ describe('the destructive side of git', () => {
     expect(actionOf('git push --dry-run')).toBe(EDeed.ReadOnly)
   })
 
-  it('rewrites history on rebase, amend, filter-branch, reflog expire and a pruning gc', () => {
+  it('rewrites history on rebase, amend and filter-branch', () => {
     expect(actionOf('git rebase origin/main')).toBe(EDeed.RewriteHistory)
     expect(actionOf('git commit --amend --no-edit')).toBe(EDeed.RewriteHistory)
     expect(actionOf('git filter-branch --tree-filter x')).toBe(EDeed.RewriteHistory)
-    expect(actionOf('git reflog expire --expire=now --all')).toBe(EDeed.RewriteHistory)
-    expect(actionOf('git gc --prune=now')).toBe(EDeed.RewriteHistory)
+  })
+
+  it('separates dropping the recovery path from rewriting history', () => {
+    expect(actionOf('git reflog expire --expire=now --all')).toBe(EDeed.DropRecovery)
+    expect(actionOf('git gc --prune=now')).toBe(EDeed.DropRecovery)
   })
 
   it('keeps the harmless neighbours of those verbs quiet', () => {

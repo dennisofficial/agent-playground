@@ -4,6 +4,7 @@ import {
   pathTargets,
   readOnly,
   refTargets,
+  routine,
   sketch,
   subverbOf,
   verbOf,
@@ -18,6 +19,8 @@ export type GitHandler = (args: { view: CommandView }) => DeedSketch | undefined
 const wholeTreeSpecs = new Set(['.', ':/', '*'])
 
 const readOnlyStashVerbs = new Set(['list', 'show'])
+
+const stashVerbsThatSaveWork = new Set(['push', 'save', 'create', 'store'])
 
 export function rest({ view }: { view: CommandView }): readonly CommandWord[] {
   return view.words.slice(1)
@@ -94,11 +97,23 @@ export const stash: GitHandler = ({ view }) => {
     return readOnly({ summary: 'reads the stash stack' })
   }
 
+  if (verb === undefined || stashVerbsThatSaveWork.has(verb)) {
+    return applyToTree({ view, summary: 'puts uncommitted changes onto the stash stack' })
+  }
+
   return sketch({
     action: EDeed.MutateStash,
     targets: [worktreeTarget({ view })],
     summary: 'mutates the repository-wide stash stack',
   })
+}
+
+export const pull: GitHandler = ({ view }) => {
+  if (view.flags.has('--ff-only')) {
+    return routine({ summary: 'fast-forwards the branch, merging and discarding nothing' })
+  }
+
+  return applyToTree({ view, summary: 'merges remote commits into the working tree' })
 }
 
 export const commit: GitHandler = ({ view }) => {

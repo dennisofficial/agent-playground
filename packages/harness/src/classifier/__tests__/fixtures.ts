@@ -4,6 +4,7 @@ import {
   DEFAULT_CLASSIFIER_POLICY,
   EClassifierMode,
   EContentAccess,
+  EDeedRealm,
   EOccupancy,
   EPathForm,
   EPathPresence,
@@ -118,7 +119,7 @@ export function factsInAWorktree(args?: {
     refs: [],
     ownChangedPaths: [],
     regenerablePaths: ['node_modules', 'dist'],
-    gatheredFor: [],
+    gatheredFor: [EDeedRealm.Path, EDeedRealm.GitWorktree],
   }
 }
 

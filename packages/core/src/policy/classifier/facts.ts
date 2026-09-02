@@ -29,6 +29,24 @@ export type WorkspaceFacts = {
   gatheredFor: readonly EDeedRealm[]
 }
 
+export function weLookedAt({
+  facts,
+  realm,
+}: {
+  facts: WorkspaceFacts
+  realm: EDeedRealm
+}): boolean {
+  return facts.gatheredFor.includes(realm)
+}
+
+export function weLookedAtNothing({ facts }: { facts: WorkspaceFacts }): boolean {
+  return facts.gatheredFor.length === 0
+}
+
+export function weKnowWhereTheProjectIs({ facts }: { facts: WorkspaceFacts }): boolean {
+  return facts.projectDirectory !== ''
+}
+
 export const NO_FACTS: WorkspaceFacts = {
   projectDirectory: '',
   launchDirectory: '',

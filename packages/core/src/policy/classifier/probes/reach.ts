@@ -1,6 +1,6 @@
 import { EDeed, type Deed } from '../deed'
 import { ERiskDimension, ESeverity } from '../dimension'
-import type { WorkspaceFacts } from '../facts'
+import { weKnowWhereTheProjectIs, type WorkspaceFacts } from '../facts'
 import { basenameOf } from '../path-set'
 import type { RiskSignal, SignalProbe } from '../signals'
 import {
@@ -32,6 +32,7 @@ function describe({ facts, path }: { facts: WorkspaceFacts; path: string }): {
 
 function signalsFor({ deed, facts }: { deed: Deed; facts: WorkspaceFacts }): readonly RiskSignal[] {
   if (EXEMPT.has(deed.action)) return []
+  if (!weKnowWhereTheProjectIs({ facts })) return []
 
   return placesOf({ deed }).flatMap((path) => {
     if (insideProject({ facts, path })) return []

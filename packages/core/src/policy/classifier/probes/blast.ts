@@ -2,7 +2,7 @@ import { EDeed, EDeedRealm, type Deed } from '../deed'
 import { ERiskDimension, ESeverity } from '../dimension'
 import { EReadConfidence } from '../command/read-command'
 import type { CallEvidence } from '../evidence'
-import type { WorkspaceFacts } from '../facts'
+import { weLookedAtNothing, type WorkspaceFacts } from '../facts'
 import { destroysItsOperands } from '../command/reading'
 import { packageManagers } from '../command/verbs/packages'
 import { normalisePath } from '../path-set'
@@ -23,6 +23,11 @@ import {
 const dimension = ERiskDimension.Blast
 
 const WHOLE_MACHINE: ReadonlySet<string> = new Set(['/', '~', '.'])
+
+const CONSEQUENTIAL: ReadonlySet<EToolEffect> = new Set([
+  EToolEffect.Destructive,
+  EToolEffect.Write,
+])
 
 function sweepingAWholeTree({
   deed,
@@ -133,6 +138,37 @@ function unreadableShell({ evidence }: { evidence: CallEvidence }): readonly Ris
   return signals
 }
 
+function anUnreadableWorkspace({ evidence }: { evidence: CallEvidence }): readonly RiskSignal[] {
+  if (!weLookedAtNothing({ facts: evidence.facts })) return []
+  if (mutatingDeeds({ evidence }).length === 0) return []
+
+  return [
+    riskSignal({
+      dimension,
+      severity: ESeverity.Note,
+      id: 'blast:workspace-unreadable',
+      subject: `tool:${evidence.toolName}`,
+      detail: 'Atlas could not read the workspace, so the probes that need it stayed silent',
+    }),
+  ]
+}
+
+function anUndeclaredTool({ evidence }: { evidence: CallEvidence }): readonly RiskSignal[] {
+  if (evidence.reading !== undefined) return []
+  if (!CONSEQUENTIAL.has(evidence.effect)) return []
+  if (!evidence.deeds.some((deed) => deed.action === EDeed.Unreadable)) return []
+
+  return [
+    riskSignal({
+      dimension,
+      severity: ESeverity.Serious,
+      id: 'blast:undeclared-paths',
+      subject: `tool:${evidence.toolName}`,
+      detail: `${evidence.toolName} changes the world without declaring which paths it touches, so no probe can see what it would reach`,
+    }),
+  ]
+}
+
 function dependencies({
   deed,
   evidence,
@@ -168,6 +204,8 @@ export const blastProbe: SignalProbe = {
   dimension,
   probe: (evidence) => [
     ...unreadableShell({ evidence }),
+    ...anUndeclaredTool({ evidence }),
+    ...anUnreadableWorkspace({ evidence }),
     ...mutatingDeeds({ evidence }).flatMap((deed) => [
       ...sweepingAWholeTree({ deed, facts: evidence.facts }),
       ...cleaning({ deed, evidence }),

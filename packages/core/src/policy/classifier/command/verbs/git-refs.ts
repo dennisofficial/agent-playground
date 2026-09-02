@@ -109,7 +109,7 @@ export const reflog: GitHandler = ({ view }) => {
   if (verb !== 'expire' && verb !== 'delete') return readOnly({ summary: 'reads the reflog' })
 
   return sketch({
-    action: EDeed.RewriteHistory,
+    action: EDeed.DropRecovery,
     targets: [worktreeTarget({ view })],
     summary: 'drops the reflog entries that make commits recoverable',
   })
@@ -119,7 +119,7 @@ export const collectGarbage: GitHandler = ({ view }) => {
   if (!view.flags.has('--prune')) return routine({ summary: 'repacks the object store' })
 
   return sketch({
-    action: EDeed.RewriteHistory,
+    action: EDeed.DropRecovery,
     targets: [worktreeTarget({ view })],
     summary: 'prunes the unreachable objects that make lost commits recoverable',
   })

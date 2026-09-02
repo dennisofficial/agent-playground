@@ -77,6 +77,36 @@ describe('the git the operator runs on main every day', () => {
   })
 })
 
+describe('the main checkout, which always carries the operator own uncommitted work', () => {
+  it('clears a fast-forward pull, which the operator own instructions permit on main', () => {
+    expect(clearsOnMain('git pull --ff-only')).toBe(ETriage.Clear)
+    expect(
+      triageFor({
+        evidence: bashEvidence({ command: `git -C ${REPO} pull --ff-only`, facts: inAWorktree() }),
+      }).triage,
+    ).toBe(ETriage.Clear)
+  })
+
+  it('clears copying a file into the main checkout, because an added file takes nothing away', () => {
+    expect(clearsInAWorktree(`cp notes.md ${REPO}/notes.md`)).toBe(ETriage.Clear)
+  })
+})
+
+describe('the stash, which the operator uses to keep work rather than lose it', () => {
+  it('clears git stash push, the opposite of losing uncommitted work', () => {
+    expect(clearsOnMain('git stash push -m wip')).toBe(ETriage.Clear)
+    expect(clearsOnMain('git stash')).toBe(ETriage.Clear)
+    expect(clearsOnMain('git stash push -- apps/tui/src')).toBe(ETriage.Clear)
+  })
+})
+
+describe('a compound command whose damaging verb is in another segment', () => {
+  it('clears a rebase that merely follows or precedes a read-only reflog and a plain gc', () => {
+    expect(clearsOnMain('git reflog && git rebase origin/main')).toBe(ETriage.Clear)
+    expect(clearsOnMain('git rebase origin/main && git gc')).toBe(ETriage.Clear)
+  })
+})
+
 describe('the bootstrap steps in a fresh worktree', () => {
   it('clears copying .env.keys into a clean sibling worktree, because a copy is not a sink', () => {
     expect(clearsInAWorktree(`cp .env.keys ${SIBLING}/.env.keys`)).toBe(ETriage.Clear)

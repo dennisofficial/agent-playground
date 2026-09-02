@@ -1,7 +1,7 @@
 import { EDeed, EDeedRealm, type Deed } from '../deed'
 import { ERiskDimension, ESeverity } from '../dimension'
 import type { CallEvidence } from '../evidence'
-import type { WorkspaceFacts } from '../facts'
+import { weKnowWhereTheProjectIs, type WorkspaceFacts } from '../facts'
 import type { RiskSignal, SignalProbe } from '../signals'
 import {
   anySegmentFlagged,
@@ -13,6 +13,7 @@ import {
   riskSignal,
   segmentsRunning,
   targetsInRealm,
+  weInspectedTheWorktrees,
   worktreeAt,
   worktreeSubject,
 } from './kit'
@@ -28,6 +29,8 @@ const changedCountAt = (args: { facts: WorkspaceFacts; path: string }): number |
 }
 
 function discarding({ deed, facts }: { deed: Deed; facts: WorkspaceFacts }): readonly RiskSignal[] {
+  if (!weInspectedTheWorktrees({ facts })) return []
+
   const trees = targetsInRealm({ deed, realm: EDeedRealm.GitWorktree })
 
   if (trees.length === 0) {
@@ -62,6 +65,8 @@ function discarding({ deed, facts }: { deed: Deed; facts: WorkspaceFacts }): rea
 }
 
 function removing({ deed, facts }: { deed: Deed; facts: WorkspaceFacts }): readonly RiskSignal[] {
+  if (!weKnowWhereTheProjectIs({ facts })) return []
+
   return placesOf({ deed }).flatMap((path) => {
     if (isRegenerable({ facts, path })) return []
 
@@ -111,11 +116,6 @@ function droppingRecovery({
   deed: Deed
   evidence: CallEvidence
 }): readonly RiskSignal[] {
-  const drops =
-    segmentsRunning({ reading: evidence.reading, program: 'git', verb: 'reflog' }).length > 0 ||
-    segmentsRunning({ reading: evidence.reading, program: 'git', verb: 'gc' }).length > 0
-  if (!drops) return []
-
   return [
     riskSignal({
       dimension,
@@ -139,7 +139,7 @@ function signalsFor({
   if (deed.action === EDeed.DiscardWorkingTree) return discarding({ deed, facts })
   if (deed.action === EDeed.RemovePath) return removing({ deed, facts })
   if (deed.action === EDeed.RemoveWorktree) return removingAWorktree({ deed, evidence })
-  if (deed.action === EDeed.RewriteHistory) return droppingRecovery({ deed, evidence })
+  if (deed.action === EDeed.DropRecovery) return droppingRecovery({ deed, evidence })
 
   if (deed.action !== EDeed.MutateStash) return []
 

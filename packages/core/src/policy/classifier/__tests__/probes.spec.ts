@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'bun:test'
 
 import { ERiskDimension, ESeverity } from '../dimension'
+import { EToolEffect } from '../../../tools/tool'
 import type { CallEvidence } from '../evidence'
 import { EOccupancy } from '../facts'
+import { blastProbe } from '../probes/blast'
 import { contentionProbe } from '../probes/contention'
 import { irreversibilityProbe } from '../probes/irreversibility'
 import { reachProbe } from '../probes/reach'
 import { signalsFor, type RiskSignal, type SignalProbe } from '../signals'
-import { OURS, REPO, SIBLING, bashEvidence, inAWorktree, onMain, writeEvidence } from './fixtures'
+import { ETriage } from '../triage'
+import {
+  OURS,
+  REPO,
+  SIBLING,
+  bashEvidence,
+  inAWorktree,
+  onMain,
+  triageFor,
+  undeclaredEvidence,
+  writeEvidence,
+} from './fixtures'
 
 const from = (probe: SignalProbe, evidence: CallEvidence): readonly RiskSignal[] =>
   signalsFor({ evidence, probes: [probe] })
@@ -179,6 +192,65 @@ describe('the contention probe', () => {
     )
 
     expect(severities(signals)).toEqual([ESeverity.Grave])
+  })
+})
+
+describe('one segment, one verdict', () => {
+  it('does not read a rebase as a reflog drop because another segment ran git reflog', () => {
+    expect(
+      from(
+        irreversibilityProbe,
+        bashEvidence({ command: 'git reflog && git rebase origin/main', facts: onMain() }),
+      ),
+    ).toEqual([])
+  })
+
+  it('does not read a rebase as a reflog drop because a later segment runs git gc', () => {
+    expect(
+      from(
+        irreversibilityProbe,
+        bashEvidence({ command: 'git rebase origin/main && git gc', facts: onMain() }),
+      ),
+    ).toEqual([])
+  })
+
+  it('still rates the segment that does drop the recovery path grave', () => {
+    expect(
+      worst(
+        from(
+          irreversibilityProbe,
+          bashEvidence({
+            command: 'git rebase origin/main && git gc --prune=now',
+            facts: onMain(),
+          }),
+        ),
+      ),
+    ).toBe(ESeverity.Grave)
+  })
+})
+
+describe('the blast probe on a tool that will not say what it touches', () => {
+  it('escalates a destructive tool whose paths are undeclared', () => {
+    const evidence = undeclaredEvidence({
+      name: 'shell_exec',
+      effect: EToolEffect.Destructive,
+      facts: onMain(),
+    })
+
+    expect(from(blastProbe, evidence).map((signal) => signal.id)).toContain(
+      'blast:undeclared-paths',
+    )
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
+  })
+
+  it('says nothing about a read tool that declares no paths', () => {
+    const evidence = undeclaredEvidence({
+      name: 'list_agents',
+      effect: EToolEffect.Read,
+      facts: onMain(),
+    })
+
+    expect(from(blastProbe, evidence)).toEqual([])
   })
 })
 

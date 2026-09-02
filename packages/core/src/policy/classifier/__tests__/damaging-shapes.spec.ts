@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
+import { ESeverity } from '../dimension'
 import { EOccupancy } from '../facts'
 import { ETriage } from '../triage'
 import {
@@ -78,6 +79,38 @@ describe('destroying work in a worktree that is not ours', () => {
     })
 
     expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
+  })
+})
+
+describe('the deeds that take a dirty checkout away from whoever is standing in it', () => {
+  it('keeps the grave, ungrantable verdict on removing a dirty sibling', () => {
+    const evidence = bashEvidence({
+      command: 'rm -rf ../eng-412-sidebar',
+      facts: inAWorktree({ siblingChangedCount: 12 }),
+    })
+    const dirty = triageFor({ evidence }).standing.find(
+      (signal) => signal.id === 'contention:dirty-worktree',
+    )
+
+    expect(dirty?.severity).toBe(ESeverity.Grave)
+    expect(dirty?.ungrantable).toBe(true)
+  })
+
+  it('consults on a pull that is free to merge, unlike a fast-forward', () => {
+    const evidence = bashEvidence({
+      command: `git -C ${REPO} pull`,
+      facts: inAWorktree(),
+    })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
+  })
+
+  it('consults on dropping and clearing the stash every worktree shares', () => {
+    for (const command of ['git stash drop', 'git stash clear']) {
+      expect(triageFor({ evidence: bashEvidence({ command, facts: onMain() }) }).triage).toBe(
+        ETriage.Consult,
+      )
+    }
   })
 })
 

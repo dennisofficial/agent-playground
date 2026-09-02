@@ -5,11 +5,14 @@ import { basenameOf } from '../path-set'
 import type { RiskSignal, SignalProbe } from '../signals'
 import {
   isOurs,
+  losesSomething,
   mutatingDeeds,
   ourWorktree,
   placesOf,
   riskSignal,
+  takesSomethingAway,
   targetsInRealm,
+  weInspectedTheWorktrees,
   worktreeAt,
 } from './kit'
 
@@ -23,6 +26,75 @@ const heldNote = ({ worktree }: { worktree: WorktreeFact }): string => {
   return `, held by live process ${worktree.heldBy}`
 }
 
+const movesTheWholeCheckout = ({ deed }: { deed: Deed }): boolean => {
+  if (takesSomethingAway({ deed })) return false
+  return targetsInRealm({ deed, realm: EDeedRealm.GitWorktree }).length > 0
+}
+
+function signalsAt({
+  deed,
+  facts,
+  worktree,
+}: {
+  deed: Deed
+  facts: WorkspaceFacts
+  worktree: WorktreeFact
+}): readonly RiskSignal[] {
+  const subject = `worktree:${basenameOf({ path: worktree.path })}`
+  const changed = worktree.changedCount ?? 0
+
+  if (changed > 0 && losesSomething({ deed, facts })) {
+    return [
+      riskSignal({
+        dimension,
+        severity: ESeverity.Grave,
+        id: 'contention:dirty-worktree',
+        subject,
+        detail: `${deed.summary} in ${worktree.path}, which is not ours and carries ${changed} uncommitted change(s)${heldNote({ worktree })}`,
+        ungrantable: true,
+      }),
+    ]
+  }
+
+  if (worktree.occupancy === EOccupancy.LiveOther) {
+    return [
+      riskSignal({
+        dimension,
+        severity: ESeverity.Grave,
+        id: 'contention:live-worktree',
+        subject,
+        detail: `${deed.summary} in ${worktree.path}${heldNote({ worktree })}`,
+      }),
+    ]
+  }
+
+  if (changed === 0) return []
+
+  if (movesTheWholeCheckout({ deed })) {
+    return [
+      riskSignal({
+        dimension,
+        severity: ESeverity.Serious,
+        id: 'contention:moves-another-checkout',
+        subject,
+        detail: `${deed.summary} in ${worktree.path}, a checkout this session does not stand in, over ${changed} uncommitted change(s)`,
+      }),
+    ]
+  }
+
+  if (worktree.isMain) return []
+
+  return [
+    riskSignal({
+      dimension,
+      severity: ESeverity.Serious,
+      id: 'contention:writes-into-dirty-worktree',
+      subject,
+      detail: `${deed.summary} inside ${worktree.path}, another agent's worktree, which carries ${changed} uncommitted change(s)`,
+    }),
+  ]
+}
+
 function occupiedBySomeoneElse({
   deed,
   facts,
@@ -31,6 +103,7 @@ function occupiedBySomeoneElse({
   facts: WorkspaceFacts
 }): readonly RiskSignal[] {
   if (EXEMPT.has(deed.action)) return []
+  if (!weInspectedTheWorktrees({ facts })) return []
 
   const seen = new Set<string>()
 
@@ -41,33 +114,7 @@ function occupiedBySomeoneElse({
     if (seen.has(worktree.path)) return []
     seen.add(worktree.path)
 
-    const subject = `worktree:${basenameOf({ path: worktree.path })}`
-    const changed = worktree.changedCount
-
-    if (changed !== undefined && changed > 0) {
-      return [
-        riskSignal({
-          dimension,
-          severity: ESeverity.Grave,
-          id: 'contention:dirty-worktree',
-          subject,
-          detail: `${deed.summary} in ${worktree.path}, which is not ours and carries ${changed} uncommitted change(s)${heldNote({ worktree })}`,
-          ungrantable: true,
-        }),
-      ]
-    }
-
-    if (worktree.occupancy !== EOccupancy.LiveOther) return []
-
-    return [
-      riskSignal({
-        dimension,
-        severity: ESeverity.Grave,
-        id: 'contention:live-worktree',
-        subject,
-        detail: `${deed.summary} in ${worktree.path}${heldNote({ worktree })}`,
-      }),
-    ]
+    return signalsAt({ deed, facts, worktree })
   })
 }
 

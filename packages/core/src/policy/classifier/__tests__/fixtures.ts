@@ -7,6 +7,7 @@ import {
   type ToolCall,
 } from '../../../tools/tool'
 import { readCommand } from '../command/read-command'
+import { EDeedRealm } from '../deed'
 import { EPathDeclaration, deedsOf } from '../deed-of'
 import type { CallEvidence, RecentAct } from '../evidence'
 import { EOccupancy, type RefFact, type WorkspaceFacts, type WorktreeFact } from '../facts'
@@ -49,11 +50,14 @@ export function worktreeFact(args: {
   }
 }
 
+export const GATHERED: readonly EDeedRealm[] = [EDeedRealm.Path, EDeedRealm.GitWorktree]
+
 export function factsAt(args: {
   projectDirectory: string
   worktrees?: readonly WorktreeFact[] | undefined
   refs?: readonly RefFact[] | undefined
   ownChangedPaths?: readonly string[] | undefined
+  gatheredFor?: readonly EDeedRealm[] | undefined
 }): WorkspaceFacts {
   return {
     projectDirectory: args.projectDirectory,
@@ -63,7 +67,7 @@ export function factsAt(args: {
     refs: args.refs ?? [],
     ownChangedPaths: args.ownChangedPaths ?? [],
     regenerablePaths: REGENERABLE,
-    gatheredFor: [],
+    gatheredFor: args.gatheredFor ?? GATHERED,
   }
 }
 
@@ -191,6 +195,31 @@ export function writeEvidence(args: {
     recent: args.recent ?? [],
     said: [],
     grants: args.grants ?? [],
+  }
+}
+
+export function undeclaredEvidence(args: {
+  name: string
+  effect: EToolEffect
+  facts: WorkspaceFacts
+}): CallEvidence {
+  const call = callTo({ name: args.name, input: { target: 'anything' }, effect: args.effect })
+
+  return {
+    deeds: deedsOf({
+      call,
+      declaration: { kind: EPathDeclaration.Undeclared },
+      reading: undefined,
+      projectDirectory: args.facts.projectDirectory,
+    }),
+    toolName: args.name,
+    effect: args.effect,
+    threadId: toThreadId('thread-1'),
+    reading: undefined,
+    facts: args.facts,
+    recent: [],
+    said: [],
+    grants: [],
   }
 }
 

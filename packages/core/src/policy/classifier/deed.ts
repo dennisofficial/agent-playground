@@ -14,6 +14,7 @@ export enum EDeed {
   RemovePath = 'remove-path',
   DiscardWorkingTree = 'discard-working-tree',
   RewriteHistory = 'rewrite-history',
+  DropRecovery = 'drop-recovery',
   DeleteBranch = 'delete-branch',
   ForcePush = 'force-push',
   MutateStash = 'mutate-stash',

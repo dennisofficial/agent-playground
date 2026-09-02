@@ -1,7 +1,13 @@
 import { EDeed, EDeedRealm, filesystemTargets, mutates, type Deed } from '../deed'
 import type { ERiskDimension, ESeverity } from '../dimension'
 import type { CallEvidence } from '../evidence'
-import { EOccupancy, type WorkspaceFacts, type WorktreeFact } from '../facts'
+import {
+  EOccupancy,
+  weKnowWhereTheProjectIs,
+  weLookedAt,
+  type WorkspaceFacts,
+  type WorktreeFact,
+} from '../facts'
 import { basenameOf, isUnderPath } from '../path-set'
 import { homeDotDirectory, insideTemporaryRoot, looksRegenerable } from '../shapes'
 import type { RiskSignal } from '../signals'
@@ -12,6 +18,7 @@ const DEEDS_THAT_LOSE_SOMETHING: ReadonlySet<EDeed> = new Set([
   EDeed.DeleteBranch,
   EDeed.DeployEnvironment,
   EDeed.DiscardWorkingTree,
+  EDeed.DropRecovery,
   EDeed.ForcePush,
   EDeed.KillProcess,
   EDeed.MutateStash,
@@ -103,6 +110,10 @@ export function insideProject({ facts, path }: { facts: WorkspaceFacts; path: st
   return isUnderPath({ directory: facts.projectDirectory, path })
 }
 
+export function weInspectedTheWorktrees({ facts }: { facts: WorkspaceFacts }): boolean {
+  return weLookedAt({ facts, realm: EDeedRealm.GitWorktree })
+}
+
 export function isRegenerable({ facts, path }: { facts: WorkspaceFacts; path: string }): boolean {
   if (!insideProject({ facts, path })) return false
   return looksRegenerable({ path, names: facts.regenerablePaths })
@@ -114,8 +125,13 @@ export function belongsToTheOperatorsTools({ path }: { path: string }): boolean 
   return dot !== undefined && TOOL_OWNED_DOT_DIRECTORIES.has(dot)
 }
 
+export function takesSomethingAway({ deed }: { deed: Deed }): boolean {
+  return DEEDS_THAT_LOSE_SOMETHING.has(deed.action)
+}
+
 export function losesSomething({ deed, facts }: { deed: Deed; facts: WorkspaceFacts }): boolean {
-  if (!DEEDS_THAT_LOSE_SOMETHING.has(deed.action)) return false
+  if (!takesSomethingAway({ deed })) return false
+  if (!weKnowWhereTheProjectIs({ facts })) return false
   const places = placesOf({ deed })
   if (places.length === 0) return true
   return !places.every((path) => isRegenerable({ facts, path }))
