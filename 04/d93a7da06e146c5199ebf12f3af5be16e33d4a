@@ -1,0 +1,85 @@
+packages/core/src/policy/classifier/__tests__/benign-shapes.spec.ts
+  s_8ae1fa940f8094::t_87585653351c3f 4,6,151-157
+apps/tui/src/composition/__tests__/classify.spec.ts
+  s_8ae1fa940f8094::t_e0fdcc0bbd9496 104
+  s_8ae1fa940f8094::t_5a95cf527df71f 157-159
+  s_8ae1fa940f8094::t_2a9ad745301409 1-103,105-156,160-200
+packages/core/src/policy/classifier/__tests__/undoing.spec.ts
+  s_8ae1fa940f8094::t_cd9bee61e68311 1-99
+packages/core/src/policy/classifier/evidence-schema.ts
+  s_8ae1fa940f8094::t_48c827f12b881c 5
+  s_8ae1fa940f8094::t_36c0647638d983 1-4,6-58,66-116
+  s_8ae1fa940f8094::t_5a95cf527df71f 59-65
+  s_8ae1fa940f8094::t_deb78dd714aaed 117
+packages/core/src/policy/classifier/__tests__/corpus/rm-rf-a-sibling-worktree.json
+  s_8ae1fa940f8094::t_35dbd7dfcb2bd5 1-88
+apps/tui/src/composition/classify-report.ts
+  s_8ae1fa940f8094::t_5a95cf527df71f 11-17,49-57,83
+  s_8ae1fa940f8094::t_aadb28316a0f95 1-10,18-32,34-37,40-48,58-82,84-111,114-123
+  s_8ae1fa940f8094::t_f88e3dd205cbec 33,38-39,112-113
+packages/core/src/policy/classifier/__tests__/corpus/rm-rf-regenerable-directories.json
+  s_8ae1fa940f8094::t_35dbd7dfcb2bd5 1-86
+packages/core/src/policy/classifier/__tests__/critique.spec.ts
+  s_8ae1fa940f8094::t_5a95cf527df71f 36-38
+  s_8ae1fa940f8094::t_b80224e53ed1d5 1-35,39-41
+packages/harness/src/classifier/__tests__/classify-replay.spec.ts
+  s_8ae1fa940f8094::t_11c8c094204279 1-149
+packages/harness/src/classifier/critique.ts
+  s_8ae1fa940f8094::t_5c4fe2ebd45f3b 1-12,14-45
+  s_8ae1fa940f8094::t_5a95cf527df71f 13
+packages/core/src/policy/classifier/corpus.ts
+  s_8ae1fa940f8094::t_fd966c2b33bd2d 1-62
+packages/harness/src/classifier/replay.ts
+  s_8ae1fa940f8094::t_5a95cf527df71f 79-85
+  s_8ae1fa940f8094::t_961376ae05bac1 11,38,70,133-140,176,210
+  s_8ae1fa940f8094::t_f11126abe2863b 1-8,10,12-16,18-37,39,42-47,49-67,77-78,86-93,95-113,115-131,142-173,182-201,203-209,211,214-220,222-247
+  s_8ae1fa940f8094::t_a8dd718b0dcf85 9,40-41,68-69,71-76,132,141,174-175,177-181,212-213
+  s_8ae1fa940f8094::t_c63c0ba081e3a0 17,94,202
+  s_8ae1fa940f8094::t_f88e3dd205cbec 48,221
+  s_8ae1fa940f8094::t_50ecb8e8706188 114
+apps/tui/src/composition/classify-run.ts
+  s_8ae1fa940f8094::t_17943fec5acfeb 12-13,40,96-105
+  s_8ae1fa940f8094::t_5a95cf527df71f 59-60,122-123
+  s_8ae1fa940f8094::t_5a6e3789c52fe2 1-11,14-39,41-43,45-55,58,61-95,106-121,124-145,147-149,151-153,156-189,199-203,205,207,209,211-213,215-219,221-225,231-276
+  s_8ae1fa940f8094::t_4297d6b888e5f3 44
+  s_8ae1fa940f8094::t_dbedaaeedf0b00 56-57,146,150,154-155,190-198,204,206,208,210,214,220,226-230
+packages/core/src/policy/classifier/critique.ts
+  s_8ae1fa940f8094::t_cd3107a00fa9a7 1-48,53-59
+  s_8ae1fa940f8094::t_5a95cf527df71f 49-52
+packages/harness/src/classifier/index.ts
+  s_8ae1fa940f8094::t_1c2dfb00f07da5 2
+  s_8ae1fa940f8094::t_86c8ccd73f9f7a 11-12
+packages/harness/src/classifier/replay-summary.ts
+  s_8ae1fa940f8094::t_8e96fcab01754d 1-74
+packages/core/src/policy/classifier/undoing.ts
+  s_8ae1fa940f8094::t_e89538dae8375f 1-27,29-58,61-115,117-147
+  s_8ae1fa940f8094::t_5a95cf527df71f 28,59-60,116
+packages/core/src/policy/classifier/__tests__/corpus.ts
+  s_8ae1fa940f8094::t_097082304640d9 1-15
+apps/tui/src/composition/boot.tsx
+  s_8ae1fa940f8094::t_fc2a594759204f 8-9,43-47
+  s_8ae1fa940f8094::t_2902d24404f2fa 48
+apps/tui/src/composition/classify.ts
+  s_8ae1fa940f8094::t_a338437cce5cdb 1-39,47-82
+  s_8ae1fa940f8094::t_5a95cf527df71f 40-46
+packages/core/src/policy/classifier/__tests__/corpus.spec.ts
+  s_8ae1fa940f8094::t_a0dfa76f0f48a9 1-71
+packages/core/src/index.ts
+  s_8ae1fa940f8094::t_a6a0196010ce65 110-111,114,116
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "04d93a7da06e146c5199ebf12f3af5be16e33d4a",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
