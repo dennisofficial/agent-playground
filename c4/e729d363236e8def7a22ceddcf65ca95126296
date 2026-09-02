@@ -1,0 +1,39 @@
+packages/harness/src/tools/builtin/__tests__/skill-install.spec.ts
+  ai_agent 1-115
+packages/harness/src/tools/builtin/mcp-edit.ts
+  ai_agent 1-39
+packages/harness/src/tools/builtin/skill-install.ts
+  ai_agent 1-65
+packages/harness/src/mcp/config/writer.ts
+  ai_agent 1-162
+packages/harness/src/skills/install-writer.ts
+  ai_agent 1-52
+packages/harness/src/tools/builtin/__tests__/mcp-edit.spec.ts
+  ai_agent 1-171
+packages/harness/src/tools/register-tools.ts
+  ai_agent 26,32,70-71
+packages/harness/src/settings/paths.ts
+  ai_agent 9-10,23-28
+packages/harness/src/container/__tests__/harness-graph.spec.ts
+  ai_agent 55,61
+packages/harness/src/mcp/config/index.ts
+  ai_agent 3-8
+packages/harness/src/skills/index.ts
+  ai_agent 15-20
+packages/harness/src/tools/index.ts
+  ai_agent 12
+packages/harness/src/settings/index.ts
+  ai_agent 9,14,18
+packages/harness/src/tools/__tests__/tool-container.spec.ts
+  ai_agent 36-37
+packages/harness/src/skills/__tests__/install-writer.spec.ts
+  ai_agent 1-123
+packages/harness/src/mcp/__tests__/writer.spec.ts
+  ai_agent 1-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "c4e729d363236e8def7a22ceddcf65ca95126296",
+  "prompts": {}
+}
