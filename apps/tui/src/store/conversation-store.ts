@@ -26,10 +26,7 @@ export type ConversationStore = {
   subscribe(listener: () => void): Unsubscribe
   getSnapshot(): TranscriptModel
   getSidebar(): SidebarModel
-  setEvents(args: {
-    events: readonly Event[]
-    turns?: readonly TurnSpend[] | undefined
-  }): void
+  setEvents(args: { events: readonly Event[]; turns?: readonly TurnSpend[] | undefined }): void
   setTurn(turn: TurnClock): void
   supersedeFailure(): void
   setThinking(thinking: EThinkingVisibility): void
@@ -49,6 +46,7 @@ export function createConversationStore(args: {
   paceReveal?: boolean
   thinking?: EThinkingVisibility
   name?: string | null
+  projectEvents?: ((args: { events: readonly Event[] }) => void) | undefined
 }): ConversationStore {
   const paceReveal = args.paceReveal ?? false
   let thinking: EThinkingVisibility = args.thinking ?? SHIPPED_THINKING
@@ -62,12 +60,15 @@ export function createConversationStore(args: {
   let model = deriveTranscript({ events, signals, turns, thinking })
   let sidebar = deriveSidebar({ events, turn, name })
 
+  args.projectEvents?.({ events })
+
   const listeners = new Set<() => void>()
 
   const republish = () => {
     signals = prunedSignals({ signals, events })
     model = deriveTranscript({ events, signals, turns, reveal: gate, thinking })
     sidebar = deriveSidebar({ events, turn, name })
+    args.projectEvents?.({ events })
     for (const listener of [...listeners]) listener()
   }
 

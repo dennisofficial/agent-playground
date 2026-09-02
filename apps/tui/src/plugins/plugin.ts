@@ -18,6 +18,7 @@ import type {
   WorkspacePort,
 } from '@dltech/atlas-core'
 
+import type { PluginProjection } from './projection'
 import type { PluginSurfaceHook } from './surface'
 
 type Phase<TKind extends EHookPhase, TRun> = {
@@ -47,6 +48,7 @@ export type PluginContribution = {
   tools?: readonly ToolDefinition[]
   ports?: readonly PortBinding[]
   promptFragments?: readonly PromptFragment[]
+  projections?: readonly PluginProjection<unknown>[]
   surfaces?: readonly PluginSurfaceHook[]
   dispose?: () => void | Promise<void>
 }

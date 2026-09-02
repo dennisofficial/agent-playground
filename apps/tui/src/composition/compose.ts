@@ -130,6 +130,7 @@ import { selectableModel, type ModelChoice } from './model-selection'
 import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
 import { assemblePlugins } from '../plugins/assemble'
 import { ENoticeTone, notify } from '../ui/notice-store'
+import type { ContributedProjection } from '../plugins/projection'
 import type { ContributedSurface } from '../plugins/surface'
 import { instructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
@@ -189,6 +190,7 @@ export type AtlasApp = {
   skills: readonly DiscoveredSkill[]
   skillRegistry: SkillRegistryPort
   agentTypes: AgentTypeCatalog
+  pluginProjections: readonly ContributedProjection[]
   pluginSurfaces: readonly ContributedSurface[]
   close: () => Promise<void>
 }
@@ -591,6 +593,7 @@ export async function composeAtlas(args: {
     skills: skillRegistry.all(),
     skillRegistry,
     agentTypes,
+    pluginProjections: plugins.projections,
     pluginSurfaces: plugins.surfaces,
     files: new FileBrowser({ root: config.cwd }),
     openUrl: createUrlOpener(),

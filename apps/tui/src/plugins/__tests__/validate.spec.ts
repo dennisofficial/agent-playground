@@ -6,11 +6,12 @@ import { atlasPluginApi } from '../api'
 import {
   EPluginRefusal,
   refuseDuplicateIds,
-  validatePluginContribution,
   validateRepoPlugin,
   type LoadedRepoPlugin,
   type RepoPluginOrigin,
 } from '../validate'
+import { defineProjection } from '../projection'
+import { validatePluginContribution } from '../validate-contribution'
 
 const { definePlugin } = atlasPluginApi
 
@@ -178,5 +179,45 @@ describe('validatePluginContribution', () => {
     })
 
     expect(validated.ok === false && validated.refusal).toBe(EPluginRefusal.HookOrderInvalid)
+  })
+})
+
+describe('a contributed projection is checked before the store folds with it', () => {
+  it('accepts one built by defineProjection', () => {
+    const validated = validatePluginContribution({
+      contribution: { projections: [defineProjection({ id: 'plan', fold: () => 0 })] },
+      pluginId: 'plan',
+    })
+
+    expect(validated.ok).toBe(true)
+  })
+
+  it('refuses projections that are not an array', () => {
+    const validated = validatePluginContribution({
+      contribution: { projections: {} },
+      pluginId: 'plan',
+    })
+
+    expect(validated.ok).toBe(false)
+    expect(validated.ok ? null : validated.refusal).toBe(EPluginRefusal.ProjectionsNotAnArray)
+  })
+
+  it('refuses one without an id', () => {
+    const validated = validatePluginContribution({
+      contribution: { projections: [{ publish: () => {} }] },
+      pluginId: 'plan',
+    })
+
+    expect(validated.ok ? null : validated.refusal).toBe(EPluginRefusal.ProjectionIdMissing)
+  })
+
+  it('names the member that is missing when the projection cannot fold', () => {
+    const validated = validatePluginContribution({
+      contribution: { projections: [{ id: 'plan', publish: () => {}, current: () => 0 }] },
+      pluginId: 'plan',
+    })
+
+    expect(validated.ok ? null : validated.refusal).toBe(EPluginRefusal.ProjectionCannotFold)
+    expect(validated.ok ? '' : validated.detail).toContain('subscribe')
   })
 })

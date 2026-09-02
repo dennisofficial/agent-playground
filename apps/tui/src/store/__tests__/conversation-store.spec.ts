@@ -46,7 +46,9 @@ describe('the conversation store', () => {
 
     store.setEvents({ events: log([{ type: 'user-said', text: 'hello' }]) })
     const afterEvents = notices
-    channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
+    channel
+      .publisherFor({ threadId: fixtureThreadId })
+      .onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
 
     expect(afterEvents).toBeGreaterThan(0)
     expect(notices).toBeGreaterThan(afterEvents)
@@ -85,14 +87,18 @@ describe('the conversation store', () => {
     publisher.onChunk({ type: 'text-delta', id: 'b1', text: 'done' })
     publisher.settleAppend({ events: [reply] })
     store.setEvents({ events: durable })
-    channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b2', text: 'again' })
+    channel
+      .publisherFor({ threadId: fixtureThreadId })
+      .onChunk({ type: 'text-delta', id: 'b2', text: 'again' })
 
     expect(textOf(store)).toEqual(['done', 'again'])
   })
 
   it('stops following the channel once disposed', () => {
     store.dispose()
-    channel.publisherFor({ threadId: fixtureThreadId }).onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
+    channel
+      .publisherFor({ threadId: fixtureThreadId })
+      .onChunk({ type: 'text-delta', id: 'b1', text: 'hi' })
 
     expect(store.getSnapshot().isEmpty).toBe(true)
   })
@@ -138,5 +144,52 @@ describe('a failure the store is holding on screen', () => {
 
     expect(afterRetiring).toBe(1)
     expect(notices).toBe(1)
+  })
+})
+
+describe('the store lets the composition root fold the same log', () => {
+  it('projects the log it was opened on, before any turn runs', () => {
+    const seen: number[] = []
+    createConversationStore({
+      channel: createDeltaChannel(),
+      threadId: fixtureThreadId,
+      events: log([{ type: 'user-said', text: 'resumed' }]),
+      projectEvents: ({ events }) => void seen.push(events.length),
+    })
+
+    expect(seen).toEqual([1])
+  })
+
+  it('projects again whenever the log changes', () => {
+    const seen: number[] = []
+    const opened = createConversationStore({
+      channel: createDeltaChannel(),
+      threadId: fixtureThreadId,
+      projectEvents: ({ events }) => void seen.push(events.length),
+    })
+
+    opened.setEvents({ events: log([{ type: 'user-said', text: 'one' }]) })
+    opened.setEvents({
+      events: log([
+        { type: 'user-said', text: 'one' },
+        { type: 'user-said', text: 'two' },
+      ]),
+    })
+
+    expect(seen).toEqual([0, 1, 2])
+  })
+
+  it('hands the projection the same array the sidebar was derived from', () => {
+    const projected: (readonly Event[])[] = []
+    const events = log([{ type: 'user-said', text: 'one' }])
+    const opened = createConversationStore({
+      channel: createDeltaChannel(),
+      threadId: fixtureThreadId,
+      projectEvents: ({ events: folded }) => void projected.push(folded),
+    })
+
+    opened.setEvents({ events })
+
+    expect(projected.at(-1)).toBe(events)
   })
 })

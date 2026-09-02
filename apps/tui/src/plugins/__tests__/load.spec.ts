@@ -18,6 +18,7 @@ import {
 } from '@dltech/atlas-harness'
 
 import { loadPlugins, type OriginatedPlugin } from '../load'
+import { defineProjection } from '../projection'
 import { NativePlugin, type PluginContribution, type PluginHost } from '../plugin'
 
 const HOST = {} as PluginHost
@@ -255,6 +256,34 @@ describe('what register returned is checked before it is registered', () => {
     const { result } = await load([native('rogue', (() => Promise.resolve('nope')) as never)])
 
     expect(result.refused.map((entry) => entry.id)).toEqual(['rogue'])
+  })
+})
+
+describe('projections', () => {
+  const counting = (id: string) => defineProjection({ id, fold: ({ events }) => events.length })
+
+  it('collects each projection against the plugin that declared it', async () => {
+    const { result } = await load([
+      native('plan', { projections: [counting('plan')] }),
+      repo({
+        id: 'comp',
+        origin: EDefinitionOrigin.User,
+        contribution: { projections: [counting('one'), counting('two')] },
+      }),
+    ])
+
+    expect(result.projections.map((entry) => entry.pluginId)).toEqual([
+      'plan',
+      'user:comp',
+      'user:comp',
+    ])
+    expect(result.projections.map((entry) => entry.projection.id)).toEqual(['plan', 'one', 'two'])
+  })
+
+  it('collects no projection from a plugin that was refused', async () => {
+    const { result } = await load([native('broken', () => Promise.reject(new Error('boom')))])
+
+    expect(result.projections).toEqual([])
   })
 })
 

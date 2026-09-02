@@ -23,6 +23,8 @@ import {
 } from '../store'
 import type { Compacting } from '../ui/components/compacting'
 import type { TurnClock } from '../ui/components/transcript'
+import { publishProjections } from '../plugins/projection'
+import { ENoticeTone, notify } from '../ui/notice-store'
 import { createAwakeClock } from './awake-clock'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
@@ -111,8 +113,14 @@ export function useConversation(args: {
         turns: opened.turns,
         paceReveal,
         name: opened.name,
+        projectEvents: ({ events: folded }) => {
+          const broke = publishProjections({ projections: app.pluginProjections, events: folded })
+          if (broke.length === 0) return
+
+          notify({ tone: ENoticeTone.Warn, text: `projection failed: ${broke.join(', ')}` })
+        },
       }),
-    [app.channel, paceReveal, opened],
+    [app.channel, app.pluginProjections, paceReveal, opened],
   )
 
   useEffect(() => () => store.dispose(), [store])

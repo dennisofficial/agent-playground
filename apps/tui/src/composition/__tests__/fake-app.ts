@@ -519,6 +519,7 @@ export function fakeApp(args: {
     skills: skillRegistry.all(),
     skillRegistry,
     agentTypes: args.agentTypes ?? EMPTY_AGENT_TYPE_CATALOG,
+    pluginProjections: [],
     pluginSurfaces: [],
     files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),

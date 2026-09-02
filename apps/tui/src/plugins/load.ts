@@ -29,8 +29,9 @@ import {
   type PluginHost,
   type RepoPlugin,
 } from './plugin'
+import type { ContributedProjection } from './projection'
 import type { ContributedSurface } from './surface'
-import { validatePluginContribution } from './validate'
+import { validatePluginContribution } from './validate-contribution'
 
 export type OriginatedPlugin =
   | { origin: EDefinitionOrigin.BuiltIn; plugin: NativePlugin }
@@ -45,6 +46,7 @@ export type LoadedPlugins = {
   loaded: readonly PluginIdentity[]
   shadowed: readonly PluginIdentity[]
   refused: readonly PluginRefusal[]
+  projections: readonly ContributedProjection[]
   surfaces: readonly ContributedSurface[]
 }
 
@@ -148,6 +150,7 @@ export async function loadPlugins(args: {
 
   const loaded: PluginIdentity[] = []
   const refused: PluginRefusal[] = []
+  const projections: ContributedProjection[] = []
   const surfaces: ContributedSurface[] = []
 
   for (const entry of winners) {
@@ -176,6 +179,9 @@ export async function loadPlugins(args: {
       identity,
       contribution: checked.contribution,
     })
+    for (const projection of checked.contribution.projections ?? []) {
+      projections.push({ pluginId: label, projection })
+    }
     for (const use of checked.contribution.surfaces ?? []) {
       surfaces.push({ pluginId: label, use })
     }
@@ -186,6 +192,7 @@ export async function loadPlugins(args: {
     loaded,
     shadowed: args.plugins.filter((entry) => !survived.has(entry)).map(identityOf),
     refused,
+    projections,
     surfaces,
   }
 }
