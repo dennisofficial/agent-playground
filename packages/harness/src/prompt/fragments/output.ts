@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class LeadWithOutcomeFragment extends PromptFragment {
   readonly id = 'output.lead-with-outcome'
 
@@ -15,7 +13,6 @@ export class LeadWithOutcomeFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class ReadableBeatsTerseFragment extends PromptFragment {
   readonly id = 'output.readable-beats-terse'
 
@@ -31,7 +28,6 @@ export class ReadableBeatsTerseFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class OutputShapeFragment extends PromptFragment {
   readonly id = 'output.shape'
 
@@ -46,7 +42,6 @@ export class OutputShapeFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class CutOrderFragment extends PromptFragment {
   readonly id = 'output.cut-order'
 
@@ -60,7 +55,6 @@ export class CutOrderFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class CiteFileAndLineFragment extends PromptFragment {
   readonly id = 'output.cite-file-and-line'
 

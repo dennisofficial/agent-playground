@@ -42,7 +42,7 @@ type CutShort = {
 async function openCutShortAt(args: {
   script: readonly ScriptedStep[]
   chunk: ChunkType
-  tools?: readonly ToolDeclaration[] | undefined
+  tools?: (() => readonly ToolDeclaration[]) | undefined
 }): Promise<CutShort> {
   const temp = createTempDatabase()
   const controller = new AbortController()
@@ -124,7 +124,7 @@ describe('resuming a turn the developer stopped', () => {
         { text: 'and that is all' },
       ],
       chunk: 'text-delta',
-      tools: [readDeclaration],
+      tools: () => [readDeclaration],
     })
 
     await cut.harness.runner.say({
@@ -145,7 +145,7 @@ describe('resuming a turn the developer stopped', () => {
         { text: 'it exports nothing' },
       ],
       chunk: 'tool-call',
-      tools: [readDeclaration],
+      tools: () => [readDeclaration],
     })
 
     await cut.harness.runner.say({

@@ -1,4 +1,9 @@
-import { type SettingDefinition } from './definition'
+import {
+  type ModelDefinition,
+  type SecretDefinition,
+  type SettingDefinition,
+  type TextDefinition,
+} from './definition'
 import { ESettingKind, type SettingValue } from './value'
 
 const wrapped = (args: { index: number; length: number }): number => {
@@ -8,6 +13,14 @@ const wrapped = (args: { index: number; length: number }): number => {
 
 const clamped = (args: { value: number; minimum: number; maximum: number }): number =>
   Math.min(args.maximum, Math.max(args.minimum, args.value))
+
+/** Kinds a keypress on the row cannot change on its own: something else asks for the value. */
+const handsOff = (
+  definition: SettingDefinition,
+): definition is TextDefinition | SecretDefinition | ModelDefinition =>
+  definition.kind === ESettingKind.Text ||
+  definition.kind === ESettingKind.Secret ||
+  definition.kind === ESettingKind.Model
 
 const optionIndex = (args: { options: readonly { value: string }[]; value: SettingValue }): number => {
   const found = args.options.findIndex((option) => option.value === args.value)
@@ -24,7 +37,7 @@ export function activateSetting(args: {
     return typeof current === 'boolean' ? !current : !definition.fallback
   }
 
-  if (definition.kind === ESettingKind.Text || definition.kind === ESettingKind.Secret) {
+  if (handsOff(definition)) {
     return typeof current === 'string' ? current : definition.fallback
   }
 
@@ -54,7 +67,7 @@ export function adjustSetting(args: {
     return delta > 0
   }
 
-  if (definition.kind === ESettingKind.Text || definition.kind === ESettingKind.Secret) {
+  if (handsOff(definition)) {
     return typeof current === 'string' ? current : definition.fallback
   }
 

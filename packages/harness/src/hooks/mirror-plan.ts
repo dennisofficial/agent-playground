@@ -9,9 +9,7 @@ import {
   type HookOrder,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 
-@injectable()
 export class MirrorPlanHook extends AfterToolHook {
   readonly name = 'plan'
   readonly order: HookOrder = { stage: EStage.Observe, nudge: 0 }

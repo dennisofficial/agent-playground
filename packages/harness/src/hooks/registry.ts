@@ -45,7 +45,7 @@ export type HookChainArgs = {
   budgetMs?: number | undefined
 }
 
-type Bounds = { onMishap: OnHookMishap | undefined; budgetMs: number | undefined }
+export type Bounds = { onMishap: OnHookMishap | undefined; budgetMs: number | undefined }
 
 const NOTHING: HookOutcome = {}
 
@@ -98,7 +98,7 @@ export class HookChain {
   private readonly afterShellHooks: readonly RegisteredHook<AfterShell>[]
   private readonly onChunkHooks: readonly RegisteredHook<OnChunk>[]
   private readonly afterTurnHooks: readonly RegisteredHook<AfterTurn>[]
-  private readonly bounds: Bounds
+  readonly bounds: Bounds
 
   constructor(args: HookChainArgs) {
     this.bounds = { onMishap: args.onMishap, budgetMs: args.budgetMs }

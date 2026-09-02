@@ -27,6 +27,7 @@ import { newestExpandableKey } from '../store'
 import { withSections } from '../store/sidebar-model'
 import { accountMeterSpans } from '../ui/account-meters'
 import { accountOf, type AccountRow } from '../ui/accounts-model'
+import { NOTHING_IN_BACKGROUND } from '../ui/background-wait'
 import type { Span } from '../ui/components/spans'
 import { usageMeters, type FooterMeter } from '../ui/usage-meters'
 import { CommandMenu } from '../ui/components/command-menu'
@@ -62,7 +63,6 @@ import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import { SelectionSurface } from '../ui/selection/selection-surface'
 import { useCopyOnSelect } from '../ui/selection/use-copy-on-select'
-import type { SwitcherChoice } from '../ui/switcher-model'
 import {
   chromeWidthOf,
   contentWidthOf,
@@ -82,6 +82,7 @@ import {
   useKeyRegistry,
 } from '../ui/keys'
 import { commandSpecs, dispatchSubmission, EDispatch, localCommands } from './commands'
+import { mcpReport } from './mcp-report'
 import { useComposerMenus } from './use-composer-menus'
 import { workspaceFileLoader } from './mentioned-files'
 import { useResolvedMentions } from './use-resolved-mentions'
@@ -90,7 +91,6 @@ import { reloadedSkills, type SkillsReloaded } from './skills-reload'
 import { globalBindings } from './global-bindings'
 import { applyTranscriptCovered } from '../ui/covered-store'
 import { OverlayStack } from './overlay-stack'
-import type { ModelSelection } from './model-selection'
 import { unmeasuredWindowWarning } from './providers'
 import type { OpenedConversation } from './open-conversation'
 import { useConversation } from './use-conversation'
@@ -113,7 +113,8 @@ import { useAccounts } from './use-accounts'
 import { useAgents } from './use-agents'
 import { useAgentView } from './use-agent-view'
 import { useAgentsPicker } from './use-agents-picker'
-import { useSwitcher } from './use-switcher'
+import { EModelScope, useSwitcher } from './use-switcher'
+import { useThreadModel } from './use-thread-model'
 import { useThreads } from './use-threads'
 
 const PLACEHOLDER = 'Ask anything'
@@ -191,7 +192,10 @@ function Workspace(props: {
   useSyncExternalStore(subscribeComposerEdge, composerEdgeVersion)
   useSyncExternalStore(props.app.usage.subscribe, props.app.usage.version)
 
-  const settings = useSettings({ app: props.app })
+  const chooseDefaultModel = useRef<(() => void) | null>(null)
+  const handleChooseDefaultModel = useCallback(() => chooseDefaultModel.current?.(), [])
+
+  const settings = useSettings({ app: props.app, onChooseModel: handleChooseDefaultModel })
 
   useCopyOnSelect()
 
@@ -224,7 +228,15 @@ function Workspace(props: {
     interrupting: conversation.turn.interrupting,
   })
 
-  const [selection, setSelection] = useState<ModelSelection>(() => props.app.model.choice())
+  const threadModel = useThreadModel({
+    app: props.app,
+    threadId: conversation.threadId,
+    stored: conversation.threadModel,
+    started: conversation.started,
+  })
+
+  const { selection } = threadModel
+
   const [panel, setPanel] = useState<EChromePanel | null>(null)
   const [sends, setSends] = useState(0)
   const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set<string>())
@@ -277,24 +289,21 @@ function Workspace(props: {
     conversation.handleNewConversation()
   }, [conversation, draft])
 
-  const handlePicked = useCallback(
-    (choice: SwitcherChoice) => {
-      if (choice.ref === null) return
-
-      props.app.model.select({ ref: choice.ref, effort: choice.effort })
-      setSelection(props.app.model.choice())
-    },
-    [props.app.model],
-  )
-
   const switcher = useSwitcher({
     catalogue: props.app.models,
     active: selection.ref,
     effort: selection.effort,
+    fallback: threadModel.fallback,
     favourites: settings.modelFavourites,
-    onPick: handlePicked,
+    onPick: threadModel.handlePicked,
     onPin: settings.handlePinModels,
   })
+
+  const openSwitcher = switcher.handleOpen
+
+  useEffect(() => {
+    chooseDefaultModel.current = () => openSwitcher(EModelScope.Default)
+  }, [openSwitcher])
 
   const shells = useShells({ app: props.app, threadId: conversation.threadId })
 
@@ -483,7 +492,7 @@ function Workspace(props: {
         onCompact: conversation.handleCompact,
         onRewind: rewind.handleOpen,
         onShortcuts: () => setPanel(EChromePanel.Shortcuts),
-        onOpenSwitcher: switcher.handleOpen,
+        onOpenSwitcher: () => openSwitcher(),
         onOpenShells: () => shells.handleOpen(),
         onOpenAgents: agentsPicker.handleOpen,
         onShowAgentTypes: () => setPanel(EChromePanel.AgentTypes),
@@ -494,6 +503,7 @@ function Workspace(props: {
         onOpenThreads: handleResumeConversation,
         onRename: conversation.handleRename,
         onReloadSkills: handleReloadSkills,
+        onShowMcp: () => mcpReport({ servers: props.app.mcp() }),
       }),
     [
       accounts,
@@ -502,6 +512,7 @@ function Workspace(props: {
       conversation.handleRename,
       handleNewConversation,
       handleReloadSkills,
+      props.app,
       rewind.handleOpen,
       settings.handleOpen,
       shells,
@@ -742,7 +753,7 @@ function Workspace(props: {
       onTakeBackPending: handleTakeBackPending,
       onEnterFooterStrip: footerStrip.handleEnter,
       onInterrupt: conversation.handleInterrupt,
-      onOpenSwitcher: switcher.handleOpen,
+      onOpenSwitcher: () => openSwitcher(),
       onAttachImage: handleAttachImage,
       onOpenShells: () => shells.handleOpen(),
       onCycleAgents: agents.count === 0 ? null : agentView.handleCycle,
@@ -859,7 +870,11 @@ function Workspace(props: {
               turn={conversation.turn}
               sends={sends}
               pending={conversation.pending}
-              background={{ agents: agents.running, shells: shells.running }}
+              background={
+                agentView.viewing === null
+                  ? { agents: agents.running, shells: shells.running }
+                  : NOTHING_IN_BACKGROUND
+              }
               {...(conversation.handleRetry === null ? {} : { onRetry: conversation.handleRetry })}
               {...(conversation.handleResume === null
                 ? {}
@@ -901,7 +916,7 @@ function Workspace(props: {
                 ? conversation.handle === null
                   ? {}
                   : { title: conversation.handle }
-                : { title: `@${agentView.name}`, titleFg: theme.court.external })}
+                : { title: `@${agentView.name}`, accent: theme.court.external })}
             />
           </box>
           <box flexGrow={welcome ? 1 : 0} flexShrink={1} />

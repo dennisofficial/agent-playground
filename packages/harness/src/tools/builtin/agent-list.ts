@@ -10,7 +10,6 @@ import {
 } from '@dltech/atlas-core'
 
 import type { AgentSnapshot } from '../../agents/registry/snapshot'
-import { inject, injectable } from '../../container/injection'
 import { AgentRegistrySourceToken, type AgentRegistrySource } from './agent-tokens'
 
 const inputSchema = z.strictObject({})
@@ -40,7 +39,6 @@ export function lineFor(snapshot: AgentSnapshot): string {
   return `${named}  ${ending}${lastTool}`
 }
 
-@injectable()
 export class AgentListTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'agent_list'
   readonly description = description
@@ -48,7 +46,7 @@ export class AgentListTool extends SchemaTool<typeof inputSchema> {
   readonly inputSchema = inputSchema
   override readonly isConcurrencySafe = (): boolean => true
 
-  constructor(@inject(AgentRegistrySourceToken) private readonly agents: AgentRegistrySource) {
+  constructor( private readonly agents: AgentRegistrySource) {
     super()
   }
 

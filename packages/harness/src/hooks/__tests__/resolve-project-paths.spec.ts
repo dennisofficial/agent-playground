@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, describe, expect, it } from 'bun:test'
 
 import {
   EBeforeToolDecision,
@@ -8,9 +8,7 @@ import {
   type ToolCall,
 } from '@dltech/atlas-core'
 
-import { createIsolatedContainer, portToken } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
-import { ToolDefinition } from '@dltech/atlas-core'
+import { closeRegistries, openRegistry } from '../../shells/__tests__/shell-registry-fixture'
 import { BashTool } from '../../tools/builtin/bash'
 import { ReadTool } from '../../tools/builtin/read'
 import { ResolveProjectPathsHook } from '../resolve-project-paths'
@@ -18,12 +16,13 @@ import { ResolveProjectPathsHook } from '../resolve-project-paths'
 const ROOT = '/Users/dev/project'
 
 const hook = (): ResolveProjectPathsHook => {
-  const container = createIsolatedContainer()
-  container.register(WorkspaceRoot, { useValue: ROOT })
-  container.register(portToken(ToolDefinition), { useClass: ReadTool })
-  container.register(portToken(ToolDefinition), { useClass: BashTool })
-  return container.resolve(ResolveProjectPathsHook)
+  const { registry: shells } = openRegistry()
+  return new ResolveProjectPathsHook([new ReadTool(), new BashTool(shells)])
 }
+
+afterEach(async () => {
+  await closeRegistries()
+})
 
 const callReading = (path: string): ToolCall => ({
   callId: toCallId('call-1'),

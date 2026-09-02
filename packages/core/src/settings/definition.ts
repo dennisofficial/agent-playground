@@ -45,6 +45,12 @@ export type TextDefinition = SettingFacts & {
   fallback: string
 }
 
+/** A model reference chosen through the switcher rather than typed, so the page hands off to it. */
+export type ModelDefinition = SettingFacts & {
+  kind: ESettingKind.Model
+  fallback: string
+}
+
 export type SecretDefinition = SettingFacts & {
   kind: ESettingKind.Secret
   fallback: ''
@@ -57,6 +63,7 @@ export type SettingDefinition =
   | ChoiceDefinition
   | RangeDefinition
   | TextDefinition
+  | ModelDefinition
   | SecretDefinition
 
 export function definitionsOfPage(args: {

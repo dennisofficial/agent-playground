@@ -18,8 +18,6 @@ import {
   type ToolCall,
 } from '@dltech/atlas-core'
 
-import { createIsolatedContainer } from '../../../container/injection'
-import { WorkspaceRoot, WorktreeDirectoryToken } from '../../../container/tokens'
 import { TrackWorktreeHook } from '../../../hooks/track-worktree'
 import { EnterWorktreeTool } from '../enter-worktree'
 import { ExitWorktreeTool } from '../exit-worktree'
@@ -74,12 +72,8 @@ describe('a worktree the whole way round', () => {
   it('moves the project and session directory in, and back out again', async () => {
     const root = await repoWithCommit()
 
-    const container = createIsolatedContainer()
-    container.register(WorkspaceRoot, { useValue: root })
-    container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
-
-    const enter = container.resolve(EnterWorktreeTool)
-    const exit = container.resolve(ExitWorktreeTool)
+    const enter = new EnterWorktreeTool(root, () => '.atlas/worktrees')
+    const exit = new ExitWorktreeTool(root)
     const hook = new TrackWorktreeHook()
 
     const invocation = (input: unknown, projectDirectory: string) => ({

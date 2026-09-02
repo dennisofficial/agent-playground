@@ -20,10 +20,10 @@ import {
   type HookOutcome,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 import { withinBudget, type OnHookMishap } from '../hooks/budget'
 import type { HookChain, RegisteredHook } from '../hooks/registry'
 import { EApprovalRouting, unattendedReason } from './approval-routing'
+import { outcomeWhenAHookDidNotAnswerInTime } from './hook-silence'
 import type { ToolRegistry } from './registry'
 
 export { EApprovalRouting }
@@ -55,7 +55,6 @@ const changesTheWorld = (effect: EToolEffect): boolean =>
 
 const MAX_REPORTED_ISSUES = 3
 
-@injectable()
 export class HookedToolDispatcher extends ToolDispatcher {
   private readonly registry: ToolRegistry
   private readonly hooks: HookChain
@@ -75,7 +74,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     this.hooks = args.hooks
     this.approvals = args.approvals
     this.workspace = args.workspace
-    this.onMishap = args.onMishap
+    this.onMishap = args.onMishap ?? args.hooks.bounds.onMishap
   }
 
   async dispatch(args: {
@@ -200,10 +199,8 @@ export class HookedToolDispatcher extends ToolDispatcher {
           events: args.events,
           signal: args.signal,
         }),
-      fallback: (mishap) => ({
-        decision: EBeforeToolDecision.Deny,
-        reason: `the ${args.hook.name} hook ${mishap.kind === 'threw' ? `failed: ${mishap.detail}` : mishap.detail}`,
-      }),
+      fallback: (mishap) => outcomeWhenAHookDidNotAnswerInTime({ mishap, call: args.call }),
+      budgetMs: this.hooks.bounds.budgetMs,
       onMishap: this.onMishap,
     })
   }
@@ -267,6 +264,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
         label: hook.name,
         run: () => hook.run({ call: args.call, result: args.result, signal: args.signal }),
         fallback: () => NO_OUTCOME,
+        budgetMs: this.hooks.bounds.budgetMs,
         onMishap: this.onMishap,
       })
       observed.push(...hookOutcomeDrafts({ hookName: hook.name, outcome }))

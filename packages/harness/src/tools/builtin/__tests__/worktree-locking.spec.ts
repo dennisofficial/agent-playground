@@ -12,8 +12,6 @@ import {
   type ActiveWorktree,
 } from '@dltech/atlas-core'
 
-import { createIsolatedContainer } from '../../../container/injection'
-import { WorkspaceRoot, WorktreeDirectoryToken } from '../../../container/tokens'
 import { startTimeOf } from '../../../workspace/process-identity'
 import { listWorktrees, lockWorktree } from '../../../workspace/worktrees'
 import { EnterWorktreeTool } from '../enter-worktree'
@@ -43,16 +41,10 @@ const repo = async (): Promise<string> => {
   return root
 }
 
-const toolsFor = (launchDirectory: string) => {
-  const container = createIsolatedContainer()
-  container.register(WorkspaceRoot, { useValue: launchDirectory })
-  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
-
-  return {
-    enter: container.resolve(EnterWorktreeTool),
-    exit: container.resolve(ExitWorktreeTool),
-  }
-}
+const toolsFor = (launchDirectory: string) => ({
+  enter: new EnterWorktreeTool(launchDirectory, () => '.atlas/worktrees'),
+  exit: new ExitWorktreeTool(launchDirectory),
+})
 
 const invocation = (args: {
   input: unknown

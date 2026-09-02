@@ -2,7 +2,6 @@ import { z } from 'zod'
 
 import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
 import { WorkspaceRoot, WorktreeDirectoryToken } from '../../container/tokens'
 import {
   addWorktree,
@@ -45,7 +44,6 @@ const description = [
   'exit_worktree leaves, keeping or removing the worktree as the developer asks, and worktree_list shows what exists.',
 ].join(' ')
 
-@injectable()
 export class EnterWorktreeTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'enter_worktree'
   readonly description = description
@@ -53,8 +51,8 @@ export class EnterWorktreeTool extends SchemaTool<typeof inputSchema> {
   readonly inputSchema = inputSchema
 
   constructor(
-    @inject(WorkspaceRoot) private readonly launchDirectory: string,
-    @inject(WorktreeDirectoryToken) private readonly worktreeDirectory: () => string,
+     private readonly launchDirectory: string,
+     private readonly worktreeDirectory: () => string,
   ) {
     super()
   }

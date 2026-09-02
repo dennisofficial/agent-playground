@@ -66,7 +66,7 @@ async function readingsOf({ script }: { script: readonly ScriptedStep[] }): Prom
     model: harness.model,
     ids: harness.ids,
     assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
-    tools: registry.declarations(),
+    tools: () => registry.declarations(),
     dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
     onContext: (reading) => readings.push(reading),
   })

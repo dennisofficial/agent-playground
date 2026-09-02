@@ -1,4 +1,4 @@
-import { toRunId, toThreadId } from '@dltech/atlas-core'
+import { EEffort, refKey, toRunId, toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -109,6 +109,31 @@ describe('/resume', () => {
       const frame = setup.captureCharFrame()
       expect(frame).toContain('wire up accounts')
       expect(frame).not.toContain(THREADS_HEADING.toUpperCase())
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('brings the picked conversation onto the model it was last switched to', async () => {
+    const app = appWith()
+    const threadId = await seed({ app, title: 'the auth overlay', said: 'wire up accounts' })
+    await app.threads.chooseModel({
+      threadId: toThreadId(threadId),
+      model: { ref: 'anthropic/claude-opus-5', effort: EEffort.High },
+    })
+    const setup = await opened(app)
+
+    try {
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-haiku-4-5')
+
+      await ran(setup, '/resume')
+      setup.mockInput.pressEnter()
+      await setup.flush()
+      await settle(400)
+      await setup.flush()
+
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-opus-5')
+      expect(app.model.choice().effort).toBe(EEffort.High)
     } finally {
       await teardown(setup)
     }

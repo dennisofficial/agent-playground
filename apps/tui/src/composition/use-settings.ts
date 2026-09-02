@@ -65,8 +65,11 @@ export type SettingsControl = {
   handleKey: (key: KeyEvent) => void
 }
 
-export function useSettings(args: { app: AtlasApp }): SettingsControl {
-  const { app } = args
+export function useSettings(args: {
+  app: AtlasApp
+  onChooseModel: () => void
+}): SettingsControl {
+  const { app, onChooseModel } = args
   useSyncExternalStore(app.settings.subscribe, app.settings.version)
   const held = app.settings.snapshot()
 
@@ -133,9 +136,14 @@ export function useSettings(args: { app: AtlasApp }): SettingsControl {
         return
       }
 
+      if (row.definition.kind === ESettingKind.Model) {
+        onChooseModel()
+        return
+      }
+
       write(target, (held) => activateSetting({ definition: held.definition, current: held.value }))
     },
-    [secret, view, write],
+    [onChooseModel, secret, view, write],
   )
 
   const handleKey = useCallback(

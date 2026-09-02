@@ -13,7 +13,6 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 
 const RESULT_LIMIT = 100
@@ -57,7 +56,6 @@ function renderModelText(args: { paths: readonly string[]; total: number }): str
   ].join('\n\n')
 }
 
-@injectable()
 export class GlobTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'glob'
   readonly description = description

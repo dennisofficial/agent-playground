@@ -44,7 +44,7 @@ export type TurnDeps = {
   model: ModelPort
   ids: IdPort
   assembly: AssemblyPipeline
-  tools?: readonly ToolDeclaration[] | undefined
+  tools?: (() => readonly ToolDeclaration[]) | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
   onContext?: ((args: { tokens: number; window: number }) => void) | undefined
@@ -65,7 +65,7 @@ export class LoopTurnRunner extends TurnRunner {
   private readonly model: ModelPort
   private readonly ids: IdPort
   private readonly assembly: AssemblyPipeline
-  private readonly tools: readonly ToolDeclaration[]
+  private readonly tools: () => readonly ToolDeclaration[]
   private readonly countTokens: (assembled: Assembled) => number
   private readonly onChunk: ChunkFilter | undefined
   private readonly onContext: ((args: { tokens: number; window: number }) => void) | undefined
@@ -86,7 +86,7 @@ export class LoopTurnRunner extends TurnRunner {
     this.model = deps.model
     this.ids = deps.ids
     this.assembly = deps.assembly
-    this.tools = deps.tools ?? []
+    this.tools = deps.tools ?? (() => [])
     this.countTokens =
       deps.countTokens ??
       ((assembled) => estimateTokensFor(imageTierOf(this.model))(assembled))
@@ -280,7 +280,7 @@ export class LoopTurnRunner extends TurnRunner {
 
       const stepped = await takeModelStepWithRetry({
         model: this.model,
-        tools: this.tools,
+        tools: this.tools(),
         onChunk: this.onChunk,
         assembled,
         signal: abortSignal,

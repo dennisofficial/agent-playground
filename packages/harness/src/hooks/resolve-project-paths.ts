@@ -11,7 +11,7 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { injectAll, injectable, portToken } from '../container/injection'
+import {  portToken } from '../container/injection'
 import {
   ABSENT,
   createDeclaredPaths,
@@ -20,14 +20,13 @@ import {
   type DeclaredPaths,
 } from '../tools/declared-paths'
 
-@injectable()
 export class ResolveProjectPathsHook extends BeforeToolHook {
   readonly name = 'resolveProjectPaths'
   readonly order: HookOrder = { stage: EStage.Guard, nudge: -1 }
 
   private readonly declaredPaths: DeclaredPaths
 
-  constructor(@injectAll(portToken(ToolDefinition)) tools: readonly ToolDeclaration[]) {
+  constructor( tools: readonly ToolDeclaration[]) {
     super()
     this.declaredPaths = createDeclaredPaths({ tools })
   }

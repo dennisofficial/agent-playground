@@ -1,6 +1,6 @@
 import { ClockPort, EKilledBy, type EventDraft, type ThreadId } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../container/injection'
+import {  portToken } from '../container/injection'
 import { HookChainSourceToken, WorkspaceRoot } from '../container/tokens'
 import type { HookChainSource } from '../hooks/registry'
 import { afterShellDrafts } from './after-shell'
@@ -57,7 +57,6 @@ const unknownShell = (args: { shellId: string; known: readonly ShellId[] }): str
   return `no background shell is registered as "${args.shellId}"; known shells: ${known}`
 }
 
-@injectable()
 export class BunShellRegistry extends ShellRegistryPort {
   private readonly tracked = new Map<ShellId, Tracked>()
   private readonly notices = new ShellNoticeQueue(({ shellId }) =>
@@ -67,9 +66,9 @@ export class BunShellRegistry extends ShellRegistryPort {
   private started = 0
 
   constructor(
-    @inject(WorkspaceRoot) private readonly root: string,
-    @inject(portToken(ClockPort)) private readonly clock: ClockPort,
-    @inject(HookChainSourceToken) private readonly hooks: HookChainSource,
+     private readonly root: string,
+     private readonly clock: ClockPort,
+     private readonly hooks: HookChainSource,
   ) {
     super()
   }

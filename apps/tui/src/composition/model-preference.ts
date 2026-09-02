@@ -11,19 +11,11 @@ import {
   type ModelRef,
   type SettingsResolution,
 } from '@dltech/atlas-core'
-import type { SettingsService } from '@dltech/atlas-harness'
+import type { SettingsService, ThreadModel } from '@dltech/atlas-harness'
 
 import { DEFAULT_MODEL_REF } from './config'
 import type { ModelSelection } from './model-selection'
 import { isRefReachable, type ModelCatalogue } from './providers'
-
-const settledRef = (args: {
-  resolution: SettingsResolution
-  catalogue: ModelCatalogue
-}): ModelRef | undefined => {
-  const held = textValueOf({ resolution: args.resolution, id: ESettingId.ModelId })
-  return usableRef({ reference: held, catalogue: args.catalogue })
-}
 
 const usableRef = (args: {
   reference: string | undefined
@@ -37,33 +29,87 @@ const usableRef = (args: {
   return isRefReachable({ catalogue: args.catalogue, ref }) ? ref : undefined
 }
 
-const settledEffort = (resolution: SettingsResolution): EEffort | undefined => {
-  const held = choiceValueOf({ resolution, id: ESettingId.ModelEffort, fallback: DEFAULT_EFFORT })
-  return EFFORT_LADDER.find((effort) => effort === held)
+const usableEffort = (held: string | undefined): EEffort | undefined =>
+  EFFORT_LADDER.find((effort) => effort === held)
+
+const settled = (args: {
+  ref: ModelRef
+  effort: EEffort
+  catalogue: ModelCatalogue
+}): ModelSelection => ({
+  ref: args.ref,
+  effort:
+    clampEffort({ map: args.catalogue.cardFor(args.ref)?.effort, effort: args.effort }) ??
+    args.effort,
+})
+
+/** The pair a conversation with no model of its own starts on, as the layers settled it. */
+export function defaultSelection(args: {
+  settled: SettingsResolution
+  catalogue: ModelCatalogue
+}): ModelSelection {
+  const reference = textValueOf({ resolution: args.settled, id: ESettingId.ModelId })
+  const effort = choiceValueOf({
+    resolution: args.settled,
+    id: ESettingId.ModelEffort,
+    fallback: DEFAULT_EFFORT,
+  })
+
+  return settled({
+    ref: usableRef({ reference, catalogue: args.catalogue }) ?? DEFAULT_MODEL_REF,
+    effort: usableEffort(effort) ?? DEFAULT_EFFORT,
+    catalogue: args.catalogue,
+  })
 }
 
 /**
- * A model named on the command line is an override for that launch, so it outranks the pair the
- * switcher last wrote — which the layers have already merged with the project file and the
- * environment by the time this reads them.
+ * A model named on the command line is an override for that launch, so it outranks both the default
+ * the settings hold and whatever the thread it lands on was last switched to.
  */
 export function launchSelection(args: {
   requested: { model: string | undefined }
   settled: SettingsResolution
   catalogue: ModelCatalogue
 }): ModelSelection {
-  const ref =
-    usableRef({ reference: args.requested.model, catalogue: args.catalogue }) ??
-    settledRef({ resolution: args.settled, catalogue: args.catalogue }) ??
-    DEFAULT_MODEL_REF
+  const asked = usableRef({ reference: args.requested.model, catalogue: args.catalogue })
+  const fallback = defaultSelection({ settled: args.settled, catalogue: args.catalogue })
+  if (asked === undefined) return fallback
 
-  const asked = settledEffort(args.settled) ?? DEFAULT_EFFORT
-  const offered = args.catalogue.cardFor(ref)?.effort
-
-  return { ref, effort: clampEffort({ map: offered, effort: asked }) ?? asked }
+  return settled({ ref: asked, effort: fallback.effort, catalogue: args.catalogue })
 }
 
-export function rememberSelection(args: {
+/** Whether a launch is pinned to one model, in which case the thread it opens does not get a say. */
+export const modelPinned = (args: {
+  requested: { model: string | undefined }
+  catalogue: ModelCatalogue
+}): boolean =>
+  usableRef({ reference: args.requested.model, catalogue: args.catalogue }) !== undefined
+
+/**
+ * A thread that names a model nobody can answer for — one that left the catalogue, or whose account
+ * is gone — falls back whole rather than in halves, so the effort never outlives its model.
+ */
+export function threadSelection(args: {
+  stored: ThreadModel | undefined
+  fallback: ModelSelection
+  catalogue: ModelCatalogue
+}): ModelSelection {
+  const ref = usableRef({ reference: args.stored?.ref, catalogue: args.catalogue })
+  if (ref === undefined) return args.fallback
+
+  return settled({
+    ref,
+    effort: usableEffort(args.stored?.effort) ?? args.fallback.effort,
+    catalogue: args.catalogue,
+  })
+}
+
+export const storedModel = (selection: ModelSelection): ThreadModel => ({
+  ref: refKey(selection.ref),
+  effort: selection.effort,
+})
+
+export function rememberDefault(args: {
   settings: SettingsService
   selection: ModelSelection
 }): void {

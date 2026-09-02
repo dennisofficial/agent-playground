@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class ReadBeforeWriteFragment extends PromptFragment {
   readonly id = 'files.read-before-write'
 
@@ -19,7 +17,6 @@ export class ReadBeforeWriteFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class ReadWideFragment extends PromptFragment {
   readonly id = 'files.read-wide'
 

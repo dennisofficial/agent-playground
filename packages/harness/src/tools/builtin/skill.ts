@@ -8,7 +8,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { SkillRegistryPort } from '../../skills/port'
 import type { DiscoveredSkill } from '../../skills/skill'
 
@@ -88,7 +88,6 @@ function modelTextFor({ skill, body }: { skill: DiscoveredSkill; body: string })
   ].join('\n\n')
 }
 
-@injectable()
 export class SkillTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'skill'
   readonly description = description
@@ -96,7 +95,7 @@ export class SkillTool extends SchemaTool<typeof inputSchema> {
   readonly inputSchema = inputSchema
   override readonly isConcurrencySafe = (): boolean => true
 
-  constructor(@inject(portToken(SkillRegistryPort)) private readonly skills: SkillRegistryPort) {
+  constructor( private readonly skills: SkillRegistryPort) {
     super()
   }
 

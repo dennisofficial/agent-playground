@@ -14,7 +14,6 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 import { readImage } from './read-image'
 
@@ -173,7 +172,6 @@ function noticeFor(args: { path: string; scan: Selection }): string | undefined 
   return notes.length === 0 ? undefined : notes.join(' ')
 }
 
-@injectable()
 export class ReadTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'read'
   readonly description = description

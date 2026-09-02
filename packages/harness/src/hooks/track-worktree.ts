@@ -8,9 +8,7 @@ import {
   type HookOrder,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 
-@injectable()
 export class TrackWorktreeHook extends AfterToolHook {
   readonly name = 'track-worktree'
   readonly order: HookOrder = { stage: EStage.Observe, nudge: 0 }

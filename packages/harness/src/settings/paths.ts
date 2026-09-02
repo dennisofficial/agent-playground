@@ -21,3 +21,19 @@ export function userPluginsDirectory(): string {
 export function projectPluginsDirectory(cwd: string): string {
   return join(cwd, ATLAS_DIRECTORY_NAME, ATLAS_PLUGINS_DIRECTORY_NAME)
 }
+
+export const ATLAS_MCP_FILE_NAME = 'mcp.json'
+
+export const COMPAT_MCP_FILE_NAME = '.mcp.json'
+
+export function userMcpFile(): string {
+  return join(atlasDirectory(), ATLAS_MCP_FILE_NAME)
+}
+
+export function projectMcpFile(cwd: string): string {
+  return join(cwd, ATLAS_DIRECTORY_NAME, ATLAS_MCP_FILE_NAME)
+}
+
+export function compatMcpFile(cwd: string): string {
+  return join(cwd, COMPAT_MCP_FILE_NAME)
+}

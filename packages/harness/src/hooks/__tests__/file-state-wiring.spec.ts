@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import {
   EBeforeToolDecision,
   EToolEffect,
+  EWebSearchBackend,
   toCallId,
   type AfterTool,
   type BeforeTool,
@@ -18,7 +19,11 @@ import {
 import { createHarnessContainer } from '../../container/create-harness-container'
 import { disposeAll } from '../../container/disposal'
 import { portToken, type DependencyContainer } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
+import {
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../../container/tokens'
 import { GrepTool } from '../../tools/builtin/grep'
 import { ReadTool } from '../../tools/builtin/read'
 import { WriteTool } from '../../tools/builtin/write'
@@ -35,6 +40,8 @@ beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), 'atlas-file-state-wiring-'))
   container = createHarnessContainer()
   container.register(WorkspaceRoot, { useValue: root })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
   chain = resolveHookChain({ container })
 })
 

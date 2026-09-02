@@ -16,7 +16,7 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { inject, injectAll, injectable, portToken } from '../container/injection'
+import {  portToken } from '../container/injection'
 import { FileReadStatePort } from '../files/read-state'
 import { movedSince } from '../files/staleness'
 import {
@@ -100,7 +100,6 @@ function checkablePathOf({ input, field }: { input: unknown; field: string }): s
   return value
 }
 
-@injectable()
 export class ReadBeforeWriteHook extends BeforeToolHook {
   readonly name = 'readBeforeWrite'
   readonly order: HookOrder = { stage: EStage.Guard, nudge: 1 }
@@ -108,8 +107,8 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
   private readonly declaredPaths: DeclaredPaths
 
   constructor(
-    @inject(portToken(FileReadStatePort)) private readonly seen: FileReadStatePort,
-    @injectAll(portToken(ToolDefinition)) tools: readonly ToolDeclaration[],
+     private readonly seen: FileReadStatePort,
+     tools: readonly ToolDeclaration[],
   ) {
     super()
     this.declaredPaths = createDeclaredPaths({ tools })

@@ -157,7 +157,7 @@ export async function openExitPathHarness(args: {
       model: model.port,
       ids,
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
-      tools: registry.declarations(),
+      tools: () => registry.declarations(),
       hooks,
       ...(mode === EDispatchMode.None ? {} : { dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks }) }),
       spend: { ledger, clock, onLedgerFailure: (error) => failures.push(error) },

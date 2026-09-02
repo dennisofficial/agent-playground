@@ -19,7 +19,6 @@ const unbuildable = (ref: ModelRef): Error =>
 export function selectableModel(args: {
   initial: ModelSelection
   catalogue: ModelCatalogue
-  remember?: (choice: ModelSelection) => void
 }): SelectableModel {
   let held = args.initial
 
@@ -42,7 +41,6 @@ export function selectableModel(args: {
 
       held = next
       switchable.select(next)
-      args.remember?.(next)
     },
   }
 }

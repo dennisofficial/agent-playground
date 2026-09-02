@@ -28,5 +28,6 @@ export const handlers = (
   onOpenThreads: stub,
   onRename: renamed,
   onReloadSkills: async () => NOTHING_RELOADED,
+  onShowMcp: () => 'no MCP servers are configured',
   ...overrides,
 })

@@ -8,7 +8,6 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
 import { WorkspaceRoot } from '../../container/tokens'
 import { releaseWorktree } from '../../workspace/worktree-lock'
 import { inspectWorktree, removeWorktree, type WorktreeInspection } from '../../workspace/worktrees'
@@ -43,14 +42,13 @@ const listOf = (inspection: WorktreeInspection): string => {
   return parts.join(' and ')
 }
 
-@injectable()
 export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'exit_worktree'
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
 
-  constructor(@inject(WorkspaceRoot) private readonly launchDirectory: string) {
+  constructor( private readonly launchDirectory: string) {
     super()
   }
 

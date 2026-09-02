@@ -1,8 +1,6 @@
 import { EPromptAgent, PromptFragment, type PromptContext } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class DelegationFragment extends PromptFragment {
   readonly id = 'agents.delegation'
 

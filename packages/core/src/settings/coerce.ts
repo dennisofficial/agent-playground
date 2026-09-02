@@ -1,3 +1,4 @@
+import { parseRef } from '../models/ref'
 import { ESettingKind, type SettingValue } from './value'
 import { optionOf, type SettingDefinition } from './definition'
 
@@ -42,6 +43,13 @@ export function coerceSettingValue(args: {
 
   if (definition.kind === ESettingKind.Text) {
     return typeof raw === 'string' ? { ok: true, value: raw } : { ok: false, reason: 'expected text' }
+  }
+
+  if (definition.kind === ESettingKind.Model) {
+    if (typeof raw !== 'string') return { ok: false, reason: 'expected provider/model' }
+    return raw.length === 0 || parseRef(raw) !== undefined
+      ? { ok: true, value: raw }
+      : { ok: false, reason: 'expected provider/model' }
   }
 
   if (definition.kind === ESettingKind.Choice) {

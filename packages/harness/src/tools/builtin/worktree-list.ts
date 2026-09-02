@@ -2,7 +2,6 @@ import { z } from 'zod'
 
 import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 import { type Worktree } from '../../workspace/worktrees'
 import { repositoryAt } from './worktree-support'
 
@@ -26,7 +25,6 @@ const lineFor = (args: { worktree: Worktree; current: string }): string => {
   return `${args.worktree.path} on ${branch}${marks.length === 0 ? '' : ` (${marks.join(', ')})`}`
 }
 
-@injectable()
 export class WorktreeListTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'worktree_list'
   readonly description = description

@@ -76,7 +76,7 @@ async function openScripted(args: { script: readonly ScriptedStep[] }): Promise<
       model: harness.model,
       ids: harness.ids,
       assembly: { rules: [...defaultRules({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }), recordStep], annotators: defaultAnnotators() },
-      tools: registry.declarations(),
+      tools: () => registry.declarations(),
       dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
     }),
   }
@@ -217,7 +217,7 @@ describe('a dispatch that settles nothing', () => {
       model: harness.model,
       ids: harness.ids,
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
-      tools: registry.declarations(),
+      tools: () => registry.declarations(),
       dispatch: {
         dispatch: async () => {
           dispatched += 1

@@ -143,12 +143,18 @@ export function EffortLine(props: {
   )
 }
 
-const APPLIES: readonly Span[] = [
+const THIS_THREAD: readonly Span[] = [
   { text: `${glyph.swap} `, fg: theme.accent },
   { text: 'next turn', fg: theme.hover },
-  { text: ' · keeps this transcript', fg: theme.hint },
+  { text: ' · this conversation only', fg: theme.hint },
 ]
 
-export function AppliesLine(props: { cells: number }): React.ReactNode {
-  return <TextLine spans={APPLIES} cells={props.cells} />
+const EVERY_NEW_THREAD: readonly Span[] = [
+  { text: `${glyph.swap} `, fg: theme.accent },
+  { text: 'the default', fg: theme.hover },
+  { text: ' · every new conversation', fg: theme.hint },
+]
+
+export function AppliesLine(props: { cells: number; toDefault: boolean }): React.ReactNode {
+  return <TextLine spans={props.toDefault ? EVERY_NEW_THREAD : THIS_THREAD} cells={props.cells} />
 }

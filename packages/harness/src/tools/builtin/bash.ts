@@ -15,7 +15,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import {
   countLineBreaks,
   messageOf,
@@ -121,7 +121,6 @@ function renderModelText(args: {
   return sections.join('\n\n')
 }
 
-@injectable()
 export class BashTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'bash'
   readonly description = description
@@ -136,7 +135,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     },
   ]
 
-  constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
+  constructor( private readonly shells: ShellRegistryPort) {
     super()
   }
 

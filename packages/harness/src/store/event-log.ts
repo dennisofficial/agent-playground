@@ -11,7 +11,6 @@ import {
 } from '@dltech/atlas-core'
 
 import type { Prisma, PrismaClient } from '../../prisma/generated/client'
-import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { contextIdentityOf, planAppend, type ContextIdentity } from './append-plan'
 import { readComposedRows, readOwnRows } from './compose-thread'
@@ -27,10 +26,9 @@ export type AppendArgs = {
   depth?: number | undefined
 }
 
-@injectable()
 export class PrismaEventLog implements EventLogPort {
   constructor(
-    @inject(PrismaClientToken) private readonly prisma: PrismaClient,
+     private readonly prisma: PrismaClient,
     private readonly clock: ClockPort,
     private readonly ids: IdPort,
   ) {}

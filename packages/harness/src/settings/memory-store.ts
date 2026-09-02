@@ -5,9 +5,7 @@ import {
   type SettingsStorePort,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 
-@injectable()
 export class MemorySettingsStore implements SettingsStorePort {
   private held: SettingsDocument
 

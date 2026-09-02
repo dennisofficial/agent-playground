@@ -12,6 +12,7 @@ import {
 } from '@dltech/atlas-core'
 import type {
   SupervisedAgent,
+  ThreadModel,
   ThreadStorePort,
   ThreadSummary,
   TurnLedgerPort,
@@ -41,6 +42,7 @@ export type FakeThreadStore = ThreadStorePort & {
     agent?: SupervisedAgent
   }[]
   readonly renames: readonly { threadId: ThreadId; title: string }[]
+  readonly chosenModels: readonly { threadId: ThreadId; model: ThreadModel }[]
 }
 
 export function fakeThreadStore(
@@ -69,6 +71,7 @@ export function fakeThreadStore(
     agent?: SupervisedAgent
   }[] = []
   const renames: { threadId: ThreadId; title: string }[] = []
+  const chosenModels: { threadId: ThreadId; model: ThreadModel }[] = []
 
   return {
     get created() {
@@ -77,6 +80,10 @@ export function fakeThreadStore(
 
     get createdWith() {
       return createdWith
+    },
+
+    get chosenModels() {
+      return chosenModels
     },
 
     get renames() {
@@ -202,6 +209,12 @@ export function fakeThreadStore(
 
       row.workspace = workspace
       row.repo = repo
+    },
+
+    async chooseModel({ threadId, model }) {
+      chosenModels.push({ threadId, model })
+      const row = rows.find((held) => held.id === threadId)
+      if (row !== undefined) row.model = model
     },
 
     async rewind({ threadId, toSeq }) {

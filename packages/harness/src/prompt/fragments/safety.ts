@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class DestructiveActionsFragment extends PromptFragment {
   readonly id = 'safety.destructive-actions'
 
@@ -19,7 +17,6 @@ export class DestructiveActionsFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class GitEtiquetteFragment extends PromptFragment {
   readonly id = 'safety.git-etiquette'
 

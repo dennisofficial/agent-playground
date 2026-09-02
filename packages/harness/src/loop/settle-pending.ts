@@ -26,13 +26,13 @@ export type SettlePending = (args: {
 export function createSettlePending(deps: {
   log: EventLogPort
   dispatch: ToolDispatcher
-  tools?: readonly ToolDeclaration[] | undefined
+  tools?: (() => readonly ToolDeclaration[]) | undefined
   launchDirectory?: string | undefined
 }): SettlePending {
-  const declarations = new Map((deps.tools ?? []).map((tool) => [tool.name, tool]))
-
-  const isSafe = (call: DispatchableCall): boolean =>
-    isConcurrencySafeCall({ declaration: declarations.get(call.name), input: call.input })
+  const isSafe = (call: DispatchableCall): boolean => {
+    const declarations = new Map((deps.tools?.() ?? []).map((tool) => [tool.name, tool]))
+    return isConcurrencySafeCall({ declaration: declarations.get(call.name), input: call.input })
+  }
 
   const settleOne = async (args: {
     call: DispatchableCall

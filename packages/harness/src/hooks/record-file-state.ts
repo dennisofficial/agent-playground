@@ -14,13 +14,12 @@ import {
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import { inject, injectAll, injectable, portToken } from '../container/injection'
+import {  portToken } from '../container/injection'
 import { digestOf } from '../files/digest'
 import { FileReadStatePort } from '../files/read-state'
 import { movedSince } from '../files/staleness'
 import { ABSENT, inputFieldOf } from '../tools/declared-paths'
 
-@injectable()
 export class RecordFileStateHook extends AfterToolHook {
   readonly name = 'recordFileState'
   readonly order: HookOrder = { stage: EStage.Observe, nudge: 0 }
@@ -29,8 +28,8 @@ export class RecordFileStateHook extends AfterToolHook {
   private readonly declarations: Map<string, ToolDeclaration>
 
   constructor(
-    @inject(portToken(FileReadStatePort)) seen: FileReadStatePort,
-    @injectAll(portToken(ToolDefinition)) tools: readonly ToolDeclaration[],
+     seen: FileReadStatePort,
+     tools: readonly ToolDeclaration[],
   ) {
     super()
     this.seen = seen

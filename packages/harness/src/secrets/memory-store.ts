@@ -1,8 +1,6 @@
 import type { SecretsPort } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 
-@injectable()
 export class MemorySecretsStore implements SecretsPort {
   private held: Record<string, string>
 

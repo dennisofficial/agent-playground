@@ -4,14 +4,12 @@ import { dirname, join } from 'node:path'
 
 import type { SecretsPort } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 import { CredentialError, ECredentialFailure } from '../credentials/credential-error'
 import type { SecretCipher } from '../credentials/secret-cipher'
 import { emptySecrets, secretsFileSchema, type SecretsFile } from './secrets-file'
 
 const OWNER_ONLY = 0o600
 
-@injectable()
 export class FileSecretsStore implements SecretsPort {
   constructor(private readonly args: { file: string; cipher: SecretCipher }) {}
 

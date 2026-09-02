@@ -95,6 +95,7 @@ import {
   PublishingTurnRunner,
   registerBuiltinPromptFragments,
   registerDisposable,
+  registerMcp,
   ShellRegistryPort,
   SkillRegistryPort,
   summaryFor,
@@ -117,6 +118,7 @@ import {
   type TurnDeps,
   type DeltaChannel,
   type DiscoveredSkill,
+  type McpServerStatus,
   type SettingsService,
 } from '@dltech/atlas-harness'
 
@@ -124,8 +126,9 @@ import { createPendingQueue, type PendingQueue } from '../store'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
-import { launchSelection, rememberSelection } from './model-preference'
+import { launchSelection, modelPinned } from './model-preference'
 import { faultInjected } from './fault-injection'
+import { mcpBootNotice } from './mcp-report'
 import { selectableModel, type ModelChoice } from './model-selection'
 import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
 import { assemblePlugins } from '../plugins/assemble'
@@ -181,6 +184,7 @@ export type AtlasApp = {
   shells: ShellRegistryPort
   agents: AgentRegistryPort
   model: ModelChoice
+  modelPinned: boolean
   models: ModelCatalogue
   settings: SettingsService
   secrets: SecretsPort
@@ -192,6 +196,7 @@ export type AtlasApp = {
   agentTypes: AgentTypeCatalog
   pluginProjections: readonly ContributedProjection[]
   pluginSurfaces: readonly ContributedSurface[]
+  mcp: () => readonly McpServerStatus[]
   close: () => Promise<void>
 }
 
@@ -204,6 +209,12 @@ export async function composeAtlas(args: {
   const container = createHarnessContainer()
   const workspace = await probeWorkspace({ cwd: config.cwd })
   await claimLaunchWorktree({ container, workspace })
+  const mcp = await registerMcp({ container, cwd: config.cwd })
+
+  for (const server of mcp.servers()) {
+    const notice = mcpBootNotice(server)
+    if (notice !== null) notify({ tone: ENoticeTone.Warn, text: notice })
+  }
 
   const settings = args.settings.service
   const settled = settings.snapshot().resolution
@@ -342,8 +353,9 @@ export async function composeAtlas(args: {
       settled,
       catalogue: models,
     }),
-    remember: (selection) => rememberSelection({ settings, selection }),
   })
+
+  const pinnedByFlag = modelPinned({ requested: { model: config.model }, catalogue: models })
 
   const answeringCard = () => models.cardFor(model.choice().ref)
 
@@ -405,10 +417,13 @@ export async function composeAtlas(args: {
     atlasHome: atlasDirectory(),
   })
   for (const refusal of [...plugins.refused, ...plugins.unreadable]) {
-    notify({ tone: ENoticeTone.Warn, text: `plugin refused: ${refusal.id ?? '?'} — ${'reason' in refusal ? refusal.reason : refusal.detail}` })
+    notify({
+      tone: ENoticeTone.Warn,
+      text: `plugin refused: ${refusal.id ?? '?'} — ${'reason' in refusal ? refusal.reason : refusal.detail}`,
+    })
   }
 
-  const tools = container.resolve(portToken(ToolRegistry)).declarations()
+  const tools = () => container.resolve(portToken(ToolRegistry)).declarations()
   const modelPort = faultInjected(container.resolve(portToken(ModelPort)))
   const prompts = container.resolve(portToken(PromptRegistry))
   const compiledPrompt = ({ projectDirectory }: { projectDirectory: string }) =>
@@ -608,7 +623,9 @@ export async function composeAtlas(args: {
     pending,
     shells,
     agents,
+    mcp: () => mcp.servers(),
     model,
+    modelPinned: pinnedByFlag,
     models,
     close: async () => {
       usage.dispose()

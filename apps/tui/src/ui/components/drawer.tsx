@@ -16,6 +16,9 @@ export const DRAWER_INSET = DRAWER_EDGE + DRAWER_PAD * 2
 export const drawerCells = (args: { width: number }): number =>
   Math.max(0, args.width - DRAWER_INSET)
 
+/** Above the full-screen overlays, for a drawer opened from one of them. */
+export const DRAWER_LIFTED_Z = 40
+
 export enum EDrawerEdge {
   Left = 'left',
   Right = 'right',
@@ -71,9 +74,11 @@ function Drawer(props: {
   edge: EDrawerEdge
   width?: number | undefined
   overlay: boolean
+  lifted?: boolean | undefined
   children: React.ReactNode
 }): React.ReactNode {
   const anchor = ANCHOR[props.edge]
+  const floating = props.lifted === true ? DRAWER_LIFTED_Z : anchor.zIndex
 
   return (
     <box
@@ -85,7 +90,7 @@ function Drawer(props: {
       paddingTop={1}
       paddingBottom={1}
       position={props.overlay ? 'absolute' : 'relative'}
-      zIndex={props.overlay ? anchor.zIndex : 0}
+      zIndex={props.overlay ? floating : 0}
       {...(props.width === undefined ? {} : { width: props.width })}
       {...(anchor.top === undefined ? {} : { top: anchor.top })}
       {...(anchor.left === undefined ? {} : { left: anchor.left })}
@@ -105,6 +110,7 @@ export function SideDrawer(props: {
   width: number
   side?: EDrawerEdge.Left | EDrawerEdge.Right
   overlay?: boolean
+  lifted?: boolean
   footer?: React.ReactNode
   children: React.ReactNode
 }): React.ReactNode {
@@ -113,6 +119,7 @@ export function SideDrawer(props: {
       edge={props.side ?? EDrawerEdge.Right}
       width={props.width}
       overlay={props.overlay === true}
+      lifted={props.lifted === true}
     >
       <box flexDirection="column" flexGrow={1} flexShrink={1} gap={1}>
         {props.children}

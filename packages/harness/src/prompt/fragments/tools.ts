@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class PreferDedicatedToolsFragment extends PromptFragment {
   readonly id = 'tools.prefer-dedicated'
 
@@ -16,7 +14,6 @@ export class PreferDedicatedToolsFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class ParallelToolCallsFragment extends PromptFragment {
   readonly id = 'tools.parallel-calls'
 
@@ -31,7 +28,6 @@ export class ParallelToolCallsFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class NoRereadAfterWriteFragment extends PromptFragment {
   readonly id = 'tools.no-reread-after-write'
 

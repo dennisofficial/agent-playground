@@ -2,7 +2,7 @@ import { z } from 'zod'
 
 import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { EKilledBy, EShellStatus } from '../../shells/background-shell'
 import { ShellRegistryPort } from '../../shells/shell-registry'
 import { SIGKILL_GRACE_MS } from '../../shells/shell-process'
@@ -19,14 +19,13 @@ const description = [
   'Whatever it printed before dying is handed to you the moment it ends, the same as any other ending.',
 ].join(' ')
 
-@injectable()
 export class ShellKillTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'shell_kill'
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
 
-  constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
+  constructor( private readonly shells: ShellRegistryPort) {
     super()
   }
 

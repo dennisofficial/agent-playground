@@ -146,6 +146,7 @@ function overlay(args: {
   providers?: readonly SwitcherProvider[]
   width?: number
   query?: string
+  toDefault?: boolean
 }): React.ReactNode {
   const laid = switcherRows({
     providers: args.providers ?? PROVIDERS,
@@ -159,6 +160,7 @@ function overlay(args: {
       rows={laid}
       state={args.state ?? state(2, EEffort.Medium)}
       active={ACTIVE}
+      toDefault={args.toDefault === true}
       overlay
       total={modelCount(args.providers ?? PROVIDERS)}
       {...(args.query === undefined ? {} : { query: args.query })}
@@ -251,11 +253,17 @@ describe('what the switcher says', () => {
     expect(rowWith(lines, 'APPLIES')).not.toBe('')
   })
 
-  it('says the switch lands on the next turn and spares the transcript', async () => {
+  it('says the switch lands on the next turn and reaches no further than this conversation', async () => {
     const lines = await rowsOf(overlay({}))
     const line = rowWith(lines, 'next turn')
     expect(line).toContain(glyph.swap)
-    expect(line).toContain('keeps this transcript')
+    expect(line).toContain('this conversation only')
+  })
+
+  it('says the picker set on the default reaches every new conversation instead', async () => {
+    const lines = await rowsOf(overlay({ toDefault: true }))
+    expect(rowWith(lines, 'the default')).toContain('every new conversation')
+    expect(rowWith(lines, 'DEFAULT MODEL')).not.toBe('')
   })
 
   it('names the model you keep by walking away when the row is wide enough', async () => {

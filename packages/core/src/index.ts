@@ -83,6 +83,7 @@ export * from './stream/chunk'
 
 export * from './tools/tool'
 export * from './tools/effect-order'
+export * from './tools/dynamic-source'
 
 export * from './plan/plan'
 export * from './plan/from-events'

@@ -99,7 +99,7 @@ export function buildChildRunner({
     log: observingLog({ log: turn.log, threadId, observe }),
     onContext: observeContext,
     model: deps.modelFor === undefined ? turn.model : deps.modelFor({ agentType }),
-    tools: registry.declarations(),
+    tools: () => registry.declarations(),
     dispatch: new HookedToolDispatcher({
       registry,
       hooks: deps.hooks,

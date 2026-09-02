@@ -12,7 +12,6 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 import { absolutePathSchema } from './file-text'
 
 const DEFAULT_HEAD_LIMIT = 250
@@ -193,7 +192,6 @@ function renderModelText(args: {
   return sections.join('\n\n')
 }
 
-@injectable()
 export class GrepTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'grep'
   readonly description = description

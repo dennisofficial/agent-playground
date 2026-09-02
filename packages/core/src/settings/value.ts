@@ -4,6 +4,7 @@ export enum ESettingKind {
   Range = 'range',
   Text = 'text',
   Secret = 'secret',
+  Model = 'model',
 }
 
 export type SettingValue = boolean | string | number

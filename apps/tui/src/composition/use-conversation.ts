@@ -28,7 +28,7 @@ import { ENoticeTone, notify } from '../ui/notice-store'
 import { createAwakeClock } from './awake-clock'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
-import type { RecoveredAgents } from '@dltech/atlas-harness'
+import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
 import { ECompactScope } from './compact-turn'
 import { useRevokeGrant } from './revoke-grant'
 import type { Renaming } from './session-rename'
@@ -51,6 +51,8 @@ const ALREADY_OPEN = Promise.resolve()
 
 export type Conversation = {
   threadId: ThreadId
+  started: boolean
+  threadModel: ThreadModel | undefined
   approval: ApprovalControl
   lost: RecoveredAgents | null
   handle: string | null
@@ -142,7 +144,7 @@ export function useConversation(args: {
     initial: args.opened.name,
   })
 
-  const started = events.length > 0
+  const started = opened.started || events.length > 0
 
   useEffect(
     () => app.markActiveThread({ threadId, title: name, started }),
@@ -219,11 +221,7 @@ export function useConversation(args: {
   })
 
   const handleSend = useCallback(
-    (args: {
-      text: string
-      images?: readonly SaidImage[]
-      context?: readonly EventDraft[]
-    }) => {
+    (args: { text: string; images?: readonly SaidImage[]; context?: readonly EventDraft[] }) => {
       const text = args.text.trim()
       const images = args.images ?? NO_IMAGES
       if (text.length === 0) return
@@ -276,7 +274,7 @@ export function useConversation(args: {
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
 
   const workspace = useMemo((): {
-      projectDirectory: string
+    projectDirectory: string
     activeWorktree: ActiveWorktree | null
   } => {
     const launchDirectory = app.config.cwd
@@ -301,6 +299,8 @@ export function useConversation(args: {
     projectDirectory: workspace.projectDirectory,
     activeWorktree: workspace.activeWorktree,
     threadId,
+    started,
+    threadModel: opened.model,
     lost: opened.lost ?? null,
     handle: name === null ? null : threadHandle({ threadId, title: name }),
     model,

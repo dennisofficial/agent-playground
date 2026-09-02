@@ -6,10 +6,9 @@ import {
   type HookOrder,
 } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../container/injection'
+import {  portToken } from '../container/injection'
 import { WorkspaceRoot } from '../container/tokens'
 
-@injectable()
 export class PrewarmFactsHook extends BeforeTurnHook {
   readonly name = 'prewarmFacts'
   readonly order: HookOrder = { stage: EStage.Observe, nudge: 1 }
@@ -18,8 +17,8 @@ export class PrewarmFactsHook extends BeforeTurnHook {
   private readonly launchDirectory: string
 
   constructor(
-    @inject(portToken(WorkspaceFactsPort)) facts: WorkspaceFactsPort,
-    @inject(WorkspaceRoot) launchDirectory: string,
+     facts: WorkspaceFactsPort,
+     launchDirectory: string,
   ) {
     super()
     this.facts = facts

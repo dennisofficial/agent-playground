@@ -1,6 +1,6 @@
 import { renderSkillListing, type PromptContext, type SkillListingEntry } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { SkillRegistryPort } from '../../skills/port'
 import { VolatilePromptFragment } from '../volatile'
 
@@ -19,11 +19,10 @@ const budgetCharsFor = (ctx: PromptContext): number =>
     ctx.model.contextWindow * CHARS_PER_TOKEN * SKILL_LISTING_BUDGET_FRACTION_OF_CONTEXT,
   )
 
-@injectable()
 export class SkillListingFragment extends VolatilePromptFragment {
   readonly id = 'skills.listing'
 
-  constructor(@inject(portToken(SkillRegistryPort)) private readonly skills: SkillRegistryPort) {
+  constructor( private readonly skills: SkillRegistryPort) {
     super()
   }
 

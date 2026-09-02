@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class RequestLadderFragment extends PromptFragment {
   readonly id = 'scope.request-ladder'
 
@@ -16,7 +14,6 @@ export class RequestLadderFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class DeliverWhatWasAskedFragment extends PromptFragment {
   readonly id = 'scope.deliver-what-was-asked'
 
@@ -30,7 +27,6 @@ export class DeliverWhatWasAskedFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class ConcernThenBuildFragment extends PromptFragment {
   readonly id = 'scope.concern-then-build'
 

@@ -46,7 +46,7 @@ export type BuildHarnessArgs = {
   card?: ModelCardSource | undefined
   assembly?: AssemblyPipeline | undefined
   prompt?: CompiledPrompt | undefined
-  tools?: readonly ToolDeclaration[] | undefined
+  tools?: (() => readonly ToolDeclaration[]) | undefined
   dispatch?: ToolDispatcher | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   clock?: ClockPort | undefined

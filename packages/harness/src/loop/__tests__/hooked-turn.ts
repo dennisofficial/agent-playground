@@ -63,7 +63,7 @@ export async function openHooked(args: {
       hooks: args.hooks,
       ...(args.withTools === true
         ? {
-            tools: tools.declarations(),
+            tools: () => tools.declarations(),
             dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks: args.hooks }),
           }
         : {}),

@@ -139,7 +139,7 @@ describe('position derived from the log', () => {
     const harness = await buildHarness({
       databaseUrl: temp.databaseUrl,
       model,
-      tools: [
+      tools: () => [
         {
           name: 'read_file',
           description: 'read a file',
@@ -202,7 +202,7 @@ describe('a turn that settles its own tool call', () => {
       model: harness.model,
       ids: harness.ids,
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
-      tools: registry.declarations(),
+      tools: () => registry.declarations(),
       dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
     })
     const thread = await harness.threads.create({})

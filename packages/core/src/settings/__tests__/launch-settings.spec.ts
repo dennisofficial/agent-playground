@@ -15,6 +15,9 @@ const LAUNCH_SETTINGS: readonly ESettingId[] = [
   ESettingId.KeychainService,
 ]
 
+/** The pair the settings page owns now that the switcher writes the conversation instead. */
+const ON_THE_PAGE: readonly ESettingId[] = [ESettingId.ModelId, ESettingId.ModelEffort]
+
 const definitionOf = (id: ESettingId) => {
   const found = ATLAS_SETTINGS.find((definition) => definition.id === id)
   if (found === undefined) throw new Error(`${id} is not a registered setting`)
@@ -54,20 +57,31 @@ describe('the settings a launch used to carry in its environment', () => {
     ])
   })
 
-  it('keeps them off every page the overlay walks, because none is a knob to twiddle', () => {
+  it('keeps the rest off every page the overlay walks, because none is a knob to twiddle', () => {
     const shown = SETTING_PAGES.flatMap((page) =>
       definitionsOfPage({ definitions: ATLAS_SETTINGS, page: page.id }).map(
         (definition) => definition.id,
       ),
     )
 
-    for (const id of LAUNCH_SETTINGS) expect(shown).not.toContain(id)
+    for (const id of LAUNCH_SETTINGS.filter((held) => !ON_THE_PAGE.includes(held))) {
+      expect(shown).not.toContain(id)
+    }
     expect(SETTING_PAGES.map((page) => page.id)).not.toContain(ESettingPage.Hidden)
+  })
+
+  it('puts the default model and effort on a page, because they are the only way to set them', () => {
+    const shown = definitionsOfPage({
+      definitions: ATLAS_SETTINGS,
+      page: ESettingPage.General,
+    }).map((definition) => definition.id)
+
+    for (const id of ON_THE_PAGE) expect(shown).toContain(id)
   })
 
   it('reads empty as unset, which is what makes a fallback the caller owns possible', () => {
     for (const id of LAUNCH_SETTINGS.filter((held) => held !== ESettingId.ModelEffort)) {
-      expect(textDefinition(id).fallback).toBe('')
+      expect(definitionOf(id).fallback).toBe('')
     }
 
     expect(textValueOf({ resolution: resolutionOver({}), id: ESettingId.DatabaseUrl })).toBe('')
@@ -84,9 +98,28 @@ describe('the settings a launch used to carry in its environment', () => {
   })
 
   it('reports where a value came from, which an env read of its own never could', () => {
-    const resolution = resolutionOver({ file: { [ESettingId.ModelId]: 'claude-opus-5' } })
+    const resolution = resolutionOver({ file: { [ESettingId.ModelId]: 'anthropic/claude-opus-5' } })
 
     expect(resolution.settings.get(ESettingId.ModelId)?.origin).toBe('settings.json')
+  })
+})
+
+describe('the default model setting', () => {
+  it('takes a qualified reference, so a provider is never guessed from a bare id', () => {
+    const definition = definitionOf(ESettingId.ModelId)
+
+    expect(coerceSettingValue({ definition, raw: 'anthropic/claude-opus-5' })).toEqual({
+      ok: true,
+      value: 'anthropic/claude-opus-5',
+    })
+    expect(coerceSettingValue({ definition, raw: 'claude-opus-5' }).ok).toBe(false)
+  })
+
+  it('reads empty as unset rather than as a model nobody offers', () => {
+    expect(coerceSettingValue({ definition: definitionOf(ESettingId.ModelId), raw: '' })).toEqual({
+      ok: true,
+      value: '',
+    })
   })
 })
 

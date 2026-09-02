@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class TaskListFragment extends PromptFragment {
   readonly id = 'plan.task-list'
 

@@ -36,7 +36,10 @@ const containerHolding = (
   for (const fragment of fragments) {
     container.register(portToken(PromptFragment), { useClass: fragment })
   }
-  container.register(portToken(PromptRegistry), { useClass: InMemoryPromptRegistry })
+  container.register(portToken(PromptRegistry), {
+    useFactory: (resolver) =>
+      new InMemoryPromptRegistry(resolver.resolveAll(portToken(PromptFragment))),
+  })
   return container
 }
 

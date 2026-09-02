@@ -79,7 +79,7 @@ const readDeclaration: ToolDeclaration = {
 async function openCutShortAt(args: {
   script: readonly ScriptedStep[]
   chunk: ChunkType
-  tools?: readonly ToolDeclaration[] | undefined
+  tools?: (() => readonly ToolDeclaration[]) | undefined
 }): Promise<{ harness: AtlasHarness; threadId: ThreadId; interruption: AbortSignal }> {
   const temp = createTempDatabase()
   const controller = new AbortController()
@@ -110,7 +110,7 @@ describe('interrupting a step that had already asked for a tool', () => {
     const cut = await openCutShortAt({
       script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],
       chunk: 'tool-call',
-      tools: [readDeclaration],
+      tools: () => [readDeclaration],
     })
 
     const outcome = await cut.harness.runner.say({
@@ -137,7 +137,7 @@ describe('interrupting a step that had already asked for a tool', () => {
     const cut = await openCutShortAt({
       script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],
       chunk: 'tool-call',
-      tools: [readDeclaration],
+      tools: () => [readDeclaration],
     })
 
     const outcome = await cut.harness.runner.say({
@@ -153,7 +153,7 @@ describe('interrupting a step that had already asked for a tool', () => {
     const cut = await openCutShortAt({
       script: [{ text: 'reading', calls: [{ callId: 'call-1', name: 'read_file', input: { path: 'a.ts' } }] }],
       chunk: 'tool-call',
-      tools: [readDeclaration],
+      tools: () => [readDeclaration],
     })
 
     await cut.harness.runner.say({

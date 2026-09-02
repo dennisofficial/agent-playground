@@ -28,6 +28,12 @@ const appWith = (args?: { pinned?: string }): FakeApp =>
       : { settings: { values: { [ESettingId.ModelFavourites]: args.pinned } } }),
   })
 
+const defaultIn = (app: FakeApp): string =>
+  textValueOf({ resolution: app.settings.snapshot().resolution, id: ESettingId.ModelId })
+
+const chosenIn = (app: FakeApp): readonly string[] =>
+  app.threads.chosenModels.map((held) => held.model.ref)
+
 const pinnedIn = (app: FakeApp): readonly string[] =>
   parseFavourites(
     textValueOf({
@@ -65,6 +71,26 @@ async function landed(setup: Mounted): Promise<void> {
 async function openSwitcherWith(setup: Mounted): Promise<void> {
   setup.mockInput.pressKey('p', { ctrl: true })
   await landed(setup)
+}
+
+async function openSettingsWith(setup: Mounted): Promise<void> {
+  setup.mockInput.pressKey('o', { ctrl: true })
+  await landed(setup)
+}
+
+async function downTo(args: { setup: Mounted; needle: string }): Promise<void> {
+  for (let step = 0; step < 20; step += 1) {
+    const row = args.setup
+      .captureCharFrame()
+      .split('\n')
+      .find((line) => line.includes(args.needle))
+    if (row !== undefined && row.includes('❯')) return
+
+    args.setup.mockInput.pressArrow('down')
+    await landed(args.setup)
+  }
+
+  throw new Error(`never reached the ${args.needle} row`)
 }
 
 async function arrow(setup: Mounted, direction: 'up' | 'down' | 'left' | 'right'): Promise<void> {
@@ -200,6 +226,88 @@ describe('switching what answers', () => {
       await enter(setup)
 
       expect(app.model.choice().ref.providerId).not.toBe('openai')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
+describe('the two model preferences', () => {
+  it('writes a pick onto the conversation, so another terminal keeps its own model', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+      await arrow(setup, 'up')
+      await enter(setup)
+
+      expect(chosenIn(app)).toContain('anthropic/claude-sonnet-5')
+      expect(defaultIn(app)).toBe('')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('says a pick lands on this conversation only', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSwitcherWith(setup)
+
+      expect(setup.captureCharFrame()).toContain('this conversation only')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('opens on the conversation the thread was last switched to', async () => {
+    const app = appWith()
+    const setup = await testRender(
+      <App
+        app={app}
+        opened={{
+          threadId: THREAD,
+          events: [],
+          turns: [],
+          name: null,
+          started: true,
+          model: { ref: 'anthropic/claude-opus-5', effort: EEffort.High },
+        }}
+      />,
+      WIDE,
+    )
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-opus-5')
+      expect(app.model.choice().effort).toBe(EEffort.High)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('sets the default from the settings row, leaving the conversation where it is', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSettingsWith(setup)
+      await downTo({ setup, needle: 'Default model' })
+      await enter(setup)
+
+      expect(setup.captureCharFrame()).toContain('the default · every new conversatio')
+
+      await arrow(setup, 'up')
+      await enter(setup)
+
+      expect(defaultIn(app)).toBe('anthropic/claude-sonnet-5')
+      expect(refKey(app.model.choice().ref)).toBe('anthropic/claude-haiku-4-5')
+      expect(chosenIn(app)).not.toContain('anthropic/claude-sonnet-5')
     } finally {
       await teardown(setup)
     }

@@ -93,6 +93,7 @@ export function Switcher(props: {
   active: ModelRef
   total: number
   query?: string
+  toDefault?: boolean
   overlay?: boolean
   onPick: (choice: SwitcherChoice) => void
   onSelect: (index: number) => void
@@ -109,6 +110,7 @@ export function Switcher(props: {
     <SideDrawer
       width={props.width}
       overlay={props.overlay === true}
+      lifted={props.toDefault === true}
       footer={
         <FooterLine
           cells={cells}
@@ -118,7 +120,7 @@ export function Switcher(props: {
       }
     >
       <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
-        <DrawerHeading label="Model" />
+        <DrawerHeading label={props.toDefault === true ? 'Default model' : 'Model'} />
         <FilterLine
           cells={cells}
           query={props.query ?? ''}
@@ -161,7 +163,7 @@ export function Switcher(props: {
       )}
       <box flexDirection="column" flexShrink={0}>
         <DrawerHeading label="Applies" />
-        <AppliesLine cells={cells} />
+        <AppliesLine cells={cells} toDefault={props.toDefault === true} />
       </box>
     </SideDrawer>
   )

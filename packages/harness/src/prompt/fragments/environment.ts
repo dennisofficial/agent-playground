@@ -1,11 +1,9 @@
 import { PromptFragment, type ClockPort, type PromptContext } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 import { SystemClock } from '../../store/clock'
 import { localDayOf, localWeekdayOf } from '../../time/local-day'
 import { VolatilePromptFragment } from '../volatile'
 
-@injectable()
 export class ProjectDirectoryFragment extends PromptFragment {
   readonly id = 'environment.project-directory'
 
@@ -17,7 +15,6 @@ export class ProjectDirectoryFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class TodayFragment extends VolatilePromptFragment {
   readonly id = 'environment.today'
 
@@ -37,7 +34,6 @@ export class TodayFragment extends VolatilePromptFragment {
   }
 }
 
-@injectable()
 export class RelativePathsFragment extends PromptFragment {
   readonly id = 'environment.relative-paths'
 

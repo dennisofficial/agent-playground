@@ -19,20 +19,27 @@ import {
 } from '../ui/switcher-model'
 import type { ModelCatalogue } from './providers'
 
+/** Which of the two model preferences a pick lands on. */
+export enum EModelScope {
+  Thread = 'thread',
+  Default = 'default',
+}
+
 export type SwitcherControl = {
   state: SwitcherState | null
+  scope: EModelScope
   rows: readonly SwitcherRow[]
   query: string
   total: number
   favourites: readonly string[]
-  handleOpen: () => void
+  handleOpen: (scope?: EModelScope) => void
   handleDismiss: () => void
   handlePick: (choice: SwitcherChoice) => void
   handleSelect: (index: number) => void
   handleKey: (key: KeyEvent) => void
 }
 
-type Browsing = { state: SwitcherState; query: string }
+type Browsing = { state: SwitcherState; query: string; scope: EModelScope }
 
 const FILTERABLE = /[\w.:/-]/
 
@@ -52,13 +59,15 @@ export function useSwitcher(args: {
   catalogue: ModelCatalogue
   active: ModelRef
   effort: EEffort
+  /** Where the highlight starts when the picker is set on the default rather than the thread. */
+  fallback: { ref: ModelRef; effort: EEffort }
   favourites: readonly string[]
-  onPick: (choice: SwitcherChoice) => void
+  onPick: (args: { choice: SwitcherChoice; scope: EModelScope }) => void
   onPin: (favourites: readonly string[]) => void
 }): SwitcherControl {
   const held = useRef<Browsing | null>(null)
   const [browsing, setBrowsing] = useState<Browsing | null>(null)
-  const { catalogue, active, effort, favourites, onPick, onPin } = args
+  const { catalogue, active, effort, fallback, favourites, onPick, onPin } = args
 
   const put = useCallback((next: Browsing | null) => {
     held.current = next
@@ -86,26 +95,31 @@ export function useSwitcher(args: {
   const total = useMemo(() => modelCount(catalogue.providers), [catalogue])
 
   const handleOpen = useCallback(
-    () =>
+    (scope: EModelScope = EModelScope.Thread) => {
+      const anchor = scope === EModelScope.Default ? fallback : { ref: active, effort }
+
       put({
         query: '',
+        scope,
         state: openSwitcher({
           providers: catalogue.providers,
-          active,
-          effort,
+          active: anchor.ref,
+          effort: anchor.effort,
           availability: catalogue.reachable,
           favourites,
         }),
-      }),
-    [active, catalogue, effort, favourites, put],
+      })
+    },
+    [active, catalogue, effort, fallback, favourites, put],
   )
 
   const handleDismiss = useCallback(() => put(null), [put])
 
   const handlePick = useCallback(
     (choice: SwitcherChoice) => {
+      const scope = held.current?.scope ?? EModelScope.Thread
       put(null)
-      onPick(choice)
+      onPick({ choice, scope })
     },
     [onPick, put],
   )
@@ -118,6 +132,7 @@ export function useSwitcher(args: {
       })?.ref
 
       put({
+        ...args.current,
         query: args.typed,
         state: anchorOn({
           rows: rowsFor(args.typed),
@@ -214,6 +229,7 @@ export function useSwitcher(args: {
   return useMemo(
     () => ({
       state: browsing?.state ?? null,
+      scope: browsing?.scope ?? EModelScope.Thread,
       rows,
       query,
       total,

@@ -19,6 +19,10 @@ export const RANGE_HINT = '← → adjust'
 
 export const TEXT_HINT = 'set in the settings file'
 
+export const MODEL_HINT = '⏎ choose'
+
+export const MODEL_NOT_SET = 'shipped default'
+
 export const SECRET_HINT = '⏎ set'
 
 export const SECRET_NOT_NEEDED = 'not needed'
@@ -38,6 +42,9 @@ export function valueLabel(args: {
   if (definition.kind === ESettingKind.Text) {
     return typeof value === 'string' ? value : definition.fallback
   }
+  if (definition.kind === ESettingKind.Model) {
+    return typeof value === 'string' && value.length > 0 ? value : MODEL_NOT_SET
+  }
   if (definition.kind === ESettingKind.Choice) {
     if (typeof value !== 'string') return definition.fallback
     return optionOf({ definition, value })?.label ?? value
@@ -55,6 +62,7 @@ export function affordanceHint(definition: SettingDefinition): string {
   if (definition.kind === ESettingKind.Toggle) return TOGGLE_HINT
   if (definition.kind === ESettingKind.Range) return RANGE_HINT
   if (definition.kind === ESettingKind.Text) return TEXT_HINT
+  if (definition.kind === ESettingKind.Model) return MODEL_HINT
   if (definition.kind === ESettingKind.Secret) return SECRET_HINT
 
   return definition.options.map((option) => option.label).join(OPTION_SEPARATOR)

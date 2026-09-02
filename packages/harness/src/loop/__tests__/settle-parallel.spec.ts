@@ -133,7 +133,7 @@ describe('settling a step whose calls may share a batch', () => {
     const settle = createSettlePending({
       log: harness.log,
       dispatch: tracingDispatch({ trace }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId, signal: new AbortController().signal })
@@ -158,7 +158,7 @@ describe('settling a step whose calls may share a batch', () => {
         trace,
         holdFor: (call) => (call.callId === toCallId('call-slow') ? 120 : 10),
       }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId, signal: new AbortController().signal })
@@ -180,7 +180,7 @@ describe('settling a step whose calls may share a batch', () => {
     const settle = createSettlePending({
       log: harness.log,
       dispatch: tracingDispatch({ trace }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId, signal: new AbortController().signal })
@@ -204,7 +204,7 @@ describe('settling a step whose calls may share a batch', () => {
     const settle = createSettlePending({
       log: harness.log,
       dispatch: tracingDispatch({ trace }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId, signal: new AbortController().signal })
@@ -241,7 +241,7 @@ describe('settling a step whose calls may share a batch', () => {
     const settle = createSettlePending({
       log: harness.log,
       dispatch: tracingDispatch({ trace }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId, signal: new AbortController().signal })
@@ -270,7 +270,7 @@ describe('settling a step whose calls may share a batch', () => {
             ? [{ type: 'approval-requested', callId: call.callId, reason: 'a human should look' }]
             : [{ type: 'tool-result', callId: call.callId, name: call.name, output: 'ok', modelText: 'ok' }],
       }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     const settled = await settle({ threadId, signal: new AbortController().signal })
@@ -299,7 +299,7 @@ describe('settling a step whose calls may share a batch', () => {
           return [{ type: 'tool-result', callId: call.callId, name: call.name, output: 'ok', modelText: 'ok' }]
         },
       }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId, signal: controller.signal })
@@ -329,7 +329,7 @@ describe('settling a step whose calls may share a batch', () => {
     const settle = createSettlePending({
       log: harness.log,
       dispatch: tracingDispatch({ trace: freshTrace() }),
-      tools: TOOLS,
+      tools: () => TOOLS,
     })
 
     await settle({ threadId: thread.id, signal: new AbortController().signal })

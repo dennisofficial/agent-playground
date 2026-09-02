@@ -156,6 +156,30 @@ describe('viewing a sub-agent', () => {
     }
   }, 60_000)
 
+  it('leaves the background wait with the parent, whose turn is the one still waiting', async () => {
+    const app = appWith()
+    await seed(app)
+    app.agents.place(child())
+    const setup = await opened(app)
+
+    try {
+      expect(setup.captureCharFrame()).toContain('1 background agent to finish')
+
+      await selectChild(setup)
+
+      expect(setup.captureCharFrame()).not.toContain('background agent')
+
+      setup.mockInput.pressEscape()
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('1 background agent to finish')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
   it('addresses the child in the composer', async () => {
     const app = appWith()
     await seed(app)

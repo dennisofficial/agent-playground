@@ -37,8 +37,8 @@ export function composerTone(args: { working: boolean; interrupting: boolean }):
   return EComposerTone.Idle
 }
 
-const railColour = (tone: EComposerTone): string =>
-  tone === EComposerTone.Interrupting ? theme.warn : theme.accent
+const railColour = (tone: EComposerTone, accent: string): string =>
+  tone === EComposerTone.Interrupting ? theme.warn : accent
 
 /**
  * What Atlas adds to OpenTUI's own keymap. Bindings are looked up by an exact
@@ -139,11 +139,12 @@ export function Composer(props: {
   maxRows?: number
   focused?: boolean
   title?: string
-  titleFg?: string
+  accent?: string
   highlights?: readonly HighlightSpan[]
   onCursorMoved?: (() => void) | undefined
 }): React.ReactNode {
   const tone = props.tone ?? EComposerTone.Idle
+  const rail = railColour(tone, props.accent ?? theme.accent)
   const edge = composerEdge()
   const maxRows = props.maxRows ?? DEFAULT_MAX_ROWS
   const [metrics, setMetrics] = useState({ rows: 1, total: 1 })
@@ -256,13 +257,13 @@ export function Composer(props: {
     return (
       <Frame
         width={props.width}
-        colour={railColour(tone)}
+        colour={rail}
         {...(edge === EComposerEdge.Claude
           ? {
               rule: EFrameRule.Open,
               lead: (
                 <box width={CARET_COLUMNS} flexShrink={0}>
-                  <text fg={railColour(tone)}>{glyph.user}</text>
+                  <text fg={rail}>{glyph.user}</text>
                 </box>
               ),
             }
@@ -274,9 +275,7 @@ export function Composer(props: {
         {...(title === null
           ? {}
           : {
-              title: (
-                <text fg={props.titleFg ?? theme.caretFg} bg={railColour(tone)}>{` ${title} `}</text>
-              ),
+              title: <text fg={theme.caretFg} bg={rail}>{` ${title} `}</text>,
             })}
       >
         {draft}
@@ -287,7 +286,7 @@ export function Composer(props: {
   return (
     <Panel
       width={props.width}
-      rail={railColour(tone)}
+      rail={rail}
       fill={theme.panelBg}
       label={<NoticeSlab bg={theme.panelBg} cells={noticeCells} />}
       {...(badge === null

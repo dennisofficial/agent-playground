@@ -3,13 +3,13 @@ import { createIsolatedContainer, portToken, WorkspaceRoot } from '@dltech/atlas
 import { describe, expect, it } from 'bun:test'
 
 import { NativePlugin } from '../../plugin'
-import GithubPlugin from '../index'
+import GithubPlugin, { registerPlugin } from '../index'
 import { PullRequestPort } from '../pure'
 
 const resolved = (): GithubPlugin => {
   const container = createIsolatedContainer()
   container.register(WorkspaceRoot, { useValue: '/work/atlas' })
-  container.register(portToken(NativePlugin), { useClass: GithubPlugin })
+  registerPlugin({ container })
 
   const plugin = container.resolve(portToken(NativePlugin))
   if (!(plugin instanceof GithubPlugin)) throw new Error('the container answered something else')

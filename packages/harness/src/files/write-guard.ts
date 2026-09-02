@@ -2,7 +2,7 @@ import { stat } from 'node:fs/promises'
 
 import type { ThreadId } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../container/injection'
+import { portToken } from '../container/injection'
 import { withPathLock } from './path-lock'
 import { FileReadStatePort } from './read-state'
 import { movedSince } from './staleness'
@@ -33,9 +33,8 @@ export class SerializedWrites extends FileWriteGuardPort {
   }
 }
 
-@injectable()
 export class VerifyingWriteGuard extends FileWriteGuardPort {
-  constructor(@inject(portToken(FileReadStatePort)) private readonly seen: FileReadStatePort) {
+  constructor(private readonly seen: FileReadStatePort) {
     super()
   }
 

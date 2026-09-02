@@ -1,9 +1,6 @@
 export { ChildRunnerDepsToken, createHarnessContainer } from './create-harness-container'
 export {
   createIsolatedContainer,
-  inject,
-  injectAll,
-  injectable,
   instanceCachingFactory,
   portToken,
   resolveSet,

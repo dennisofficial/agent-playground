@@ -2,7 +2,6 @@ import { resolve } from 'node:path'
 
 import type { ThreadId } from '@dltech/atlas-core'
 
-import { injectable } from '../container/injection'
 
 export type FileView = { mtimeMs: number; size: number; wholeFile: boolean; digest: string }
 
@@ -13,7 +12,6 @@ export abstract class FileReadStatePort {
   abstract viewOf(args: FileViewKey): FileView | undefined
 }
 
-@injectable()
 export class InMemoryFileReadState extends FileReadStatePort {
   private readonly byThread = new Map<ThreadId, Map<string, FileView>>()
 

@@ -94,7 +94,7 @@ describe('an approval the operator has already answered', () => {
       databaseUrl: temp.databaseUrl,
       model: scriptedModel({ script: [{ text: 'understood, leaving it alone' }] }),
       prompt: fixturePrompt(),
-      tools: tools.declarations(),
+      tools: () => tools.declarations(),
       dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks }),
       hooks,
     })
@@ -157,7 +157,7 @@ describe('an approval the operator has already answered', () => {
     const settle = createSettlePending({
       log: harness.log,
       dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks }),
-      tools: tools.declarations(),
+      tools: () => tools.declarations(),
       launchDirectory: '/project',
     })
     const settled = await settle({ threadId, signal: new AbortController().signal })

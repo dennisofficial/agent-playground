@@ -1,9 +1,11 @@
 import {
   BeforeToolHook,
   DEFAULT_CLASSIFIER_POLICY,
+  EClassifierMode,
   JudgePort,
   ToolDefinition,
   WorkspaceFactsPort,
+  type ClassifierPolicy,
 } from '@dltech/atlas-core'
 
 import { portToken, resolveSet, type DependencyContainer } from '../container/injection'
@@ -11,18 +13,25 @@ import { ClassifierPolicyToken, WorkspaceRoot } from '../container/tokens'
 import { ClassifyCallHook, type JudgeSeam } from './classify-call'
 import { JudgeMemo } from './judge-memo'
 
-function memoOver({
-  resolver,
-}: {
-  resolver: DependencyContainer
-}): { judge: JudgeSeam } | Record<string, never> {
-  if (!resolver.isRegistered(portToken(JudgePort), true)) return {}
+type ClassifierSeams = { policy: () => ClassifierPolicy; judge?: JudgeSeam | undefined }
+
+const demotedToShadow =
+  ({ policy }: { policy: () => ClassifierPolicy }): (() => ClassifierPolicy) =>
+  () => {
+    const current = policy()
+    if (current.mode === EClassifierMode.Off) return current
+    return { ...current, mode: EClassifierMode.Shadow }
+  }
+
+function seamsFor({ resolver }: { resolver: DependencyContainer }): ClassifierSeams {
+  const policy = resolver.resolve(ClassifierPolicyToken)
+  if (!resolver.isRegistered(portToken(JudgePort), true)) {
+    return { policy: demotedToShadow({ policy }) }
+  }
 
   return {
-    judge: new JudgeMemo({
-      judge: resolver.resolve(portToken(JudgePort)),
-      policy: resolver.resolve(ClassifierPolicyToken),
-    }),
+    policy,
+    judge: new JudgeMemo({ judge: resolver.resolve(portToken(JudgePort)), policy }),
   }
 }
 
@@ -35,8 +44,7 @@ export function registerClassifier({ container }: { container: DependencyContain
         tools: resolveSet({ container: resolver, token: portToken(ToolDefinition) }),
         facts: resolver.resolve(portToken(WorkspaceFactsPort)),
         launchDirectory: resolver.resolve(WorkspaceRoot),
-        policy: resolver.resolve(ClassifierPolicyToken),
-        ...memoOver({ resolver }),
+        ...seamsFor({ resolver }),
       }),
   })
 }

@@ -140,7 +140,7 @@ export async function openSteerable(args: {
       ...(args.withQueue === false ? {} : { drainPending: queue.drain }),
       ...(args.hooks === undefined ? {} : { hooks: args.hooks }),
       ...(args.withTools === true
-        ? { tools: tools.declarations(), dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks: new HookChain({}) }) }
+        ? { tools: () => tools.declarations(), dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry: tools, hooks: new HookChain({}) }) }
         : {}),
     }),
   }

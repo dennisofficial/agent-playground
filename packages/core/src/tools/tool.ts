@@ -109,6 +109,7 @@ export type ToolDeclaration = {
   description: string
   effect: EToolEffect
   inputSchema: ZodType
+  jsonSchema?: unknown
   pathFields?: readonly DeclaredPathField[]
   isConcurrencySafe?(input: unknown): boolean
   revealsWholeFile?(args: WholeFileClaim<unknown>): boolean

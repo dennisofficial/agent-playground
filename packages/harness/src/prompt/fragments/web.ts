@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class UntrustedWebContentFragment extends PromptFragment {
   readonly id = 'web.untrusted-content'
 
@@ -21,7 +19,6 @@ export class UntrustedWebContentFragment extends PromptFragment {
   }
 }
 
-@injectable()
 export class WebResearchFragment extends PromptFragment {
   readonly id = 'web.research'
 

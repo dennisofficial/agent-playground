@@ -10,7 +10,6 @@ import {
 
 import type { AgentSnapshot } from '../../agents/registry/snapshot'
 import { AGENT_SPAWN_TOOL_NAME, type AgentType } from '../../agents/types/agent-type'
-import { inject, injectable } from '../../container/injection'
 import { AgentRegistrySourceToken, AgentTypesToken, type AgentRegistrySource } from './agent-tokens'
 
 const oneAgent = z.strictObject({
@@ -79,7 +78,6 @@ function requestedSpawns(
 const lineFor = (snapshot: AgentSnapshot): string =>
   `${snapshot.agentId}  ${snapshot.agentType}  ${snapshot.intent}`
 
-@injectable()
 export class AgentSpawnTool extends SchemaTool<typeof inputSchema> {
   readonly name = AGENT_SPAWN_TOOL_NAME
   readonly description: string
@@ -88,8 +86,8 @@ export class AgentSpawnTool extends SchemaTool<typeof inputSchema> {
   override readonly isConcurrencySafe = (): boolean => true
 
   constructor(
-    @inject(AgentRegistrySourceToken) private readonly agents: AgentRegistrySource,
-    @inject(AgentTypesToken) types: readonly AgentType[],
+     private readonly agents: AgentRegistrySource,
+     types: readonly AgentType[],
   ) {
     super()
     this.description = describeSpawn(types)

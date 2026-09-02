@@ -78,7 +78,7 @@ describe('a turn that settles a tool call', () => {
         model: harness.model,
         ids: harness.ids,
         assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
-        tools: registry.declarations(),
+        tools: () => registry.declarations(),
         dispatch: new HookedToolDispatcher({ approvals: EApprovalRouting.Operator, registry, hooks: new HookChain({}) }),
       },
     })

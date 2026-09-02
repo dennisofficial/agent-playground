@@ -12,7 +12,7 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { writeFileAtomically } from '../../files/atomic-write'
 import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
 import { absolutePathSchema } from './file-text'
@@ -29,7 +29,6 @@ const description = [
   'Prefer the edit tool for changing part of an existing file.',
 ].join(' ')
 
-@injectable()
 export class WriteTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'write'
   readonly description = description
@@ -40,7 +39,7 @@ export class WriteTool extends SchemaTool<typeof inputSchema> {
   ]
 
   constructor(
-    @inject(portToken(FileWriteGuardPort))
+    
     private readonly guard: FileWriteGuardPort = new SerializedWrites(),
   ) {
     super()

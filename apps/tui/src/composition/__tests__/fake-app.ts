@@ -521,6 +521,7 @@ export function fakeApp(args: {
     agentTypes: args.agentTypes ?? EMPTY_AGENT_TYPE_CATALOG,
     pluginProjections: [],
     pluginSurfaces: [],
+    mcp: () => [],
     files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),
     openUrl: (url: string) => {
@@ -584,6 +585,7 @@ export function fakeApp(args: {
       ref: parseRef(FAKE_CONFIG.model ?? '') ?? DEFAULT_MODEL_REF,
       effort: EEffort.Medium,
     }),
+    modelPinned: false,
     models: fakeCatalogue(),
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,

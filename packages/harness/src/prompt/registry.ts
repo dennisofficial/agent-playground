@@ -8,7 +8,7 @@ import {
   type SkippedFragment,
 } from '@dltech/atlas-core'
 
-import { injectAll, injectable, portToken } from '../container/injection'
+import {  portToken } from '../container/injection'
 import { isVolatilePromptFragment, type VolatilePromptFragment } from './volatile'
 
 export abstract class PromptRegistry {
@@ -47,13 +47,12 @@ function compileFragments(args: {
 // registers the token at all shadows its parent's array outright rather than merging into it.
 // Verified against tsyringe 4.10.0, `registry-base.ts` and `dependency-container.ts`.
 // https://github.com/microsoft/tsyringe/blob/master/src/registry-base.ts
-@injectable()
 export class InMemoryPromptRegistry extends PromptRegistry {
   private readonly fragments: readonly PromptFragment[]
   private readonly volatile: readonly VolatilePromptFragment[]
   private readonly memo = new Map<string, { stamp: string; compiled: CompiledPrompt }>()
 
-  constructor(@injectAll(portToken(PromptFragment)) fragments: readonly PromptFragment[]) {
+  constructor( fragments: readonly PromptFragment[]) {
     super()
     const ids = new Set<string>()
     for (const fragment of fragments) {

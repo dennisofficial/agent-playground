@@ -19,6 +19,9 @@ export const JUDGE_CALLS_PER_TURN = 6
 
 const CONSULTS_PAST_THE_BUDGET = ESeverity.Grave
 
+const carriesAVerdict = ({ consultation }: { consultation: Consultation }): boolean =>
+  consultation.kind === EConsultation.Judged
+
 export function turnKeyOf({
   events,
   threadId,
@@ -92,7 +95,7 @@ export class JudgeMemo {
       signal,
     })
 
-    this.answered.set(key, consultation)
+    if (carriesAVerdict({ consultation })) this.answered.set(key, consultation)
     return consultation
   }
 

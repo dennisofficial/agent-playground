@@ -10,7 +10,14 @@ import {
 import { createSettingsService, environmentLayer, MemorySettingsStore } from '@dltech/atlas-harness'
 
 import { DEFAULT_MODEL_REF } from '../config'
-import { launchSelection, rememberSelection } from '../model-preference'
+import {
+  defaultSelection,
+  launchSelection,
+  modelPinned,
+  rememberDefault,
+  storedModel,
+  threadSelection,
+} from '../model-preference'
 import { fakeCatalogue } from './fake-app'
 
 const NOTHING = { model: undefined }
@@ -46,14 +53,14 @@ const launched = (args: {
     catalogue,
   })
 
-describe('the remembered model pair', () => {
+describe('the default model pair', () => {
   it('answers with what Atlas ships when nothing was ever picked', () => {
     const selection = launched({})
     expect(refKey(selection.ref)).toBe(refKey(DEFAULT_MODEL_REF))
     expect(selection.effort).toBe(EEffort.Medium)
   })
 
-  it('reopens on the qualified pair the switcher last wrote', () => {
+  it('opens on the qualified pair the settings hold', () => {
     const selection = launched({
       values: {
         [ESettingId.ModelId]: 'anthropic/claude-opus-5',
@@ -64,7 +71,7 @@ describe('the remembered model pair', () => {
     expect(selection.effort).toBe(EEffort.High)
   })
 
-  it('lets --model outrank the remembered pair, leaving the effort where it was', () => {
+  it('lets --model outrank the default pair, leaving the effort where it was', () => {
     const selection = launched({
       requested: { model: 'anthropic/claude-sonnet-5' },
       values: {
@@ -86,7 +93,7 @@ describe('the remembered model pair', () => {
     ).toBe('anthropic/claude-sonnet-5')
   })
 
-  it('ignores a remembered model no provider has an account for', () => {
+  it('ignores a default model no provider has an account for', () => {
     const selection = launched({ values: { [ESettingId.ModelId]: 'openai/gpt-5-codex' } })
     expect(refKey(selection.ref)).toBe(refKey(DEFAULT_MODEL_REF))
   })
@@ -97,7 +104,7 @@ describe('the remembered model pair', () => {
     )
   })
 
-  it('ignores a remembered model that left the catalogue, and a junk effort', () => {
+  it('ignores a default model that left the catalogue, and a junk effort', () => {
     const selection = launched({
       values: {
         [ESettingId.ModelId]: 'anthropic/claude-opus-3',
@@ -108,7 +115,7 @@ describe('the remembered model pair', () => {
     expect(selection.effort).toBe(EEffort.Medium)
   })
 
-  it('drops a remembered rung the chosen model does not offer onto one it does', () => {
+  it('drops a default rung the chosen model does not offer onto one it does', () => {
     const selection = launched({
       values: {
         [ESettingId.ModelId]: 'anthropic/claude-haiku-4-5',
@@ -119,10 +126,84 @@ describe('the remembered model pair', () => {
   })
 })
 
-describe('writing the picked pair down', () => {
+describe('the pair a conversation carries', () => {
+  const fallback = defaultSelection({ settled: settled({}), catalogue })
+
+  it('falls back to the default when the conversation has never been switched', () => {
+    const selection = threadSelection({ stored: undefined, fallback, catalogue })
+    expect(refKey(selection.ref)).toBe(refKey(DEFAULT_MODEL_REF))
+    expect(selection.effort).toBe(fallback.effort)
+  })
+
+  it('outranks the default, which is what stops two terminals fighting over one pair', () => {
+    const selection = threadSelection({
+      stored: { ref: 'anthropic/claude-opus-5', effort: EEffort.High },
+      fallback,
+      catalogue,
+    })
+    expect(refKey(selection.ref)).toBe('anthropic/claude-opus-5')
+    expect(selection.effort).toBe(EEffort.High)
+  })
+
+  it('falls back whole when the model went away, so the effort never outlives it', () => {
+    const settledHigh = defaultSelection({
+      settled: settled({
+        values: {
+          [ESettingId.ModelId]: 'anthropic/claude-sonnet-5',
+          [ESettingId.ModelEffort]: EEffort.Low,
+        },
+      }),
+      catalogue,
+    })
+    const selection = threadSelection({
+      stored: { ref: 'anthropic/claude-opus-3', effort: EEffort.Max },
+      fallback: settledHigh,
+      catalogue,
+    })
+
+    expect(refKey(selection.ref)).toBe('anthropic/claude-sonnet-5')
+    expect(selection.effort).toBe(EEffort.Low)
+  })
+
+  it('keeps the model and drops a junk effort back onto the default', () => {
+    const selection = threadSelection({
+      stored: { ref: 'anthropic/claude-opus-5', effort: 'colossal' },
+      fallback,
+      catalogue,
+    })
+    expect(refKey(selection.ref)).toBe('anthropic/claude-opus-5')
+    expect(selection.effort).toBe(fallback.effort)
+  })
+
+  it('drops a rung the stored model does not offer onto one it does', () => {
+    const selection = threadSelection({
+      stored: { ref: 'anthropic/claude-haiku-4-5', effort: EEffort.Max },
+      fallback,
+      catalogue,
+    })
+    expect(selection.effort).toBe(EEffort.High)
+  })
+
+  it('writes back the qualified pair the store reads', () => {
+    expect(
+      storedModel({ ref: { providerId: 'anthropic', modelId: 'claude-opus-5' }, effort: EEffort.High }),
+    ).toEqual({ ref: 'anthropic/claude-opus-5', effort: EEffort.High })
+  })
+})
+
+describe('a launch pinned to one model', () => {
+  it('is pinned only when the flag names a model something can answer for', () => {
+    expect(modelPinned({ requested: { model: 'anthropic/claude-opus-5' }, catalogue })).toBe(true)
+    expect(modelPinned({ requested: { model: undefined }, catalogue })).toBe(false)
+    expect(modelPinned({ requested: { model: 'openai/gpt-5-codex' }, catalogue })).toBe(false)
+    expect(modelPinned({ requested: { model: 'claude-opus-5' }, catalogue })).toBe(false)
+  })
+})
+
+describe('writing the default pair down', () => {
   it('survives the settings service being rebuilt over the same store', () => {
     const store = new MemorySettingsStore()
-    rememberSelection({
+    rememberDefault({
       settings: serviceOver(store),
       selection: {
         ref: { providerId: 'anthropic', modelId: 'claude-opus-5' },
@@ -143,7 +224,7 @@ describe('writing the picked pair down', () => {
     const store = new MemorySettingsStore({ document: { values: { 'appearance.accent': 'moss' } } })
     const settings = serviceOver(store)
 
-    rememberSelection({
+    rememberDefault({
       settings,
       selection: {
         ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },

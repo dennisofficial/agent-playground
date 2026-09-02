@@ -8,7 +8,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { EShellStatus, type ShellSnapshot } from '../../shells/background-shell'
 import { ShellRegistryPort } from '../../shells/shell-registry'
 import type { ShellDelta } from '../../shells/notice-queue'
@@ -68,7 +68,6 @@ function renderModelText(args: { snapshot: ShellSnapshot; delta: ShellDelta }): 
   return sections.join('\n\n')
 }
 
-@injectable()
 export class ShellOutputTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'shell_output'
   readonly description = description
@@ -77,7 +76,7 @@ export class ShellOutputTool extends SchemaTool<typeof inputSchema> {
 
   readonly inputSchema = inputSchema
 
-  constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
+  constructor( private readonly shells: ShellRegistryPort) {
     super()
   }
 

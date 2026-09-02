@@ -53,7 +53,7 @@ async function openWorkspace(scriptFor: (workspace: string) => readonly Scripted
       model: harness.model,
       ids: harness.ids,
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: PROJECT_DIRECTORY }),
-      tools: declarations,
+      tools: () => declarations,
       dispatch: new HookedToolDispatcher({
         approvals: EApprovalRouting.Operator,
         registry,

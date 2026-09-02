@@ -161,4 +161,13 @@ PRAGMA foreign_keys=ON;
 PRAGMA defer_foreign_keys=OFF;
 `,
   },
+  {
+    name: '20260901000000_thread_model',
+    sql: `-- AlterTable
+ALTER TABLE "Thread" ADD COLUMN "modelRef" TEXT;
+
+-- AlterTable
+ALTER TABLE "Thread" ADD COLUMN "modelEffort" TEXT;
+`,
+  },
 ]

@@ -10,7 +10,6 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
 const description = [
   'Write your plan down where the developer can see it: it renders as a checklist beside the conversation.',
@@ -24,7 +23,6 @@ const description = [
   `Ordinary work needs no plan. Reach for this when there are enough moving parts that the developer would otherwise have to ask what you are doing, and at most ${PLAN_TASK_LIMIT} tasks.`,
 ].join('\n')
 
-@injectable()
 export class TaskWriteTool extends SchemaTool<typeof planInputSchema> {
   readonly name = PLAN_TOOL_NAME
   readonly description = description

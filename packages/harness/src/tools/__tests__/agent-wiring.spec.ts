@@ -2,13 +2,18 @@ import { tmpdir } from 'node:os'
 
 import { afterAll, describe, expect, it } from 'bun:test'
 
-import { EDefinitionOrigin, ToolDefinition } from '@dltech/atlas-core'
+import { EDefinitionOrigin, EWebSearchBackend, ToolDefinition } from '@dltech/atlas-core'
 
 import { AgentRegistryPort } from '../../agents/registry/port'
 import type { AgentType } from '../../agents/types/agent-type'
 import { createHarnessContainer } from '../../container/create-harness-container'
 import { portToken, resolveSet, type DependencyContainer } from '../../container/injection'
-import { PrismaClientToken, WorkspaceRoot } from '../../container/tokens'
+import {
+  PrismaClientToken,
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../../container/tokens'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
 import { openAtlasDatabase } from '../../store'
 import { AgentTypesToken } from '../builtin/agent-tokens'
@@ -21,6 +26,8 @@ const opened: { close: () => Promise<void>; temp: TempDatabase }[] = []
 const wired = (): DependencyContainer => {
   const container = createHarnessContainer()
   container.register(WorkspaceRoot, { useValue: tmpdir() })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
   return container
 }
 

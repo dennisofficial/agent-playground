@@ -4,6 +4,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   EPromptAgent,
+  EWebSearchBackend,
   PromptFragment,
   ToolDefinition,
   toThreadId,
@@ -13,7 +14,11 @@ import {
 
 import { createHarnessContainer } from '../../container/create-harness-container'
 import { portToken, resolveSet, type DependencyContainer } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
+import {
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../../container/tokens'
 import { registerBuiltinPromptFragments } from '../../prompt/register-prompt-fragments'
 import { SkillListingFragment } from '../../prompt/fragments/skills'
 
@@ -26,6 +31,8 @@ const OPUS: PromptContext = {
 const wired = (): DependencyContainer => {
   const container = createHarnessContainer()
   container.register(WorkspaceRoot, { useValue: tmpdir() })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
   registerBuiltinPromptFragments({ container })
   return container
 }

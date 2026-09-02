@@ -56,6 +56,7 @@ function Draft(props: {
   maxRows?: number
   title?: string
   width?: number
+  accent?: string
 }): React.ReactNode {
   const draft = useDraft(props.text ?? '')
   return (
@@ -66,6 +67,7 @@ function Draft(props: {
       {...(props.tone === undefined ? {} : { tone: props.tone })}
       {...(props.maxRows === undefined ? {} : { maxRows: props.maxRows })}
       {...(props.title === undefined ? {} : { title: props.title })}
+      {...(props.accent === undefined ? {} : { accent: props.accent })}
     />
   )
 }
@@ -123,22 +125,25 @@ describe('the composer', () => {
 
 type Colour = { equals: (other: unknown) => boolean }
 
-type Span = { text: string; bg: Colour }
+type Span = { text: string; fg: Colour; bg: Colour }
 
 type Spans = { lines: ({ spans: Span[] } | undefined)[] }
 
-const groundAt = (spans: Spans, row: number, cell: number): Colour | undefined => {
+const spanAt = (spans: Spans, row: number, cell: number): Span | undefined => {
   let column = 0
   for (const span of spans.lines[row]?.spans ?? []) {
     for (const _char of span.text) {
-      if (column === cell) return span.bg
+      if (column === cell) return span
       column += 1
     }
   }
   return undefined
 }
 
-async function groundOnHead(node: React.ReactNode, cell: number): Promise<Colour | undefined> {
+const groundAt = (spans: Spans, row: number, cell: number): Colour | undefined =>
+  spanAt(spans, row, cell)?.bg
+
+async function spansOf(node: React.ReactNode): Promise<{ rows: string[]; spans: Spans }> {
   const setup = await testRender(
     <box flexDirection="column" width={WIDTH} height={HEIGHT}>
       {node}
@@ -147,27 +152,22 @@ async function groundOnHead(node: React.ReactNode, cell: number): Promise<Colour
   )
   try {
     const rows = (await drawn(setup)).split('\n')
-    const head = rows.findIndex((row) => row.startsWith(RAIL_HEAD))
-    return groundAt(setup.captureSpans() as Spans, head, cell)
+    return { rows, spans: setup.captureSpans() as Spans }
   } finally {
     await teardown(setup)
   }
 }
 
+async function groundOnHead(node: React.ReactNode, cell: number): Promise<Colour | undefined> {
+  const { rows, spans } = await spansOf(node)
+  const head = rows.findIndex((row) => row.startsWith(RAIL_HEAD))
+  return groundAt(spans, head, cell)
+}
+
 async function groundOf(node: React.ReactNode, cell: number): Promise<Colour | undefined> {
-  const setup = await testRender(
-    <box flexDirection="column" width={WIDTH} height={HEIGHT}>
-      {node}
-    </box>,
-    { width: WIDTH, height: HEIGHT },
-  )
-  try {
-    const rows = (await drawn(setup)).split('\n')
-    const body = rows.findIndex((row) => row.includes(PLACEHOLDER))
-    return groundAt(setup.captureSpans() as Spans, body, cell)
-  } finally {
-    await teardown(setup)
-  }
+  const { rows, spans } = await spansOf(node)
+  const body = rows.findIndex((row) => row.includes(PLACEHOLDER))
+  return groundAt(spans, body, cell)
 }
 
 describe('the composer notice', () => {
@@ -372,6 +372,37 @@ describe('the composer title', () => {
     const frame = await frameOf(<Draft />, WIDTH)
     const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
     expect(head).toBe(`${RAIL_HEAD}${PANEL_TOP_EDGE.repeat(WIDTH - 1)}`)
+  })
+})
+
+describe('the composer accent', () => {
+  it('spends a passed accent on the rail rather than the shipped one', async () => {
+    const { rows, spans } = await spansOf(<Draft accent={theme.court.external} />)
+    const body = rows.findIndex((row) => row.includes(PLACEHOLDER))
+
+    expect(spanAt(spans, body, 0)?.fg.equals(parseColor(theme.court.external))).toBe(true)
+  })
+
+  it('sets the title slab in the passed accent, inked for that ground', async () => {
+    applyComposerEdge(EComposerEdge.Bordered)
+    const { rows, spans } = await spansOf(<Draft title={TITLE} accent={theme.court.external} />)
+    const head = rows.findIndex((row) => row.startsWith(FRAME_TOP_LEFT))
+    const cell = rows[head]?.indexOf(TITLE) ?? -1
+    const slab = spanAt(spans, head, cell)
+
+    expect(cell).toBeGreaterThan(0)
+    expect(slab?.bg.equals(parseColor(theme.court.external))).toBe(true)
+    expect(slab?.fg.equals(parseColor(theme.caretFg))).toBe(true)
+  })
+
+  it('lets interrupting outrank a passed accent', async () => {
+    applyComposerEdge(EComposerEdge.Bordered)
+    const { rows, spans } = await spansOf(
+      <Draft tone={EComposerTone.Interrupting} accent={theme.court.external} />,
+    )
+    const head = rows.findIndex((row) => row.startsWith(FRAME_TOP_LEFT))
+
+    expect(spanAt(spans, head, 0)?.fg.equals(parseColor(theme.warn))).toBe(true)
   })
 })
 

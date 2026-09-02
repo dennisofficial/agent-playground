@@ -12,7 +12,7 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { writeFileAtomically } from '../../files/atomic-write'
 import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
 import {
@@ -125,7 +125,6 @@ async function replaceInFile(args: {
   }
 }
 
-@injectable()
 export class EditTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'edit'
   readonly description = description
@@ -136,7 +135,7 @@ export class EditTool extends SchemaTool<typeof inputSchema> {
   ]
 
   constructor(
-    @inject(portToken(FileWriteGuardPort))
+    
     private readonly guard: FileWriteGuardPort = new SerializedWrites(),
   ) {
     super()

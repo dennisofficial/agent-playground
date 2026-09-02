@@ -5,8 +5,7 @@ import { join } from 'node:path'
 
 import { EWorktreeExit, enteredWorktreeOf, exitedWorktreeOf, toThreadId } from '@dltech/atlas-core'
 
-import { createIsolatedContainer } from '../../../container/injection'
-import { WorkspaceRoot, WorktreeDirectoryToken } from '../../../container/tokens'
+
 import { EnterWorktreeTool } from '../enter-worktree'
 import { ExitWorktreeTool } from '../exit-worktree'
 import { WorktreeListTool } from '../worktree-list'
@@ -37,17 +36,11 @@ const repoWithCommit = async (): Promise<string> => {
   return root
 }
 
-const toolsFor = (launchDirectory: string) => {
-  const container = createIsolatedContainer()
-  container.register(WorkspaceRoot, { useValue: launchDirectory })
-  container.register(WorktreeDirectoryToken, { useValue: () => WORKTREE_DIRECTORY })
-
-  return {
-    enter: container.resolve(EnterWorktreeTool),
-    exit: container.resolve(ExitWorktreeTool),
-    list: container.resolve(WorktreeListTool),
-  }
-}
+const toolsFor = (launchDirectory: string) => ({
+  enter: new EnterWorktreeTool(launchDirectory, () => WORKTREE_DIRECTORY),
+  exit: new ExitWorktreeTool(launchDirectory),
+  list: new WorktreeListTool(),
+})
 
 const invocation = (args: { input: unknown; projectDirectory: string }) => ({
   input: args.input,

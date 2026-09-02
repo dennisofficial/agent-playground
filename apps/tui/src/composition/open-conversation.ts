@@ -9,6 +9,7 @@ import {
 import type {
   AgentRegistryPort,
   RecoveredAgents,
+  ThreadModel,
   ThreadStorePort,
   ThreadSummary,
   TurnLedgerPort,
@@ -30,6 +31,7 @@ export type OpenedConversation = {
   turns: readonly TurnSpend[]
   name: string | null
   started: boolean
+  model?: ThreadModel | undefined
   lost?: RecoveredAgents | undefined
 }
 
@@ -140,6 +142,7 @@ export async function openConversation(args: Opening): Promise<OpenOutcome> {
       turns: spent.turns,
       name: thread.title ?? null,
       started: true,
+      model: thread.model,
       lost,
     },
   }

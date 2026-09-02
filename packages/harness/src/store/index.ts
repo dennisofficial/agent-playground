@@ -2,6 +2,7 @@ export {
   ThreadStorePort,
   PrismaThreadStore,
   type SupervisedAgent,
+  type ThreadModel,
   type ThreadSummary,
 } from './thread-store'
 export {

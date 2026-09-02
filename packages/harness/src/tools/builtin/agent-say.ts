@@ -9,7 +9,6 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
 import { AgentRegistrySourceToken, type AgentRegistrySource } from './agent-tokens'
 
 const inputSchema = z.strictObject({
@@ -25,14 +24,13 @@ const description = [
   'It is the only thing you can say to a sub-agent: it never asks you a question and it cannot be interrupted mid-step.',
 ].join(' ')
 
-@injectable()
 export class AgentSayTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'agent_say'
   readonly description = description
   readonly effect = EToolEffect.Write
   readonly inputSchema = inputSchema
 
-  constructor(@inject(AgentRegistrySourceToken) private readonly agents: AgentRegistrySource) {
+  constructor( private readonly agents: AgentRegistrySource) {
     super()
   }
 

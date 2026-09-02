@@ -11,7 +11,6 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable } from '../../container/injection'
 import { AgentRegistrySourceToken, type AgentRegistrySource } from './agent-tokens'
 
 const inputSchema = z.strictObject({
@@ -26,14 +25,13 @@ const description = [
   'Reach for it when the task is no longer wanted or the agent is going somewhere useless; steer it with agent_say when it is still worth finishing.',
 ].join(' ')
 
-@injectable()
 export class AgentStopTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'agent_stop'
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
 
-  constructor(@inject(AgentRegistrySourceToken) private readonly agents: AgentRegistrySource) {
+  constructor( private readonly agents: AgentRegistrySource) {
     super()
   }
 

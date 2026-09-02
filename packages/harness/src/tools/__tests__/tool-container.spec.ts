@@ -4,14 +4,18 @@ import { join } from 'node:path'
 
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 
-import { ToolDefinition, type ToolOutcome,
+import { EWebSearchBackend, ToolDefinition, type ToolOutcome,
   toThreadId,
 } from '@dltech/atlas-core'
 
 import { createHarnessContainer } from '../../container/create-harness-container'
 import { disposeAll } from '../../container/disposal'
 import { portToken, resolveSet, type DependencyContainer } from '../../container/injection'
-import { WorkspaceRoot } from '../../container/tokens'
+import {
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../../container/tokens'
 import { BashTool } from '../builtin/bash'
 import { GlobTool } from '../builtin/glob'
 import { GrepTool } from '../builtin/grep'
@@ -34,11 +38,18 @@ const BUILTIN_NAMES = [
   'agent_resume',
   'agent_list',
   'agent_stop',
+  'enter_worktree',
+  'exit_worktree',
+  'worktree_list',
+  'web_fetch',
+  'web_search',
 ]
 
 function containerRootedAt(root: string): DependencyContainer {
   const container = createHarnessContainer()
   container.register(WorkspaceRoot, { useValue: root })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
   return container
 }
 

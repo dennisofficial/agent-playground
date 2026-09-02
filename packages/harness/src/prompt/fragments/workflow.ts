@@ -1,8 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
-import { injectable } from '../../container/injection'
 
-@injectable()
 export class CompactionNoticeFragment extends PromptFragment {
   readonly id = 'workflow.compaction-notice'
 

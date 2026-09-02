@@ -1,7 +1,6 @@
 import { toThreadId, toRunId, type ThreadId } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../prisma/generated/client'
-import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { retryOnWriteConflict } from '../store/retry'
 import { readSpawnedThreadIds } from './spawned-threads'
@@ -39,9 +38,8 @@ const toTurnSpend = (row: TurnRow): TurnSpend => ({
   durationMs: row.durationMs,
 })
 
-@injectable()
 export class PrismaTurnLedger implements TurnLedgerPort {
-  constructor(@inject(PrismaClientToken) private readonly prisma: PrismaClient) {}
+  constructor( private readonly prisma: PrismaClient) {}
 
   async record(spend: TurnSpend): Promise<void> {
     await retryOnWriteConflict({ run: () => this.recordOnce(spend) })

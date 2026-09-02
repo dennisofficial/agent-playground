@@ -9,7 +9,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { inject, injectable, portToken } from '../../container/injection'
+import {  portToken } from '../../container/injection'
 import { EShellStatus, type ShellSnapshot } from '../../shells/background-shell'
 import { ShellRegistryPort } from '../../shells/shell-registry'
 
@@ -38,7 +38,6 @@ function lineFor(snapshot: ShellSnapshot): string {
   return `${snapshot.shellId}  ${quotedShellCommand(snapshot.command)}  ${state}  (${snapshot.totalCharacters} characters printed)`
 }
 
-@injectable()
 export class ShellListTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'shell_list'
   readonly description = description
@@ -47,7 +46,7 @@ export class ShellListTool extends SchemaTool<typeof inputSchema> {
 
   readonly inputSchema = inputSchema
 
-  constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
+  constructor( private readonly shells: ShellRegistryPort) {
     super()
   }
 

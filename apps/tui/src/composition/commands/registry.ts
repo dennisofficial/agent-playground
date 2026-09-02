@@ -59,6 +59,7 @@ export type LocalCommandHandlers = {
   onOpenThreads: (handle: string) => void
   onRename: (argumentText: string) => Promise<Renaming>
   onReloadSkills: () => Promise<SkillsReloaded>
+  onShowMcp: () => string
 }
 
 const local = (command: Omit<LocalCommand, 'kind'>): LocalCommand => ({
@@ -209,6 +210,14 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
         handlers.onNewConversation()
         return RAN
       },
+    }),
+    local({
+      name: 'mcp',
+      summary: 'inspect the MCP servers this workspace is configured with',
+      group: ECommandGroup.Workspace,
+      timing: ECommandTiming.Immediate,
+      echo: ECommandEcho.Output,
+      run: () => ({ type: ECommandEffect.Ran, notice: handlers.onShowMcp() }),
     }),
   ]
 }
