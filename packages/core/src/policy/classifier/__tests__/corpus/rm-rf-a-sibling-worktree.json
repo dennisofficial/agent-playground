@@ -1,0 +1,88 @@
+{
+  "expect": "consult",
+  "note": "another agent may be standing in the sibling, so this one is worth a look.",
+  "evidence": {
+    "deeds": [
+      {
+        "action": "remove-path",
+        "toolName": "bash",
+        "targets": [
+          {
+            "realm": "path",
+            "value": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-412-sidebar"
+          }
+        ],
+        "cwd": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-327-api-eslint",
+        "summary": "removes files"
+      }
+    ],
+    "toolName": "bash",
+    "effect": "destructive",
+    "threadId": "thread-1",
+    "reading": {
+      "confidence": "read",
+      "segments": [
+        {
+          "program": "rm",
+          "flags": [
+            "-r",
+            "-f"
+          ],
+          "operands": [
+            "/Users/dennis/Developer/atlas/.claude/worktrees/eng-412-sidebar"
+          ],
+          "rawOperands": [
+            "/Users/dennis/Developer/atlas/.claude/worktrees/eng-412-sidebar"
+          ],
+          "cwd": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-327-api-eslint",
+          "redirectsInto": [],
+          "pipesIntoInterpreter": false,
+          "unresolvedExpansions": []
+        }
+      ]
+    },
+    "facts": {
+      "projectDirectory": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-327-api-eslint",
+      "launchDirectory": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-327-api-eslint",
+      "repo": "/Users/dennis/Developer/atlas",
+      "worktrees": [
+        {
+          "path": "/Users/dennis/Developer/atlas",
+          "branch": "main",
+          "isMain": true,
+          "occupancy": "unknown",
+          "changedCount": 276
+        },
+        {
+          "path": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-327-api-eslint",
+          "branch": "dennis/eng-327-api-eslint",
+          "isMain": false,
+          "occupancy": "ours",
+          "changedCount": 2
+        },
+        {
+          "path": "/Users/dennis/Developer/atlas/.claude/worktrees/eng-412-sidebar",
+          "branch": "dennis/eng-412-sidebar",
+          "isMain": false,
+          "occupancy": "unknown",
+          "changedCount": 3
+        }
+      ],
+      "refs": [],
+      "ownChangedPaths": [],
+      "regenerablePaths": [
+        "node_modules",
+        "dist",
+        "build",
+        "out",
+        ".next",
+        ".turbo",
+        ".cache"
+      ],
+      "gatheredFor": []
+    },
+    "recent": [],
+    "said": [],
+    "grants": []
+  }
+}

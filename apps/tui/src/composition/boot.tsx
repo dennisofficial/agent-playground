@@ -5,6 +5,8 @@ import React from "react";
 import { appearanceOf, applyAppearance } from "../ui/appearance";
 import { createBootProgress } from "./boot-progress";
 import { BootScreen } from "./boot-screen";
+import { classifyRequestOf } from "./classify";
+import { runClassify } from "./classify-run";
 import { resolveConfig } from "./config";
 import { ESession, openSession } from "./open-session";
 import { resumeHint } from "./resume-hint";
@@ -38,6 +40,12 @@ export async function bootAtlas(args: {
     cwd: args.cwd,
     home: args.env.HOME,
   });
+
+  const classify = classifyRequestOf({ argv: args.argv });
+  if (classify !== undefined) {
+    return await runClassify({ request: classify, cwd: config.cwd, env: args.env });
+  }
+
   const settings = loadSettings({ env: args.env, cwd: config.cwd });
   applyAppearance(appearanceOf({ resolution: settings.service.snapshot().resolution }));
 

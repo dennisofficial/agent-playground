@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EToolEffect } from '../../../tools/tool'
+import { checkCorpusCase } from '../corpus'
 import { ETriage } from '../triage'
+import { CORPUS_DIRECTORY, readCorpus } from './corpus'
 import {
   HOME,
   OURS,
@@ -145,4 +147,12 @@ describe('the acknowledged false negative', () => {
   it('clears a script indirection nobody can read, and records that as a known hole', () => {
     expect(clearsOnMain('bun run clean:all')).toBe(ETriage.Clear)
   })
+})
+
+describe('the cases the operator captured off their own history', () => {
+  for (const entry of readCorpus({ directory: CORPUS_DIRECTORY })) {
+    it(`still reads ${entry.name} as ${entry.expect} — ${entry.note}`, () => {
+      expect(checkCorpusCase({ entry }).actual).toBe(entry.expect)
+    })
+  }
 })

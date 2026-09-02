@@ -1,0 +1,86 @@
+{
+  "expect": "clear",
+  "note": "clearing build output before a fresh install is housekeeping, not damage.",
+  "evidence": {
+    "deeds": [
+      {
+        "action": "remove-path",
+        "toolName": "bash",
+        "targets": [
+          {
+            "realm": "path",
+            "value": "/Users/dennis/Developer/atlas/node_modules"
+          },
+          {
+            "realm": "path",
+            "value": "/Users/dennis/Developer/atlas/dist"
+          },
+          {
+            "realm": "path",
+            "value": "/Users/dennis/Developer/atlas/.turbo"
+          }
+        ],
+        "cwd": "/Users/dennis/Developer/atlas",
+        "summary": "removes files"
+      }
+    ],
+    "toolName": "bash",
+    "effect": "destructive",
+    "threadId": "thread-1",
+    "reading": {
+      "confidence": "read",
+      "segments": [
+        {
+          "program": "rm",
+          "flags": [
+            "-r",
+            "-f"
+          ],
+          "operands": [
+            "/Users/dennis/Developer/atlas/node_modules",
+            "/Users/dennis/Developer/atlas/dist",
+            "/Users/dennis/Developer/atlas/.turbo"
+          ],
+          "rawOperands": [
+            "node_modules",
+            "dist",
+            ".turbo"
+          ],
+          "cwd": "/Users/dennis/Developer/atlas",
+          "redirectsInto": [],
+          "pipesIntoInterpreter": false,
+          "unresolvedExpansions": []
+        }
+      ]
+    },
+    "facts": {
+      "projectDirectory": "/Users/dennis/Developer/atlas",
+      "launchDirectory": "/Users/dennis/Developer/atlas",
+      "repo": "/Users/dennis/Developer/atlas",
+      "worktrees": [
+        {
+          "path": "/Users/dennis/Developer/atlas",
+          "branch": "main",
+          "isMain": true,
+          "occupancy": "ours",
+          "changedCount": 276
+        }
+      ],
+      "refs": [],
+      "ownChangedPaths": [],
+      "regenerablePaths": [
+        "node_modules",
+        "dist",
+        "build",
+        "out",
+        ".next",
+        ".turbo",
+        ".cache"
+      ],
+      "gatheredFor": []
+    },
+    "recent": [],
+    "said": [],
+    "grants": []
+  }
+}
