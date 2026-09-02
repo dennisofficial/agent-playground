@@ -22,7 +22,7 @@ const AGENT_REPORT_HINT = '↵ report'
 
 const REPORTED_NOTHING = 'reported nothing'
 
-export function EntryView(props: {
+function DerivedEntryView(props: {
   entry: TranscriptEntry
   width: number
   expanded?: boolean
@@ -173,3 +173,6 @@ export function EntryView(props: {
     }
   }
 }
+
+/** Holds only because the store settles unchanged entries onto their previous identity. */
+export const EntryView = React.memo(DerivedEntryView)

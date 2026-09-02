@@ -19,8 +19,9 @@ import {
   type RevealGate,
 } from './reveal'
 import { deriveSidebar, type SidebarModel } from './sidebar-model'
+import { stabilisedEntries } from './stable-entries'
 import { SHIPPED_THINKING, type EThinkingVisibility } from './thinking-fold'
-import type { TranscriptModel } from './transcript-model'
+import type { StepFailure, TranscriptModel } from './transcript-model'
 
 export type ConversationStore = {
   subscribe(listener: () => void): Unsubscribe
@@ -64,12 +65,30 @@ export function createConversationStore(args: {
 
   const listeners = new Set<() => void>()
 
+  const wake = () => {
+    for (const listener of [...listeners]) listener()
+  }
+
+  const sameFailure = (left: StepFailure | null, right: StepFailure | null): boolean =>
+    left === right || (left !== null && right !== null && left.message === right.message)
+
+  const settled = (derived: TranscriptModel): TranscriptModel => {
+    const entries = stabilisedEntries({ previous: model.entries, next: derived.entries })
+    const unchanged =
+      entries === model.entries &&
+      derived.isEmpty === model.isEmpty &&
+      derived.streaming === model.streaming &&
+      sameFailure(derived.failure, model.failure)
+
+    return unchanged ? model : { ...derived, entries }
+  }
+
   const republish = () => {
     signals = prunedSignals({ signals, events })
-    model = deriveTranscript({ events, signals, turns, reveal: gate, thinking })
+    model = settled(deriveTranscript({ events, signals, turns, reveal: gate, thinking }))
     sidebar = deriveSidebar({ events, turn, name })
     args.projectEvents?.({ events })
-    for (const listener of [...listeners]) listener()
+    wake()
   }
 
   const scheduleFrame = () => {
@@ -128,7 +147,8 @@ export function createConversationStore(args: {
 
     setTurn(next) {
       turn = next
-      republish()
+      sidebar = deriveSidebar({ events, turn, name })
+      wake()
     },
 
     supersedeFailure() {
