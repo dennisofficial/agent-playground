@@ -1,0 +1,36 @@
+packages/harness/src/classifier/__tests__/no-judge.spec.ts
+  s_85c48373ea61a3::t_14dac8f637ec8a 25,39,42
+packages/core/src/policy/classifier/__tests__/shadow-row.spec.ts
+  s_85c48373ea61a3::t_d9a972d2e7c803 37
+packages/core/src/policy/classifier/__tests__/adjudicate.spec.ts
+  s_85c48373ea61a3::t_25bbbcb1484fa0 27,32-46,71,78-81,94,101,115,122
+packages/core/src/policy/classifier/remedy.ts
+  s_85c48373ea61a3::t_4331ef7285e37c 1-72
+packages/harness/src/classifier/__tests__/late-judge.spec.ts
+  s_85c48373ea61a3::t_14dac8f637ec8a 34,41,55
+packages/harness/src/classifier/__tests__/armed-nudge.spec.ts
+  s_85c48373ea61a3::t_14dac8f637ec8a 45,51-53,112,122-123
+packages/core/src/policy/classifier/__tests__/remedy.spec.ts
+  s_85c48373ea61a3::t_780e925586a5c1 1-4,7-82
+  s_85c48373ea61a3::t_e3cf0c071a37ba 5-6
+packages/core/src/policy/classifier/adjudicate.ts
+  s_85c48373ea61a3::t_c7249058dc47c2 5,151-155
+packages/harness/src/tools/approval-routing.ts
+  s_85c48373ea61a3::t_c7249058dc47c2 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5f1c25fc0b0f150bdb01e4f09d897ed1d1e6eca7",
+  "prompts": {},
+  "sessions": {
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
