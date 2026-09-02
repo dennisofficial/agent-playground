@@ -15,8 +15,6 @@ export type FooterContext = {
   percent: number
   tokensUsed?: number
   meters?: readonly FooterMeter[]
-  /** Named where the meters would be, for a provider that meters nothing. */
-  provider?: string
   measured?: boolean
 }
 
@@ -28,7 +26,6 @@ export type FooterReadout = {
   full: boolean
   text: string
   meters: readonly FooterMeter[]
-  provider?: string
 }
 
 export function meterText(meter: FooterMeter): string {
@@ -54,14 +51,6 @@ export function effortSegment(effort: FooterEffort): string {
 export function readouts(context: FooterContext): readonly FooterReadout[] {
   const percent = `${Math.round(context.percent)}%`
   const meters = context.meters ?? []
-  const provider = meters.length > 0 ? undefined : context.provider
-
-  /**
-   * The provider name is a rung of its own rather than part of the reading, so a terminal too
-   * narrow for both sheds the name and keeps the number.
-   */
-  const named = (readout: FooterReadout): readonly FooterReadout[] =>
-    provider === undefined ? [] : [{ ...readout, provider }]
 
   /**
    * A window nothing measured is a standing condition, not a reading, so the slot says so rather
@@ -71,7 +60,6 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
     const spelled = `${glyph.warning} ${UNMEASURED_CONTEXT}`
     return [
       ...(meters.length === 0 ? [] : [{ full: true, text: spelled, meters }]),
-      ...named({ full: true, text: spelled, meters: [] }),
       { full: true, text: spelled, meters: [] },
       { full: false, text: UNMEASURED_CONTEXT, meters: [] },
     ]
@@ -81,7 +69,6 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
     const spelled = `context ${percent} — ${COMPACT_COMMAND} to compact`
     return [
       ...(meters.length === 0 ? [] : [{ full: true, text: spelled, meters }]),
-      ...named({ full: true, text: spelled, meters: [] }),
       { full: true, text: spelled, meters: [] },
       { full: false, text: spelled, meters: [] },
       { full: false, text: `context ${percent}`, meters: [] },
@@ -99,8 +86,6 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
 
   return [
     ...withMeters,
-    ...(used === null ? [] : named({ full: true, text: head, meters: [] })),
-    ...named({ full: false, text: percent, meters: [] }),
     ...(used === null ? [] : [{ full: true, text: head, meters: [] }]),
     { full: false, text: percent, meters: [] },
   ]
@@ -111,12 +96,8 @@ export function readoutCells(args: { readout: FooterReadout }): number {
     (total, meter) => total + cellsOf(HINT_SEPARATOR) + cellsOf(meterText(meter)),
     0,
   )
-  const provider =
-    args.readout.provider === undefined
-      ? 0
-      : cellsOf(HINT_SEPARATOR) + cellsOf(args.readout.provider)
 
-  return cellsOf(args.readout.text) + meters + provider
+  return cellsOf(args.readout.text) + meters
 }
 
 export function instrumentCells(args: { instruments: FooterInstruments }): number {
