@@ -34,6 +34,8 @@ const notWorthSaving: readonly string[] = [
   '',
   'Anything you could work out by looking at the project as it is now. Architecture, file layout, naming conventions, how a module is put together, what a fix turned out to be — reading the code answers all of it, and a saved copy only goes stale. The same goes for history: `git log` and `git blame` are authoritative and you have them. Do not restate what the instruction files already say. Do not save the state of the conversation you are currently in.',
   '',
+  'Anything a single session of work can falsify. How many tests fail, whether the suite is green, what is uncommitted, which branch is checked out, how far a migration got — each is true for an afternoon. A memory saying "24 tests fail and that is expected" outlives the commit that fixed them, and the next conversation then trusts a number that is now wrong. Ask how long the claim would survive: if the answer is a session or two, run the command and read the answer fresh instead. What is durable is never the count but the reason behind it — what caused those failures, why they were tolerated, how to tell a real regression from them.',
+  '',
   'If the developer asks you to remember something in this category, save it — they know their situation better than the rule does. But look for the durable part first. Asked to remember a list of open pull requests, the list is stale within the week; what was surprising about it is not. Save that instead, and say that is what you did.',
 ]
 
