@@ -1,0 +1,72 @@
+packages/core/src/policy/classifier/__tests__/fixtures.ts
+  s_8ae1fa940f8094::t_1819c1b7a61112 53-54,60,70
+  s_8ae1fa940f8094::t_fed9e0b14af7d8 10
+  s_8ae1fa940f8094::t_16edefc9ad38ed 201-225
+packages/core/src/policy/classifier/__tests__/benign-shapes.spec.ts
+  s_8ae1fa940f8094::t_b99acd19ea0b14 80-109
+packages/core/src/policy/classifier/probes/blast.ts
+  s_8ae1fa940f8094::t_d607785a440844 5,27-31,207-208
+  s_8ae1fa940f8094::t_ca44f386866123 141-171
+packages/core/src/policy/classifier/__tests__/probes.spec.ts
+  s_8ae1fa940f8094::t_0389bd34e18f63 198-221,226-256
+  s_8ae1fa940f8094::t_494491400bcc32 4,7,12-23
+  s_8ae1fa940f8094::t_cfc3e465009c3c 222-225
+packages/core/src/policy/classifier/probes/kit.ts
+  s_8ae1fa940f8094::t_fd946a09824d55 128-131,133
+  s_8ae1fa940f8094::t_c7652d8d0b3178 113-116
+  s_8ae1fa940f8094::t_b786c26d64e8d5 4-10
+  s_8ae1fa940f8094::t_a723a905b9f8db 21
+  s_8ae1fa940f8094::t_b321732d5b00f5 134
+packages/core/src/policy/classifier/command/verbs/git-refs.ts
+  s_8ae1fa940f8094::t_f7e86ccf22c710 112,122
+packages/core/src/policy/classifier/probes/contention.ts
+  s_8ae1fa940f8094::t_1f512c8af35fb6 8,15,33-70,73-79,81-84,86-97,106,117
+  s_8ae1fa940f8094::t_a901a04cc976d1 71-72,80,85
+  s_8ae1fa940f8094::t_fd946a09824d55 13
+  s_8ae1fa940f8094::t_13c8be3063d4fd 29-32
+packages/core/src/policy/classifier/facts.ts
+  s_8ae1fa940f8094::t_9ae19ab65dea4e 32-49
+packages/core/src/policy/classifier/__tests__/damaging-shapes.spec.ts
+  s_8ae1fa940f8094::t_ae5f53a4ce8788 3
+  s_8ae1fa940f8094::t_5a42ffb510f44c 85-116
+packages/harness/src/classifier/__tests__/fixtures.ts
+  s_8ae1fa940f8094::t_5d3ca5fe082553 7,122
+packages/core/src/policy/classifier/command/verbs/git-tree.ts
+  s_8ae1fa940f8094::t_c67c7fdb9781f8 23-24
+  s_8ae1fa940f8094::t_445c11607bbf5b 111-112,114-118
+  s_8ae1fa940f8094::t_c11ba19ac8ec60 7
+  s_8ae1fa940f8094::t_642204ab600c76 100-103
+  s_8ae1fa940f8094::t_2e25012f8d78de 113
+packages/core/src/policy/classifier/deed.ts
+  s_8ae1fa940f8094::t_9891d2d51769a3 17
+packages/core/src/policy/classifier/__tests__/degraded-facts.spec.ts
+  s_8ae1fa940f8094::t_cfc3e465009c3c 46
+  s_8ae1fa940f8094::t_4332231753a3a4 1-45,47-57
+packages/core/src/policy/classifier/probes/irreversibility.ts
+  s_8ae1fa940f8094::t_f34430bf736a62 32-33
+  s_8ae1fa940f8094::t_bd928f30251ac9 4,16
+  s_8ae1fa940f8094::t_7ef459aade4010 142
+  s_8ae1fa940f8094::t_67df6b005ce595 68-69
+packages/core/src/policy/classifier/probes/reach.ts
+  s_8ae1fa940f8094::t_6651f9c91580a7 3,35
+packages/core/src/policy/classifier/command/verbs/git.ts
+  s_8ae1fa940f8094::t_c11ba19ac8ec60 19,91
+packages/core/src/policy/classifier/command/verbs/__tests__/git.spec.ts
+  s_8ae1fa940f8094::t_b3301a58d1693f 30,34-45,117,121-125
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8d2017456070f60fecbab941ae289bcdb06fd820",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
