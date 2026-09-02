@@ -1,0 +1,37 @@
+packages/harness/src/tools/dispatch.ts
+  s_8ae1fa940f8094::t_bba10e75814776 26,77,202
+packages/harness/src/tools/builtin/__tests__/worktree-tools.spec.ts
+  s_8ae1fa940f8094::t_710c82d93451ba 39-43
+packages/harness/graphtest.ts
+  s_8ae1fa940f8094::t_71c84c6fd16d01 1-18
+apps/tui/src/composition/compose.ts
+  s_b115466350302e::t_fee11ff8bed888 129,131,187,199,212-217,358-359,426,626,628
+  s_b115466350302e::t_001392031f3d66 420-423
+packages/harness/src/prompt/__tests__/prompt-container.spec.ts
+  s_8ae1fa940f8094::t_bb1d9238ae0a69 39-42
+packages/harness/src/mcp/instructions/instructions-hook.ts
+  s_8ae1fa940f8094::t_b55760e6fac521 1-67
+apps/tui/src/composition/__tests__/fake-app.ts
+  s_b115466350302e::t_77bbd0be00f73b 588
+packages/harness/src/mcp/bridge/handle-store.ts
+  s_8ae1fa940f8094::t_b55760e6fac521 74-77
+  s_8ae1fa940f8094::t_4d387d0db356a9 78-86
+  s_8ae1fa940f8094::t_12e6133890e027 99
+  s_8ae1fa940f8094::t_8c00a03adf2b8f 1-72,87-98,100-189
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f1edf4012b1c8060dc8192c9eb682e6910430df8",
+  "prompts": {},
+  "sessions": {
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": null
+    }
+  }
+}
