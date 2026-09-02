@@ -5,6 +5,7 @@ import {
   EAgentStatus,
   EPromptAgent,
   EventLogPort,
+  EWebSearchBackend,
   IdPort,
   ModelPort,
   promptContextFor,
@@ -28,6 +29,8 @@ import {
   HookChainToken,
   LanguageModelToken,
   PrismaClientToken,
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
   WorkspaceRoot,
 } from '../tokens'
 
@@ -112,6 +115,8 @@ async function composed(args: { bind: boolean }): Promise<{
   container.register(LanguageModelToken, {
     useValue: scriptedModel({ script: [{ text: CHILD_REPLY }] }),
   })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
   if (args.bind) bindChildRunner({ container })
 
   opened.push({ close: database.close, temp })

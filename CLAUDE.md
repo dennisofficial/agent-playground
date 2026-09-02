@@ -97,6 +97,25 @@ name genuinely cannot carry it alone.
 
 This rule is inverted from what `deprecated/` does. Do not carry that density forward.
 
+## Dependency injection
+
+**Bun cannot run tsyringe's decorators.** Bun's transpiler rewrites legacy decorators as TC39
+standard decorators and silently drops constructor-parameter decorators, so `@inject(...)` and
+`@injectAll(...)` never execute under Bun no matter what `experimentalDecorators` or
+`emitDecoratorMetadata` says. tsyringe's `TypeInfo not known for "X"` is the symptom that
+reaches tests.
+
+Therefore classes never carry tsyringe decorators — the registrar decides construction:
+
+- Zero-argument constructor → `container.register(token, { useClass: X })`.
+- Any constructor parameters → `container.register(token, { useFactory: (resolver) =>
+  new X(resolver.resolve(dep)) })`.
+- One instance per container → wrap the factory in `instanceCachingFactory`.
+
+Spec-side wiring follows the same rule: construct with `new X(...)` rather than resolving a class
+token out of a container. Tokens resolve ports and symbol keys; class tokens are for zero-arg
+classes only.
+
 ## Testing
 
 - **Every new feature includes tests.** TDD preferred.

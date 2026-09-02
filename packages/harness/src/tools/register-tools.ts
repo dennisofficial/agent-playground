@@ -1,6 +1,17 @@
-import { ToolDefinition } from '@dltech/atlas-core'
+import { DynamicToolSource, ToolDefinition } from '@dltech/atlas-core'
 
-import { portToken, type DependencyContainer } from '../container/injection'
+import { portToken, resolveSet, type DependencyContainer } from '../container/injection'
+import {
+  SecretsStoreToken,
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../container/tokens'
+import { FileWriteGuardPort } from '../files/write-guard'
+import { ShellRegistryPort } from '../shells/shell-registry'
+import { SkillRegistryPort } from '../skills/port'
+import { CompositeToolRegistry } from './composite-registry'
+import { AgentRegistrySourceToken, AgentTypesToken } from './builtin/agent-tokens'
 import { AgentListTool } from './builtin/agent-list'
 import { AgentResumeTool } from './builtin/agent-resume'
 import { AgentSayTool } from './builtin/agent-say'
@@ -25,27 +36,79 @@ import { WorktreeListTool } from './builtin/worktree-list'
 import { InMemoryToolRegistry, ToolRegistry } from './registry'
 
 export function registerBuiltinTools({ container }: { container: DependencyContainer }): void {
+  const shellRegistry = (resolver: DependencyContainer) => resolver.resolve(portToken(ShellRegistryPort))
+  const agentRegistry = (resolver: DependencyContainer) =>
+    resolver.resolve(AgentRegistrySourceToken)
+
   container.register(portToken(ToolDefinition), { useClass: ReadTool })
-  container.register(portToken(ToolDefinition), { useClass: WriteTool })
-  container.register(portToken(ToolDefinition), { useClass: EditTool })
-  container.register(portToken(ToolDefinition), { useClass: BashTool })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new WriteTool(resolver.resolve(portToken(FileWriteGuardPort))),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new EditTool(resolver.resolve(portToken(FileWriteGuardPort))),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new BashTool(shellRegistry(resolver)),
+  })
   container.register(portToken(ToolDefinition), { useClass: GrepTool })
   container.register(portToken(ToolDefinition), { useClass: GlobTool })
-  container.register(portToken(ToolDefinition), { useClass: ShellListTool })
-  container.register(portToken(ToolDefinition), { useClass: ShellOutputTool })
-  container.register(portToken(ToolDefinition), { useClass: ShellKillTool })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ShellListTool(shellRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ShellOutputTool(shellRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ShellKillTool(shellRegistry(resolver)),
+  })
   container.register(portToken(ToolDefinition), { useClass: TaskWriteTool })
-  container.register(portToken(ToolDefinition), { useClass: SkillTool })
-  container.register(portToken(ToolDefinition), { useClass: AgentSpawnTool })
-  container.register(portToken(ToolDefinition), { useClass: AgentSayTool })
-  container.register(portToken(ToolDefinition), { useClass: AgentResumeTool })
-  container.register(portToken(ToolDefinition), { useClass: AgentListTool })
-  container.register(portToken(ToolDefinition), { useClass: AgentStopTool })
-  container.register(portToken(ToolDefinition), { useClass: EnterWorktreeTool })
-  container.register(portToken(ToolDefinition), { useClass: ExitWorktreeTool })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new SkillTool(resolver.resolve(portToken(SkillRegistryPort))),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) =>
+      new AgentSpawnTool(
+        agentRegistry(resolver),
+        resolver.resolve(AgentTypesToken),
+      ),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new AgentSayTool(agentRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new AgentResumeTool(agentRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new AgentListTool(agentRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new AgentStopTool(agentRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) =>
+      new EnterWorktreeTool(
+        resolver.resolve(WorkspaceRoot),
+        resolver.resolve(WorktreeDirectoryToken),
+      ),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ExitWorktreeTool(resolver.resolve(WorkspaceRoot)),
+  })
   container.register(portToken(ToolDefinition), { useClass: WorktreeListTool })
   container.register(portToken(ToolDefinition), { useClass: WebFetchTool })
-  container.register(portToken(ToolDefinition), { useClass: WebSearchTool })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) =>
+      new WebSearchTool(
+        resolver.resolve(WebSearchBackendToken),
+        resolver.resolve(SecretsStoreToken),
+      ),
+  })
 
-  container.register(portToken(ToolRegistry), { useClass: InMemoryToolRegistry })
+  container.register(portToken(ToolRegistry), {
+    useFactory: (resolver) =>
+      new CompositeToolRegistry({
+        base: new InMemoryToolRegistry(resolver.resolveAll(portToken(ToolDefinition))),
+        sources: resolveSet({ container: resolver, token: portToken(DynamicToolSource) }),
+      }),
+  })
 }

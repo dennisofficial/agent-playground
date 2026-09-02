@@ -18,8 +18,6 @@ import { registerShells } from '../../shells/register-shells'
 import { ShellRegistryPort } from '../../shells/shell-registry'
 import {
   createIsolatedContainer,
-  inject,
-  injectable,
   instanceCachingFactory,
   portToken,
   type DependencyContainer,
@@ -40,12 +38,11 @@ const fired: EndedShell[] = []
  * The cycle, in one class: a hook that reaches back into the registry that fires it. Resolving
  * either end eagerly would recurse, so the registry holds the chain as a thunk.
  */
-@injectable()
 class ListingAfterShellHook extends AfterShellHook {
   readonly name = 'list-shells-when-one-ends'
   readonly order: HookOrder = { stage: EStage.Observe, nudge: 0 }
 
-  constructor(@inject(portToken(ShellRegistryPort)) private readonly shells: ShellRegistryPort) {
+  constructor(private readonly shells: ShellRegistryPort) {
     super()
   }
 
@@ -69,8 +66,11 @@ function openContainer(): { container: DependencyContainer; root: string } {
   const root = mkdtempSync(join(tmpdir(), 'atlas-shell-cycle-'))
   const container = createIsolatedContainer()
   container.register(WorkspaceRoot, { useValue: root })
+  container.register(portToken(AfterShellHook), {
+    useFactory: (resolver) =>
+      new ListingAfterShellHook(resolver.resolve(portToken(ShellRegistryPort))),
+  })
   container.register(portToken(ClockPort), { useClass: FixedClock })
-  container.register(portToken(AfterShellHook), { useClass: ListingAfterShellHook })
 
   registerShells({ container })
   container.register(HookChainToken, {

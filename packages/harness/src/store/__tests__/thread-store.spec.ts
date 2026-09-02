@@ -103,6 +103,45 @@ describe('PrismaThreadStore', () => {
     expect(await threads.find({ threadId })).toMatchObject({ title: 'named later', head: 1 })
   })
 
+  it('carries no model until one is chosen for the conversation', async () => {
+    const { threads, log } = await openFixture()
+    const threadId = toThreadId('unchosen')
+    await log.append({ threadId, runId, drafts: [said('hello')] })
+
+    expect((await threads.find({ threadId }))?.model).toBeUndefined()
+  })
+
+  it('remembers the model chosen for a conversation without counting it as activity', async () => {
+    const { threads, log } = await openFixture()
+    const threadId = toThreadId('chosen')
+    await log.append({ threadId, runId, drafts: [said('hello')] })
+    const before = await threads.find({ threadId })
+
+    await threads.chooseModel({
+      threadId,
+      model: { ref: 'anthropic/claude-opus-5', effort: 'high' },
+    })
+
+    const after = await threads.find({ threadId })
+    expect(after?.model).toEqual({ ref: 'anthropic/claude-opus-5', effort: 'high' })
+    expect(after?.updatedAt).toBe(before?.updatedAt ?? '')
+    expect(after?.head).toBe(before?.head ?? -1)
+  })
+
+  it('carries the chosen model onto a fork, which continues the same conversation', async () => {
+    const { threads, log } = await openFixture()
+    const threadId = toThreadId('forked-from')
+    await log.append({ threadId, runId, drafts: [said('hello')] })
+    await threads.chooseModel({
+      threadId,
+      model: { ref: 'anthropic/claude-opus-5', effort: 'high' },
+    })
+
+    const fork = await threads.fork({ from: threadId, seq: 1, mode: EForkMode.Reference })
+
+    expect(fork.model).toEqual({ ref: 'anthropic/claude-opus-5', effort: 'high' })
+  })
+
   it('finds nothing for a thread that does not exist', async () => {
     const { threads } = await openFixture()
 

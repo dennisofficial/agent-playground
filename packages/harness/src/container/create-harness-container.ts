@@ -48,6 +48,7 @@ import {
   KeychainReaderToken,
   LanguageModelToken,
   ModelCardSourceToken,
+  PrismaClientToken,
   SecretsStoreToken,
 } from './tokens'
 
@@ -96,9 +97,25 @@ export function createHarnessContainer(): DependencyContainer {
 
   harness.register(portToken(ClockPort), { useClass: SystemClock })
   harness.register(portToken(IdPort), { useClass: RandomIds })
-  harness.register(portToken(EventLogPort), { useClass: PrismaEventLog })
-  harness.register(portToken(TurnLedgerPort), { useClass: PrismaTurnLedger })
-  harness.register(portToken(ThreadStorePort), { useClass: PrismaThreadStore })
+  harness.register(portToken(EventLogPort), {
+    useFactory: (resolver) =>
+      new PrismaEventLog(
+        resolver.resolve(PrismaClientToken),
+        resolver.resolve(portToken(ClockPort)),
+        resolver.resolve(portToken(IdPort)),
+      ),
+  })
+  harness.register(portToken(TurnLedgerPort), {
+    useFactory: (resolver) => new PrismaTurnLedger(resolver.resolve(PrismaClientToken)),
+  })
+  harness.register(portToken(ThreadStorePort), {
+    useFactory: (resolver) =>
+      new PrismaThreadStore(
+        resolver.resolve(PrismaClientToken),
+        resolver.resolve(portToken(ClockPort)),
+        resolver.resolve(portToken(IdPort)),
+      ),
+  })
   harness.register(portToken(AccountStorePort), {
     useFactory: instanceCachingFactory(
       (resolver) =>

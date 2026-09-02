@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { EDefinitionOrigin } from '@dltech/atlas-core'
+import { EDefinitionOrigin, EWebSearchBackend } from '@dltech/atlas-core'
 
 import { AgentRegistryPort } from '../../agents/registry/port'
 import {
@@ -18,7 +18,13 @@ import { openAtlasDatabase } from '../../store/database'
 import { ToolRegistry } from '../../tools/registry'
 import { createHarnessContainer } from '../create-harness-container'
 import { portToken, type DependencyContainer } from '../injection'
-import { LanguageModelToken, PrismaClientToken, WorkspaceRoot } from '../tokens'
+import {
+  LanguageModelToken,
+  PrismaClientToken,
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../tokens'
 
 const ROOT = '/workspace/atlas'
 
@@ -70,6 +76,8 @@ async function harnessContainer(): Promise<DependencyContainer> {
   container.register(WorkspaceRoot, { useValue: ROOT })
   container.register(PrismaClientToken, { useValue: database.prisma })
   container.register(LanguageModelToken, { useValue: scriptedModel({ script: [{ text: 'hi' }] }) })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
 
   return container
 }

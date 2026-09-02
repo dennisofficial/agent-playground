@@ -4,9 +4,11 @@ import { FileWriteGuardPort, VerifyingWriteGuard } from './write-guard'
 
 export function registerFileState({ container }: { container: DependencyContainer }): void {
   container.register(portToken(FileReadStatePort), {
-    useFactory: instanceCachingFactory((resolver) => resolver.resolve(InMemoryFileReadState)),
+    useFactory: instanceCachingFactory(() => new InMemoryFileReadState()),
   })
   container.register(portToken(FileWriteGuardPort), {
-    useFactory: instanceCachingFactory((resolver) => resolver.resolve(VerifyingWriteGuard)),
+    useFactory: instanceCachingFactory(
+      (resolver) => new VerifyingWriteGuard(resolver.resolve(portToken(FileReadStatePort))),
+    ),
   })
 }

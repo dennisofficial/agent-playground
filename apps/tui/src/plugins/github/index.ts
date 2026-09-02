@@ -1,5 +1,10 @@
 import { EHookPhase, EStage, type HookOrder } from '@dltech/atlas-core'
-import { createUrlOpener, inject, injectable, WorkspaceRoot } from '@dltech/atlas-harness'
+import {
+  createUrlOpener,
+  portToken,
+  WorkspaceRoot,
+  type DependencyContainer,
+} from '@dltech/atlas-harness'
 
 import { NativePlugin, type PluginContribution } from '../plugin'
 import { GhPullRequestPort } from './gh-pull-requests'
@@ -13,17 +18,15 @@ const OBSERVE: HookOrder = { stage: EStage.Observe, nudge: 0 }
 
 /**
  * The port is constructed here and never injected: this plugin is what supplies `PullRequestPort`,
- * so asking the container for one would be asking for its own contribution. The launch directory is
- * injected because Atlas owns it.
+ * so asking the container for one would be asking for its own contribution.
  *
  * Nothing starts in the constructor. The loader builds every native before shadowing has decided
  * which of them survive, so a poller armed here would outlive a plugin that never loads.
  */
-@injectable()
 export default class GithubPlugin extends NativePlugin {
   readonly id = 'github'
 
-  constructor(@inject(WorkspaceRoot) private readonly launchDirectory: string) {
+  constructor(private readonly launchDirectory: string) {
     super()
   }
 
@@ -66,4 +69,10 @@ export default class GithubPlugin extends NativePlugin {
       dispose: () => service.dispose(),
     }
   }
+}
+
+export function registerPlugin({ container }: { container: DependencyContainer }): void {
+  container.register(portToken(NativePlugin), {
+    useFactory: (resolver) => new GithubPlugin(resolver.resolve(WorkspaceRoot)),
+  })
 }

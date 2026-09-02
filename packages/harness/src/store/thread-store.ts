@@ -11,7 +11,6 @@ import {
 } from '@dltech/atlas-core'
 
 import type { Prisma, PrismaClient } from '../../prisma/generated/client'
-import { inject, injectable } from '../container/injection'
 import { PrismaClientToken } from '../container/tokens'
 import { createThreadWithEvents, type OpenThreadArgs } from './create-with-events'
 import { toEventRow } from './event-row'
@@ -19,6 +18,8 @@ import { forkThread } from './fork'
 import { retryOnWriteConflict } from './retry'
 
 export type SupervisedAgent = { spawnedBy: ThreadId; type: string }
+
+export type ThreadModel = { ref: string; effort: string }
 
 export type ThreadSummary = {
   id: ThreadId
@@ -31,6 +32,7 @@ export type ThreadSummary = {
   agent?: SupervisedAgent | undefined
   workspace: string | null
   repo: string | null
+  model?: ThreadModel | undefined
 }
 
 export const THREAD_LISTING_LIMIT = 50
@@ -53,6 +55,7 @@ export abstract class ThreadStorePort {
     limit?: number | undefined
   }): Promise<readonly ThreadSummary[]>
   abstract rename(args: { threadId: ThreadId; title: string }): Promise<void>
+  abstract chooseModel(args: { threadId: ThreadId; model: ThreadModel }): Promise<void>
   abstract adopt(args: {
     threadId: ThreadId
     workspace: string
@@ -96,12 +99,13 @@ type ThreadRow = {
   agentType: string | null
   workspace: string | null
   repo: string | null
+  modelRef: string | null
+  modelEffort: string | null
 }
 
-@injectable()
 export class PrismaThreadStore implements ThreadStorePort {
   constructor(
-    @inject(PrismaClientToken) private readonly prisma: PrismaClient,
+     private readonly prisma: PrismaClient,
     private readonly clock: ClockPort,
     private readonly ids: IdPort,
   ) {}
@@ -176,6 +180,13 @@ export class PrismaThreadStore implements ThreadStorePort {
 
   async rename({ threadId, title }: { threadId: ThreadId; title: string }): Promise<void> {
     await this.prisma.thread.update({ where: { id: threadId }, data: { title } })
+  }
+
+  async chooseModel({ threadId, model }: { threadId: ThreadId; model: ThreadModel }): Promise<void> {
+    await this.prisma.thread.update({
+      where: { id: threadId },
+      data: { modelRef: model.ref, modelEffort: model.effort },
+    })
   }
 
   async adopt({
@@ -337,7 +348,16 @@ function toThreadSummary(row: ThreadRow): ThreadSummary {
       : { parent: { threadId: toThreadId(row.parentThreadId), forkSeq: row.forkSeq } }),
     ...forkModeOf(row.forkMode),
     ...supervisedAgentOf(row),
+    ...modelOf(row),
   }
+}
+
+function modelOf(row: {
+  modelRef: string | null
+  modelEffort: string | null
+}): { model?: ThreadModel } {
+  if (row.modelRef === null || row.modelEffort === null) return {}
+  return { model: { ref: row.modelRef, effort: row.modelEffort } }
 }
 
 function forkModeOf(stored: string | null): { forkMode?: EForkMode } {

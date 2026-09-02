@@ -1,5 +1,6 @@
 import { PromptFragment } from '@dltech/atlas-core'
 
+import { SkillRegistryPort } from '../skills/port'
 import { instanceCachingFactory, portToken, type DependencyContainer } from '../container/injection'
 import { DelegationFragment } from './fragments/agents'
 import {
@@ -68,11 +69,20 @@ export function registerBuiltinPromptFragments({
     UntrustedWebContentFragment,
   ]
 
-  for (const useClass of fragments) {
-    container.register(portToken(PromptFragment), { useClass })
+  for (const fragment of fragments) {
+    if (fragment === SkillListingFragment) {
+      container.register(portToken(PromptFragment), {
+        useFactory: (resolver) =>
+          new SkillListingFragment(resolver.resolve(portToken(SkillRegistryPort))),
+      })
+      continue
+    }
+    container.register(portToken(PromptFragment), { useClass: fragment })
   }
 
   container.register(portToken(PromptRegistry), {
-    useFactory: instanceCachingFactory((resolver) => resolver.resolve(InMemoryPromptRegistry)),
+    useFactory: instanceCachingFactory(
+      (resolver) => new InMemoryPromptRegistry(resolver.resolveAll(portToken(PromptFragment))),
+    ),
   })
 }

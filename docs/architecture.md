@@ -1040,6 +1040,30 @@ Code login on first run, so nobody is asked to sign in twice — but refreshing 
 source, and the rotated pair goes back the way it came, guarded by `adoptionOf` in both directions:
 Atlas takes up a pair Claude Code refreshed first, and never pushes an older pair over a newer one.
 
+## Which model answers
+
+**Two preferences, one picker.** A conversation carries the model it was last switched to, in
+`Thread.modelRef` / `Thread.modelEffort`; the settings page carries `model.id` / `model.effort`,
+which is only what a conversation with nothing of its own begins on. The switcher (`ctrl+p`,
+`/model`) writes the conversation. The `Default model` row on the settings page opens the same
+picker set on the default, and writes that instead.
+
+The split exists because the old arrangement had exactly one remembered pair for the whole machine,
+so two terminals on two conversations fought over it — switching one to Haiku switched the other on
+its next launch. A thread column and not an event, because a model is how a conversation is being
+worked rather than something that happened in it: rewinding past a switch should not undo it, and a
+fork carries the parent's pair forward.
+
+Resolution order, most specific first: `--model` for the conversation the process launches on, then
+the thread's own pair, then the settings default, then `DEFAULT_MODEL_REF`. A thread naming a model
+that left the catalogue — or whose account is gone — falls back *whole*, so an effort never outlives
+the model that offered it.
+
+`useThreadModel` reads the default where a thread is adopted rather than following it, so raising
+the default reaches the next conversation instead of the one on screen. A conversation is written
+down the moment its thread row exists, which is why an untouched new conversation still records what
+it actually ran on rather than re-deriving it from a default that may have moved since.
+
 ## Packages
 
 ```

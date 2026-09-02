@@ -3,13 +3,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-import { EventLogPort, toCallId, toRunId, toThreadId, type Chunk } from '@dltech/atlas-core'
+import { EventLogPort, EWebSearchBackend, toCallId, toRunId, toThreadId, type Chunk } from '@dltech/atlas-core'
 
 import { ToolDispatcher } from '../../tools/dispatch'
 import { ToolRegistry } from '../../tools/registry'
 import { createHarnessContainer } from '../create-harness-container'
 import { portToken, type DependencyContainer } from '../injection'
-import { HookChainToken, WorkspaceRoot } from '../tokens'
+import {
+  HookChainToken,
+  WebSearchBackendToken,
+  WorktreeDirectoryToken,
+  WorkspaceRoot,
+} from '../tokens'
 
 const SESSION_DIRECTORY = '/workspace'
 
@@ -22,6 +27,8 @@ beforeAll(async () => {
 const rooted = (): DependencyContainer => {
   const container = createHarnessContainer()
   container.register(WorkspaceRoot, { useValue: root })
+  container.register(WorktreeDirectoryToken, { useValue: () => '.atlas/worktrees' })
+  container.register(WebSearchBackendToken, { useValue: () => EWebSearchBackend.DuckDuckGo })
   return container
 }
 
@@ -41,6 +48,8 @@ describe('the harness container graph', () => {
       'agent_stop',
       'bash',
       'edit',
+      'enter_worktree',
+      'exit_worktree',
       'glob',
       'grep',
       'read',
@@ -49,6 +58,9 @@ describe('the harness container graph', () => {
       'shell_output',
       'skill',
       'task_write',
+      'web_fetch',
+      'web_search',
+      'worktree_list',
       'write',
     ])
   })
@@ -65,7 +77,8 @@ describe('the harness container graph', () => {
     expect(hooks.afterTool.map((hook) => hook.name)).toEqual([
       'plan',
       'recordFileState',
-      'track-session-directory',
+      'track-worktree',
+      'invalidateFacts',
     ])
     expect(await hooks.onChunk({ chunk: delta })).toBe(delta)
   })

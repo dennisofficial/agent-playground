@@ -1,6 +1,12 @@
+import { ClockPort } from '@dltech/atlas-core'
+
 import { registerDisposable } from '../container/disposal'
 import { instanceCachingFactory, portToken, type DependencyContainer } from '../container/injection'
-import { HookChainSourceToken, HookChainToken } from '../container/tokens'
+import {
+  HookChainSourceToken,
+  HookChainToken,
+  WorkspaceRoot,
+} from '../container/tokens'
 import { BunShellRegistry, ShellRegistryPort } from './shell-registry'
 
 /**
@@ -17,7 +23,11 @@ export function registerShells({ container }: { container: DependencyContainer }
 
   container.register(portToken(ShellRegistryPort), {
     useFactory: instanceCachingFactory((resolver) => {
-      live = resolver.resolve(BunShellRegistry)
+      live = new BunShellRegistry(
+        resolver.resolve(WorkspaceRoot),
+        resolver.resolve(portToken(ClockPort)),
+        resolver.resolve(HookChainSourceToken),
+      )
       return live
     }),
   })
