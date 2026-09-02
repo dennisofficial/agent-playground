@@ -1,0 +1,26 @@
+packages/core/src/policy/classifier/__tests__/grant.spec.ts
+  s_85c48373ea61a3::t_eb98a34cf697da 208-252
+packages/core/src/policy/classifier/probes/blast.ts
+  s_85c48373ea61a3::t_36cf1365dc4485 96-99,105-106,109,115,121,131,137,199
+  s_85c48373ea61a3::t_5e237d28b951ef 155
+packages/core/src/policy/classifier/probes/provenance.ts
+  s_85c48373ea61a3::t_36cf1365dc4485 23
+packages/core/src/policy/classifier/probes/exposure.ts
+  s_85c48373ea61a3::t_36cf1365dc4485 51,76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "2f252b468a6585d7d52c79ce2a3cefd41fb72345",
+  "prompts": {},
+  "sessions": {
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
