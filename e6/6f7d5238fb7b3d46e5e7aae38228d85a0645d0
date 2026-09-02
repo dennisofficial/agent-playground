@@ -1,0 +1,31 @@
+packages/harness/src/tools/hook-silence.ts
+  s_85c48373ea61a3::t_8c03a1566b9bf8 3,25
+  s_85c48373ea61a3::t_2b2ebf864f9882 5-6,10
+packages/harness/src/hooks/__tests__/budget.spec.ts
+  s_85c48373ea61a3::t_21c28025a0a149 3
+  s_85c48373ea61a3::t_ae7ba586e8a0d1 40,55,69,106
+packages/harness/src/hooks/budget.ts
+  s_85c48373ea61a3::t_8c03a1566b9bf8 3-8,10,29-32,55-61,65-67
+packages/harness/src/hooks/__tests__/registry-isolation.spec.ts
+  s_85c48373ea61a3::t_ae7ba586e8a0d1 70,146
+  s_85c48373ea61a3::t_6a362df6f12d00 86,131,159,185,205
+  s_85c48373ea61a3::t_21c28025a0a149 13
+packages/harness/src/classifier/register-classifier.ts
+  s_85c48373ea61a3::t_8c03a1566b9bf8 11,42
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e66f7d5238fb7b3d46e5e7aae38228d85a0645d0",
+  "prompts": {},
+  "sessions": {
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
