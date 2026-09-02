@@ -1,0 +1,19 @@
+apps/tui/src/ui/__tests__/sidebar-render.spec.tsx
+  s_85c48373ea61a3::t_c6728ca44a35dc 4,18,391-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "69761a4e87de55424fccb3c00db2bc1f5a371899",
+  "prompts": {},
+  "sessions": {
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
