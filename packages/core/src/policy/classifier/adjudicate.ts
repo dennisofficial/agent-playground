@@ -2,6 +2,7 @@ import type { EventDraft } from '../../events/body'
 import type { ToolCall } from '../../tools/tool'
 import { EBeforeToolDecision, type BeforeToolOutcome } from '../before-tool'
 import { grantOffersOf } from './grant'
+import { refusalFor } from './remedy'
 import { reachesSeverity, type RiskSignal } from './signals'
 import { EClassifierMode, ETriage, type ClassifierPolicy, type Triage } from './triage'
 import { dimensionCitedIn, EJudgment, type Verdict } from './verdict'
@@ -147,7 +148,11 @@ export function adjudicate(args: {
   const drafts = [draft]
 
   if (asks && policy.mode === EClassifierMode.Nudge) {
-    return { decision: EBeforeToolDecision.Ask, reason: draft.reason, drafts }
+    return {
+      decision: EBeforeToolDecision.Deny,
+      reason: refusalFor({ reason: draft.reason, standing: triage.standing }),
+      drafts,
+    }
   }
 
   return { decision: EBeforeToolDecision.Allow, input: call.input, drafts }

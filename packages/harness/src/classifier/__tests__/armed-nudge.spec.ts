@@ -42,15 +42,15 @@ describe('the same call once the nudge is armed', () => {
       ...over,
     })
 
-  it('stops on a reason naming the worktree and what would be lost', async () => {
+  it('refuses with a reason naming the worktree and what would be lost', async () => {
     const outcome = await classify({
       hook: armed(),
       call: callTo({ name: 'bash', input: { command: REMOVAL } }),
     })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
-    expect(outcome.decision === EBeforeToolDecision.Ask ? outcome.reason : '').toContain(SIBLING)
-    expect(outcome.decision === EBeforeToolDecision.Ask ? outcome.reason : '').toContain(
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+    expect(outcome.decision === EBeforeToolDecision.Deny ? outcome.reason : '').toContain(SIBLING)
+    expect(outcome.decision === EBeforeToolDecision.Deny ? outcome.reason : '').toContain(
       'uncommitted work',
     )
   })
@@ -109,7 +109,7 @@ describe('the same call once the nudge is armed', () => {
     expect(judgedIn(outcome).wouldAsk).toBe(false)
   })
 
-  it('asks anyway when the judge cannot be reached and the signal is grave', async () => {
+  it('refuses anyway when the judge cannot be reached and the signal is grave', async () => {
     const outcome = await classify({
       hook: armed({
         judge: {
@@ -119,8 +119,8 @@ describe('the same call once the nudge is armed', () => {
       call: callTo({ name: 'bash', input: { command: `rm -rf ${SIBLING}` } }),
     })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
-    expect(outcome.decision === EBeforeToolDecision.Ask ? outcome.reason : '').toContain(
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+    expect(outcome.decision === EBeforeToolDecision.Deny ? outcome.reason : '').toContain(
       'could not check this',
     )
   })

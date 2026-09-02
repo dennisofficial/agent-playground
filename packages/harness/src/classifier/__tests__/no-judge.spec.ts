@@ -22,7 +22,7 @@ const armedNudgeOver = (args: { judge?: JudgePort | undefined }): Promise<Before
   chainWith({ mode: EClassifierMode.Nudge, judge: args.judge }).weigh()
 
 describe('the classifier chain built without a judge', () => {
-  it('cannot pause the operator, because nothing read the evidence', async () => {
+  it('cannot refuse the agent, because nothing read the evidence', async () => {
     const outcome = await armedNudgeOver({ judge: undefined })
 
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
@@ -36,9 +36,9 @@ describe('the classifier chain built without a judge', () => {
     expect(judged.details?.join(' ')).toContain(SIBLING)
   })
 
-  it('pauses on the same call once a judge is bound and cannot be reached', async () => {
+  it('refuses the same call once a judge is bound and cannot be reached', async () => {
     const outcome = await armedNudgeOver({ judge: new UnreachableJudge() })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
   })
 })

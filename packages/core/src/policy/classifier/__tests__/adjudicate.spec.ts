@@ -24,12 +24,26 @@ import {
 } from './adjudicate-fixtures'
 
 describe('adjudicate', () => {
-  it('never denies, for any combination of triage, consultation and mode', () => {
+  it('never asks the operator, for any combination of triage, consultation and mode', () => {
     for (const mode of EVERY_MODE) {
       for (const triage of EVERY_TRIAGE) {
         for (const consultation of EVERY_CONSULTATION) {
           const outcome = decide({ mode, triage, consultation })
-          expect(outcome.decision).not.toBe(EBeforeToolDecision.Deny)
+          expect(outcome.decision).not.toBe(EBeforeToolDecision.Ask)
+        }
+      }
+    }
+  })
+
+  it('never refuses without saying what it would cost and what to do instead', () => {
+    for (const mode of EVERY_MODE) {
+      for (const triage of EVERY_TRIAGE) {
+        for (const consultation of EVERY_CONSULTATION) {
+          const outcome = decide({ mode, triage, consultation })
+          if (outcome.decision !== EBeforeToolDecision.Deny) continue
+
+          expect(outcome.reason.length).toBeGreaterThan(60)
+          expect(outcome.reason).toContain('ask them to confirm')
         }
       }
     }
@@ -54,17 +68,17 @@ describe('adjudicate', () => {
     }
   })
 
-  it('asks when the judge checked and the nudge is armed', () => {
+  it('refuses the agent when the judge checked and the nudge is armed, naming the target', () => {
     const outcome = decide({
       mode: EClassifierMode.Nudge,
       triage: triageOver({ triage: ETriage.Consult, standing: [GRAVE] }),
       consultation: CHECK,
     })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
-    expect(outcome.decision === EBeforeToolDecision.Ask ? outcome.reason : '').toContain(
-      'eng-412-sidebar',
-    )
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
+    const reason = outcome.decision === EBeforeToolDecision.Deny ? outcome.reason : ''
+    expect(reason).toContain('eng-412-sidebar')
+    expect(reason).toContain('their next message authorises it')
   })
 
   it('allows when the judge proceeded', () => {
@@ -77,14 +91,14 @@ describe('adjudicate', () => {
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
   })
 
-  it('asks when the judge was unreachable and an ungrantable signal survives', () => {
+  it('refuses when the judge was unreachable and an ungrantable signal survives', () => {
     const outcome = decide({
       mode: EClassifierMode.Nudge,
       triage: triageOver({ triage: ETriage.Consult, standing: [SERIOUS_UNGRANTABLE] }),
       consultation: UNREACHABLE,
     })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
     expect(draftOf(outcome).reason).toContain('fetch failed')
   })
 
@@ -98,14 +112,14 @@ describe('adjudicate', () => {
     expect(outcome.decision).toBe(EBeforeToolDecision.Allow)
   })
 
-  it('asks when the judge was never bound and a grave signal survives', () => {
+  it('refuses when the judge was never bound and a grave signal survives', () => {
     const outcome = decide({
       mode: EClassifierMode.Nudge,
       triage: triageOver({ triage: ETriage.Consult, standing: [GRAVE] }),
       consultation: undefined,
     })
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
     expect(draftOf(outcome).consulted).toBe(false)
   })
 

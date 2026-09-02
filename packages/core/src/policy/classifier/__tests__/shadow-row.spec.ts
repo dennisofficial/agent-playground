@@ -34,7 +34,7 @@ describe('the row a shadow run leaves behind', () => {
         const watching = decide({ mode: EClassifierMode.Shadow, triage, consultation })
 
         expect(draftOf(watching).wouldAsk).toBe(draftOf(armed).wouldAsk ?? false)
-        expect(draftOf(armed).wouldAsk).toBe(armed.decision === EBeforeToolDecision.Ask)
+        expect(draftOf(armed).wouldAsk).toBe(armed.decision === EBeforeToolDecision.Deny)
       }
     }
   })

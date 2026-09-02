@@ -31,14 +31,14 @@ const reasonOf = (outcome: { decision: EBeforeToolDecision }): string =>
   'reason' in outcome && typeof outcome.reason === 'string' ? outcome.reason : ''
 
 describe('a classifier chain built before the judge was bound', () => {
-  it('pauses on a judge registered after the hook was constructed', async () => {
+  it('refuses on a judge registered after the hook was constructed', async () => {
     const chain = chainWith({ mode: EClassifierMode.Nudge })
     const judge = new CheckingJudge()
 
     chain.bind(judge)
     const outcome = await chain.weigh()
 
-    expect(outcome.decision).toBe(EBeforeToolDecision.Ask)
+    expect(outcome.decision).toBe(EBeforeToolDecision.Deny)
     expect(reasonOf(outcome)).toContain('uncommitted work')
     expect(judge.calls).toBe(1)
     expect(judgedIn(outcome).consulted).toBe(true)
@@ -52,7 +52,7 @@ describe('a classifier chain built before the judge was bound', () => {
     const armed = await chain.weigh()
 
     expect(disarmed.decision).toBe(EBeforeToolDecision.Allow)
-    expect(armed.decision).toBe(EBeforeToolDecision.Ask)
+    expect(armed.decision).toBe(EBeforeToolDecision.Deny)
   })
 
   it('records the demotion in the row it writes, rather than looking like plain shadow', async () => {
