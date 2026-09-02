@@ -14,7 +14,6 @@ const JUDGE_OUTPUT_TOKEN_LIMIT = 256
 
 const RETRIES_BELONG_TO_THE_POLICY = 0
 
-const UNPARSEABLE = 'the judge answered with no verdict this brief could accept'
 
 const messageOf = (fault: unknown): string =>
   fault instanceof Error ? fault.message : String(fault)
@@ -50,10 +49,14 @@ export class HaikuJudge extends JudgePort {
         abortSignal: AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]),
       })
 
-      const verdict = parseVerdict({ text: generated.text, targets: brief.targets })
-      if (verdict === undefined) return { kind: EConsultation.Unreachable, fault: UNPARSEABLE }
+      const reading = parseVerdict({ text: generated.text, targets: brief.targets })
 
-      return { kind: EConsultation.Judged, verdict, elapsedMs: this.now() - started }
+      return {
+        kind: EConsultation.Judged,
+        verdict: reading.verdict,
+        elapsedMs: this.now() - started,
+        ...(reading.fault === undefined ? {} : { fault: reading.fault }),
+      }
     } catch (fault) {
       return { kind: EConsultation.Unreachable, fault: messageOf(fault) }
     }

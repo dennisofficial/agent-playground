@@ -2,7 +2,13 @@ import { APICallError, type LanguageModelV4GenerateResult } from '@ai-sdk/provid
 import { MockLanguageModelV4 } from 'ai/test'
 import { describe, expect, it } from 'bun:test'
 
-import { EConsultation, EJudgment, type Brief, type Consultation } from '@dltech/atlas-core'
+import {
+  EConsultation,
+  EJudgment,
+  EVerdictFault,
+  type Brief,
+  type Consultation,
+} from '@dltech/atlas-core'
 
 import { HaikuJudge, JUDGE_TIMEOUT_MS } from '../judge'
 
@@ -102,21 +108,34 @@ describe('HaikuJudge', () => {
     )
   })
 
-  it('is unreachable rather than a guess when the answer carries no verdict', async () => {
+  it('lets the call through when the answer carries no verdict, and says the judge went silent', async () => {
     const consultation = await consultWith({
       model: modelSaying('I would probably not do that if I were you'),
     })
 
-    expect(consultation.kind).toBe(EConsultation.Unreachable)
+    expect(consultation.kind).toBe(EConsultation.Judged)
+    expect(consultation.kind === EConsultation.Judged ? consultation.verdict.judgment : '').toBe(
+      EJudgment.Proceed,
+    )
+    expect(consultation.kind === EConsultation.Judged ? consultation.fault : undefined).toBe(
+      EVerdictFault.Unspoken,
+    )
   })
 
-  it('is unreachable when the answer checks without naming a target from the brief', async () => {
+  it('keeps a check that named no target, rather than discarding the block it decided on', async () => {
     const consultation = await consultWith({
       model: modelSaying('<verdict>check</verdict><reason>this feels dangerous</reason>'),
     })
 
-    expect(consultation.kind).toBe(EConsultation.Unreachable)
+    expect(consultation.kind).toBe(EConsultation.Judged)
+    expect(consultation.kind === EConsultation.Judged ? consultation.verdict.judgment : '').toBe(
+      EJudgment.Check,
+    )
+    expect(consultation.kind === EConsultation.Judged ? consultation.fault : undefined).toBe(
+      EVerdictFault.Unnamed,
+    )
   })
+
 
   it('leaves retries to the policy: one refusal is one attempt', async () => {
     const model = modelRefusing(retryable())

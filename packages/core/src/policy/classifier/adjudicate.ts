@@ -5,7 +5,7 @@ import { grantOffersOf } from './grant'
 import { refusalFor } from './remedy'
 import { reachesSeverity, type RiskSignal } from './signals'
 import { EClassifierMode, ETriage, type ClassifierPolicy, type Triage } from './triage'
-import { dimensionCitedIn, EJudgment, type Verdict } from './verdict'
+import { dimensionCitedIn, EJudgment, type EVerdictFault, type Verdict } from './verdict'
 
 export enum EConsultation {
   Judged = 'judged',
@@ -14,7 +14,12 @@ export enum EConsultation {
 }
 
 export type Consultation =
-  | { kind: EConsultation.Judged; verdict: Verdict; elapsedMs: number }
+  | {
+      kind: EConsultation.Judged
+      verdict: Verdict
+      elapsedMs: number
+      fault?: EVerdictFault | undefined
+    }
   | { kind: EConsultation.Unreachable; fault: string }
   | { kind: EConsultation.Budgeted; calls: number }
 
@@ -121,6 +126,9 @@ function draftFor(args: {
     dimensions: [...new Set(triage.standing.map((signal) => signal.dimension))],
     ...(verdict?.judgment === EJudgment.Check
       ? { judgedDimension: dimensionCitedIn({ reason, standing: triage.standing }) }
+      : {}),
+    ...(consultation?.kind === EConsultation.Judged && consultation.fault !== undefined
+      ? { verdictFault: consultation.fault }
       : {}),
     signalIds: triage.standing.map((signal) => signal.id),
     details: triage.standing.map((signal) => signal.detail),

@@ -5,8 +5,10 @@ import { EAgentStatus } from '../agents/status'
 import { ERiskDimension } from '../policy/classifier/dimension'
 import { EGrantScope } from '../policy/classifier/grant'
 import { EClassifierMode, ETriage } from '../policy/classifier/triage'
+import { EVerdictFault } from '../policy/classifier/verdict'
 import { EJudgment } from '../policy/classifier/verdict'
 import type { ProviderOptions } from '../provider'
+import { EServiceStatus } from '../services/status'
 import { EKilledBy, EShellStatus } from '../shells/status'
 import { ECompactionAnchor, EDecision, EMessageOrigin, EWorktreeExit, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
@@ -169,6 +171,17 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     watchDisarmed: z.boolean().optional(),
   }),
   z.object({
+    type: z.literal('service-ended'),
+    serviceId: z.string().min(1),
+    command: z.string(),
+    description: z.string().optional(),
+    status: z.enum(EServiceStatus),
+    killedBy: z.enum(EKilledBy).optional(),
+    exitCode: z.number().int().optional(),
+    logPath: z.string().min(1),
+    tail: z.string(),
+  }),
+  z.object({
     type: z.literal('agent-spawned'),
     agentId: threadIdSchema,
     agentType: z.string().min(1),
@@ -202,6 +215,7 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     judgment: z.enum(EJudgment),
     dimensions: z.array(z.enum(ERiskDimension)),
     judgedDimension: z.enum(ERiskDimension).optional(),
+    verdictFault: z.enum(EVerdictFault).optional(),
     signalIds: z.array(z.string()),
     details: z.array(z.string()).optional(),
     grantables: z.array(grantOfferSchema).optional(),

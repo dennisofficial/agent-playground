@@ -8,6 +8,14 @@ export enum EJudgment {
 
 export type Verdict = { judgment: EJudgment; reason: string }
 
+export enum EVerdictFault {
+  Unspoken = 'unspoken',
+  Unexplained = 'unexplained',
+  Unnamed = 'unnamed',
+}
+
+export type VerdictReading = { verdict: Verdict; fault: EVerdictFault | undefined }
+
 const CLOSED_THINKING = /<thinking\b[^>]*>[\s\S]*?<\/thinking\s*>/gi
 const UNCLOSED_THINKING = /<thinking\b[^>]*>[\s\S]*$/i
 const VERDICT = /<verdict\s*>\s*(proceed|check)\s*<\/verdict\s*>/i
@@ -50,24 +58,53 @@ export function namingTargetsOf({
 const names = ({ reason, target }: { reason: string; target: string }): boolean =>
   reason.toLowerCase().includes(target.toLowerCase())
 
+const NOTHING_SPOKEN = 'the judge answered with no verdict at all, so nothing it said was read'
+
+const namingNothing = ({ targets }: { targets: readonly string[] }): string =>
+  targets.length === 0
+    ? 'a signal fired that the judge would not name'
+    : `a signal fired on ${targets[0] ?? ''}, which the judge would not name`
+
 export function parseVerdict({
   text,
   targets,
 }: {
   text: string
   targets: readonly string[]
-}): Verdict | undefined {
+}): VerdictReading {
   const spoken = withoutThinking({ text })
   const declared = spoken.match(VERDICT)?.[1]?.toLowerCase()
-  if (declared === undefined) return undefined
+  if (declared === undefined) {
+    return {
+      verdict: { judgment: EJudgment.Proceed, reason: NOTHING_SPOKEN },
+      fault: EVerdictFault.Unspoken,
+    }
+  }
 
   const reason = clipped(collapsed(spoken.match(REASON)?.[1] ?? ''))
-  if (declared === EJudgment.Proceed) return { judgment: EJudgment.Proceed, reason }
+  if (declared === EJudgment.Proceed) {
+    return { verdict: { judgment: EJudgment.Proceed, reason }, fault: undefined }
+  }
 
-  if (reason.length === 0) return undefined
-  if (!targets.some((target) => names({ reason, target }))) return undefined
+  if (reason.length === 0) {
+    return {
+      verdict: { judgment: EJudgment.Check, reason: namingNothing({ targets }) },
+      fault: EVerdictFault.Unexplained,
+    }
+  }
 
-  return { judgment: EJudgment.Check, reason }
+  if (!targets.some((target) => names({ reason, target }))) {
+    const named = targets[0]
+    return {
+      verdict: {
+        judgment: EJudgment.Check,
+        reason: named === undefined ? reason : clipped(`${reason} (on ${named})`),
+      },
+      fault: EVerdictFault.Unnamed,
+    }
+  }
+
+  return { verdict: { judgment: EJudgment.Check, reason }, fault: undefined }
 }
 
 const labelsOf = ({ dimension }: { dimension: ERiskDimension }): readonly string[] => [

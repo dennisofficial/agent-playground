@@ -4,7 +4,8 @@ import type { ImagePart, ReasoningPart, TextPart } from '../message/parts'
 import type { ERiskDimension } from '../policy/classifier/dimension'
 import type { EGrantScope, GrantOffer } from '../policy/classifier/grant'
 import type { EClassifierMode, ETriage } from '../policy/classifier/triage'
-import type { EJudgment } from '../policy/classifier/verdict'
+import type { EJudgment, EVerdictFault } from '../policy/classifier/verdict'
+import type { EServiceStatus } from '../services/status'
 import type { EKilledBy, EShellStatus } from '../shells/status'
 import type { CallId, ThreadId } from './ids'
 
@@ -105,6 +106,17 @@ export type EventBody =
       watchDisarmed?: boolean | undefined
     }
   | {
+      type: 'service-ended'
+      serviceId: string
+      command: string
+      description?: string | undefined
+      status: EServiceStatus
+      killedBy?: EKilledBy | undefined
+      exitCode?: number | undefined
+      logPath: string
+      tail: string
+    }
+  | {
       type: 'agent-spawned'
       agentId: ThreadId
       agentType: string
@@ -138,6 +150,7 @@ export type EventBody =
       judgment: EJudgment
       dimensions: readonly ERiskDimension[]
       judgedDimension?: ERiskDimension | undefined
+      verdictFault?: EVerdictFault | undefined
       signalIds: readonly string[]
       details?: readonly string[] | undefined
       grantables?: readonly GrantOffer[] | undefined
