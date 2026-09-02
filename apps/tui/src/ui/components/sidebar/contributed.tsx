@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { usePress } from '../../hooks/use-press'
+import { useClickRegion } from '../../hooks/use-click-region'
 import {
   sectionsAt,
   spansOf,
@@ -12,10 +12,14 @@ import { theme } from '../../theme'
 import { Row, Section } from './row'
 
 function ContributedRow(props: { row: SidebarSectionRow; cells: number }): React.ReactNode {
-  const press = usePress()
+  const region = useClickRegion(props.row.onActivate)
 
   return (
-    <box flexShrink={0} {...press(props.row.onActivate)}>
+    <box
+      flexShrink={0}
+      {...region.handlers}
+      {...(region.wash.bg === undefined ? {} : { backgroundColor: region.wash.bg })}
+    >
       <Row label="" labelFg={theme.meta} cells={props.cells} value={spansOf({ row: props.row, cells: props.cells })} />
     </box>
   )
