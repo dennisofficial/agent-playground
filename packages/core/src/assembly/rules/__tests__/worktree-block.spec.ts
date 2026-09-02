@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EWorktreeExit } from '../../../events/body'
+import { ECompactionAnchor, EWorktreeExit } from '../../../events/body'
 import { contextFor, log } from '../../__tests__/log-fixture'
 import { messagesFromEvents } from '../messages-from-events'
 import { worktreeBlock } from '../worktree-block'
@@ -23,61 +23,71 @@ const textsOf = (assembled: ReturnType<typeof assembleWith>): string[] =>
 
 describe('telling the model it is in a worktree', () => {
   it('says nothing while no worktree has been entered', () => {
-    expect(textsOf(assembleWith(log([{ type: 'user-said', text: 'hello' }])))).toEqual(['hello'])
+    const assembled = assembleWith(log([{ type: 'user-said', text: 'hello' }]))
+
+    expect(assembled.system).toEqual([])
+    expect(textsOf(assembled)).toEqual(['hello'])
   })
 
   it('names the worktree, its branch and what it was branched from', () => {
-    const assembled = assembleWith(log([entered, { type: 'user-said', text: 'much later' }]))
-    const tail = textsOf(assembled).at(-1) ?? ''
+    const note = assembleWith(log([entered])).system.at(-1)?.text ?? ''
 
-    expect(tail).toContain(TREE)
-    expect(tail).toContain('dennis/eng-327')
-    expect(tail).toContain('origin/main')
-    expect(tail).toContain(LAUNCH)
+    expect(note).toContain(TREE)
+    expect(note).toContain('dennis/eng-327')
+    expect(note).toContain('origin/main')
+    expect(note).toContain(LAUNCH)
   })
 
-  it('appends at the tail, not where the entry happened', () => {
+  it('rides the system prompt rather than the message tail, so it never reads as a new instruction', () => {
     const assembled = assembleWith(
       log([{ type: 'user-said', text: 'hello' }, entered, { type: 'user-said', text: 'much later' }]),
     )
 
-    expect(textsOf(assembled).slice(0, -1)).toEqual(['hello', 'much later'])
+    expect(textsOf(assembled)).toEqual(['hello', 'much later'])
+    expect(assembled.system.at(-1)?.text).toContain(TREE)
   })
 
   it('tells the model an adopted worktree is tracked, not branched, and will not be removed', () => {
-    const assembled = assembleWith(
-      log([
-        { ...entered, base: 'origin/topic', adopted: true },
-        { type: 'user-said', text: 'much later' },
-      ]),
-    )
-    const tail = textsOf(assembled).at(-1) ?? ''
+    const note =
+      assembleWith(log([{ ...entered, base: 'origin/topic', adopted: true }])).system.at(-1)?.text ?? ''
 
-    expect(tail).toContain('which tracks origin/topic')
-    expect(tail).not.toContain('branched from')
-    expect(tail).toContain('will not remove a worktree Atlas did not create')
+    expect(note).toContain('which tracks origin/topic')
+    expect(note).not.toContain('branched from')
+    expect(note).toContain('will not remove a worktree Atlas did not create')
   })
 
   it('says an adopted worktree has no upstream rather than naming a base it does not have', () => {
-    const assembled = assembleWith(
-      log([
-        { type: 'worktree-entered', path: TREE, branch: 'lonely', adopted: true },
-        { type: 'user-said', text: 'much later' },
-      ]),
-    )
+    const note =
+      assembleWith(log([{ type: 'worktree-entered', path: TREE, branch: 'lonely', adopted: true }]))
+        .system.at(-1)?.text ?? ''
 
-    expect(textsOf(assembled).at(-1) ?? '').toContain('which has no upstream')
+    expect(note).toContain('which has no upstream')
   })
 
   it('falls silent once the worktree is exited', () => {
     const assembled = assembleWith(
+      log([entered, { type: 'worktree-exited', path: TREE, action: EWorktreeExit.Keep }]),
+    )
+
+    expect(assembled.system).toEqual([])
+  })
+
+  it('still folds the entry after the history covering it is compacted', () => {
+    const assembled = assembleWith(
       log([
         entered,
-        { type: 'worktree-exited', path: TREE, action: EWorktreeExit.Keep },
-        { type: 'user-said', text: 'back home' },
+        { type: 'user-said', text: 'hello' },
+        {
+          type: 'history-compacted',
+          anchor: ECompactionAnchor.Prefix,
+          fromSeq: 1,
+          throughSeq: 2,
+          summary: 'The session entered a worktree.',
+          replaced: 2,
+        },
       ]),
     )
 
-    expect(textsOf(assembled)).toEqual(['back home'])
+    expect(assembled.system.at(-1)?.text).toContain(TREE)
   })
 })

@@ -168,8 +168,8 @@ describe('an ending the conversation has since compacted', () => {
   })
 })
 
-describe('the block among the reminders that follow it', () => {
-  it('stays ahead of the live worktree reminder, which speaks for now rather than then', () => {
+describe('the block at the tail of the prompt', () => {
+  it('keeps the tail for what just happened, while the worktree note rides the system prompt', () => {
     const events = log([
       ...CONVERSATION,
       ended(),
@@ -184,9 +184,8 @@ describe('the block among the reminders that follow it', () => {
       ctx: contextFor({ events }),
     })
 
-    const texts = textsOf(assembled)
-    expect(texts.at(-1)).toContain('You are working in a git worktree at /w/tree')
-    expect(texts.at(-2)).toStartWith('<agents-ended>')
+    expect(textsOf(assembled).at(-1)).toStartWith('<agents-ended>')
+    expect(assembled.system.at(-1)?.text).toContain('You are working in a git worktree at /w/tree')
   })
 
   it('takes an ordinary cache breakpoint when it is the newest thing in the prompt', () => {

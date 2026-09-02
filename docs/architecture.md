@@ -859,8 +859,12 @@ and a directory that changed inside it would cold-start the whole prefix; with n
 calls there is nothing to invalidate it. Entering a worktree does cold-start that prefix, and is
 allowed to: `systemPrompt` folds the log and hands the compiled prompt the effective project
 directory, so the system block follows the move — one cache miss, paid once, for a deliberate act
-that reshapes the whole session. `worktreeBlock` rides the message tail for what is genuinely live
-about a worktree — the branch, and the checkout it was cut from.
+that reshapes the whole session. `worktreeBlock` appends what a worktree adds to that picture — the
+branch, and the checkout it was cut from — as the last system block. Those change only when an entry
+or exit event does, which is the same moment the directory text changes, so the note costs no cache
+miss of its own. It deliberately does not ride the message tail: a note that is the newest message of
+every call reads as a fresh instruction each time, and models acknowledged it turn after turn as
+though it had just been said.
 
 **A worktree is either created or adopted, and the difference outlives the entry.** `enter_worktree`
 takes `name` or `path`. `name` cuts a new branch from a freshly fetched origin default and is Atlas's
