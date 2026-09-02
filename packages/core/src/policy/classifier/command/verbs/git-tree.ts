@@ -20,7 +20,7 @@ const wholeTreeSpecs = new Set(['.', ':/', '*'])
 
 const readOnlyStashVerbs = new Set(['list', 'show'])
 
-const stashVerbsThatSaveWork = new Set(['push', 'save', 'create', 'store'])
+const stashVerbsThatLoseWork = new Set(['drop', 'clear'])
 
 export function rest({ view }: { view: CommandView }): readonly CommandWord[] {
   return view.words.slice(1)
@@ -97,14 +97,17 @@ export const stash: GitHandler = ({ view }) => {
     return readOnly({ summary: 'reads the stash stack' })
   }
 
-  if (verb === undefined || stashVerbsThatSaveWork.has(verb)) {
-    return applyToTree({ view, summary: 'puts uncommitted changes onto the stash stack' })
+  if (verb !== undefined && stashVerbsThatLoseWork.has(verb)) {
+    return sketch({
+      action: EDeed.MutateStash,
+      targets: [worktreeTarget({ view })],
+      summary: 'discards an entry from the repository-wide stash stack',
+    })
   }
 
-  return sketch({
-    action: EDeed.MutateStash,
-    targets: [worktreeTarget({ view })],
-    summary: 'mutates the repository-wide stash stack',
+  return applyToTree({
+    view,
+    summary: 'moves uncommitted changes between the tree and the stash stack',
   })
 }
 

@@ -23,12 +23,17 @@ describe('the read side of git', () => {
     expect(actionOf('git clean -fdx')).toBe(EDeed.CleanUntracked)
   })
 
-  it('reads a stash listing and mutates the stack on drop', () => {
+  it('reads a stash listing, and only discards the stack on drop or clear', () => {
     expect(actionOf('git stash list')).toBe(EDeed.ReadOnly)
     expect(actionOf('git stash show')).toBe(EDeed.ReadOnly)
     expect(actionOf('git stash drop')).toBe(EDeed.MutateStash)
     expect(actionOf('git stash clear')).toBe(EDeed.MutateStash)
-    expect(actionOf('git stash pop')).toBe(EDeed.MutateStash)
+  })
+
+  it('reads moving work on and off the stack as a write, because nothing is lost', () => {
+    expect(actionOf('git stash pop')).toBe(EDeed.WriteFile)
+    expect(actionOf('git stash apply')).toBe(EDeed.WriteFile)
+    expect(actionOf('git stash -- packages/core/src/x.ts')).toBe(EDeed.WriteFile)
   })
 
   it('reads pushing onto the stash as saving work, not as losing it', () => {

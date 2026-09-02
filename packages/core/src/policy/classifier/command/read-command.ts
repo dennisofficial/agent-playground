@@ -16,6 +16,7 @@ import {
 } from './reading'
 import {
   blockTerminators,
+  fetchers,
   interpreters,
   maximumScriptNesting,
   segmentIntroducers,
@@ -138,6 +139,7 @@ function buildSegment(args: {
 function markInterpreterPipes({ built }: { built: readonly BuiltSegment[] }): void {
   built.forEach((entry, index) => {
     if (entry.join !== ESegmentJoin.Pipe) return
+    if (!fetchers.has(effectiveProgram({ segment: entry.segment }))) return
     const next = built[index + 1]
     if (next === undefined) return
     if (!interpreters.has(effectiveProgram({ segment: next.segment }))) return

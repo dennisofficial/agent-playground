@@ -77,13 +77,22 @@ describe('the irreversibility probe', () => {
     ).toEqual([ESeverity.Note])
   })
 
-  it('rates a stash mutation serious, because every worktree shares the stack', () => {
+  it('rates discarding a stash entry serious, because every worktree shares the stack', () => {
+    const signals = from(
+      irreversibilityProbe,
+      bashEvidence({ command: 'git stash drop', facts: onMain() }),
+    )
+
+    expect(severities(signals)).toEqual([ESeverity.Serious])
+  })
+
+  it('says nothing about moving work back off the stack, which loses none of it', () => {
     const signals = from(
       irreversibilityProbe,
       bashEvidence({ command: 'git stash pop', facts: onMain() }),
     )
 
-    expect(severities(signals)).toEqual([ESeverity.Serious])
+    expect(signals).toEqual([])
   })
 
   it('rates dropping the reflog grave', () => {

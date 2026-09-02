@@ -77,3 +77,5 @@ export const programsThatDestroyTheirOperands = new Set([
 export const scriptFlag = '-c'
 
 export const maximumScriptNesting = 3
+
+export const fetchers = new Set(['curl', 'wget', 'http', 'httpie', 'aria2c', 'fetch'])
