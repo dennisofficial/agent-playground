@@ -1,10 +1,13 @@
 import { EBeforeToolDecision, type BeforeToolOutcome, type ToolCall } from '@dltech/atlas-core'
 
-import type { HookMishap } from '../hooks/budget'
+import { EHookMishapKind, type HookMishap } from '../hooks/budget'
+
+const complaintOf = ({ mishap }: { mishap: HookMishap }): string =>
+  mishap.kind === EHookMishapKind.Threw ? `failed: ${mishap.detail}` : mishap.detail
 
 const refusalOf = ({ mishap }: { mishap: HookMishap }): BeforeToolOutcome => ({
   decision: EBeforeToolDecision.Deny,
-  reason: `the ${mishap.label} hook ${mishap.kind === 'threw' ? `failed: ${mishap.detail}` : mishap.detail}`,
+  reason: `the ${mishap.label} hook ${complaintOf({ mishap })}`,
 })
 
 const abstentionOf = ({ call }: { call: ToolCall }): BeforeToolOutcome => ({
@@ -19,6 +22,6 @@ export function outcomeWhenAHookDidNotAnswerInTime({
   mishap: HookMishap
   call: ToolCall
 }): BeforeToolOutcome {
-  if (mishap.kind === 'overran') return abstentionOf({ call })
+  if (mishap.kind === EHookMishapKind.Overran) return abstentionOf({ call })
   return refusalOf({ mishap })
 }

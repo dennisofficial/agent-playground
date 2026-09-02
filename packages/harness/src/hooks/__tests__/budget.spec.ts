@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { withinBudget, type HookMishap } from '../budget'
+import { EHookMishapKind, withinBudget, type HookMishap } from '../budget'
 
 const collect = (): { seen: HookMishap[]; onMishap: (mishap: HookMishap) => void } => {
   const seen: HookMishap[] = []
@@ -37,7 +37,7 @@ describe('withinBudget', () => {
     })
 
     expect(value).toBe('fallback')
-    expect(seen).toEqual([{ label: 'thrower', kind: 'threw', detail: 'boom' }])
+    expect(seen).toEqual([{ label: 'thrower', kind: EHookMishapKind.Threw, detail: 'boom' }])
   })
 
   it('falls back and reports when the hook outlives its budget', async () => {
@@ -52,7 +52,7 @@ describe('withinBudget', () => {
     })
 
     expect(value).toBe('fallback')
-    expect(seen).toEqual([{ label: 'hanger', kind: 'overran', detail: 'exceeded 5ms' }])
+    expect(seen).toEqual([{ label: 'hanger', kind: EHookMishapKind.Overran, detail: 'exceeded 5ms' }])
   })
 
   it('falls back and reports when the hook returns undefined', async () => {
@@ -66,7 +66,7 @@ describe('withinBudget', () => {
     })
 
     expect(value).toBe('fallback')
-    expect(seen).toEqual([{ label: 'forgetful', kind: 'returned-nothing', detail: 'returned undefined' }])
+    expect(seen).toEqual([{ label: 'forgetful', kind: EHookMishapKind.ReturnedNothing, detail: 'returned undefined' }])
   })
 
   it('passes null through, because a chunk hook drops with it', async () => {
@@ -103,7 +103,7 @@ describe('withinBudget', () => {
     reject(new Error('too late to matter'))
     await Bun.sleep(10)
 
-    expect(seen).toEqual([{ label: 'late', kind: 'overran', detail: 'exceeded 5ms' }])
+    expect(seen).toEqual([{ label: 'late', kind: EHookMishapKind.Overran, detail: 'exceeded 5ms' }])
   })
 
   it('is usable with no reporter', async () => {

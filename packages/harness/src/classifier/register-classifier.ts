@@ -8,6 +8,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { portToken, resolveSet, type DependencyContainer } from '../container/injection'
+import { EHookMishapKind } from '../hooks/budget'
 import { ClassifierPolicyToken, HookMishapReporterToken, WorkspaceRoot } from '../container/tokens'
 import { ClassifyCallHook, type JudgeSource } from './classify-call'
 import { JudgeMemo } from './judge-memo'
@@ -38,7 +39,7 @@ const disarmReporterFrom =
 
     resolver.resolve(HookMishapReporterToken)({
       label: 'classifyCall',
-      kind: 'disarmed',
+      kind: EHookMishapKind.Disarmed,
       detail,
     })
   }

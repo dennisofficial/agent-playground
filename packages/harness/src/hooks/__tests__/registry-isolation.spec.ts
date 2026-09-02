@@ -10,7 +10,7 @@ import {
   type ProviderPrompt,
 } from '@dltech/atlas-core'
 
-import type { HookMishap } from '../budget'
+import { EHookMishapKind, type HookMishap } from '../budget'
 import { HookChain, type RegisteredHook } from '../registry'
 
 const THREAD = toThreadId('thread-isolation')
@@ -67,7 +67,7 @@ describe('a collect phase survives a hook that misbehaves', () => {
     const drafts = await chain.beforeTurn({ threadId: THREAD, projectDirectory: '/repo' })
 
     expect(contextOf(drafts)).toEqual(['one', 'three'])
-    expect(seen).toEqual([{ label: 'thrower', kind: 'threw', detail: 'boom' }])
+    expect(seen).toEqual([{ label: 'thrower', kind: EHookMishapKind.Threw, detail: 'boom' }])
   })
 
   it('drops a hanging hook at the budget and still returns', async () => {
@@ -83,7 +83,7 @@ describe('a collect phase survives a hook that misbehaves', () => {
     expect(contextOf(await chain.beforeTurn({ threadId: THREAD, projectDirectory: '/repo' }))).toEqual([
       'after',
     ])
-    expect(seen.map((mishap) => mishap.kind)).toEqual(['overran'])
+    expect(seen.map((mishap) => mishap.kind)).toEqual([EHookMishapKind.Overran])
   })
 
   it('does not shift the ordering of the hooks that follow a failure', async () => {
@@ -128,7 +128,7 @@ describe('a transform phase passes its value through when a hook misbehaves', ()
     })
 
     expect(await chain.beforeStep({ assembled: ASSEMBLED, trace: [] })).toEqual(ASSEMBLED)
-    expect(seen.map((mishap) => mishap.kind)).toEqual(['threw'])
+    expect(seen.map((mishap) => mishap.kind)).toEqual([EHookMishapKind.Threw])
   })
 
   it('does not hand the next step undefined when a beforeStep hook forgets to return', async () => {
@@ -143,7 +143,7 @@ describe('a transform phase passes its value through when a hook misbehaves', ()
 
     expect(await chain.beforeStep({ assembled: ASSEMBLED, trace: [] })).toEqual(ASSEMBLED)
     expect(seen).toEqual([
-      { label: 'forgetful', kind: 'returned-nothing', detail: 'returned undefined' },
+      { label: 'forgetful', kind: EHookMishapKind.ReturnedNothing, detail: 'returned undefined' },
     ])
   })
 
@@ -156,7 +156,7 @@ describe('a transform phase passes its value through when a hook misbehaves', ()
     })
 
     expect(await chain.beforeRequest({ prompt: PROMPT })).toEqual(PROMPT)
-    expect(seen.map((mishap) => mishap.kind)).toEqual(['overran'])
+    expect(seen.map((mishap) => mishap.kind)).toEqual([EHookMishapKind.Overran])
   })
 })
 
@@ -182,7 +182,7 @@ describe('onChunk', () => {
     })
 
     expect(await chain.onChunk({ chunk: CHUNK })).toEqual(CHUNK)
-    expect(seen.map((mishap) => mishap.kind)).toEqual(['returned-nothing'])
+    expect(seen.map((mishap) => mishap.kind)).toEqual([EHookMishapKind.ReturnedNothing])
   })
 
   it('passes the chunk through when a hook throws', async () => {
@@ -202,7 +202,7 @@ describe('onChunk', () => {
     })
 
     expect(await chain.onChunk({ chunk: CHUNK })).toEqual(CHUNK)
-    expect(seen.map((mishap) => mishap.kind)).toEqual(['threw'])
+    expect(seen.map((mishap) => mishap.kind)).toEqual([EHookMishapKind.Threw])
   })
 })
 

@@ -1,8 +1,13 @@
 export const HOOK_BUDGET_MS = 5_000
 
-export type HookMishapKind = 'threw' | 'overran' | 'returned-nothing' | 'disarmed'
+export enum EHookMishapKind {
+  Threw = 'threw',
+  Overran = 'overran',
+  ReturnedNothing = 'returned-nothing',
+  Disarmed = 'disarmed',
+}
 
-export type HookMishap = { label: string; kind: HookMishapKind; detail: string }
+export type HookMishap = { label: string; kind: EHookMishapKind; detail: string }
 
 export type OnHookMishap = (mishap: HookMishap) => void
 
@@ -21,10 +26,10 @@ function raceBudget<T>(args: {
   budgetMs: number
 }): Promise<Settled<T>> {
   return new Promise((resolve) => {
-    const expiry = setTimeout(
-      () => resolve({ mishap: { label: args.label, kind: 'overran', detail: `exceeded ${args.budgetMs}ms` } }),
-      args.budgetMs,
-    )
+    const expiry = setTimeout(() => {
+      const detail = `exceeded ${args.budgetMs}ms`
+      resolve({ mishap: { label: args.label, kind: EHookMishapKind.Overran, detail } })
+    }, args.budgetMs)
     expiry.unref?.()
 
     const settle = (settled: Settled<T>): void => {
@@ -47,11 +52,19 @@ export async function withinBudget<T>(args: {
     try {
       const value = await args.run()
       if (value === undefined) {
-        return { mishap: { label: args.label, kind: 'returned-nothing', detail: 'returned undefined' } }
+        return {
+          mishap: {
+            label: args.label,
+            kind: EHookMishapKind.ReturnedNothing,
+            detail: 'returned undefined',
+          },
+        }
       }
       return { value }
     } catch (error) {
-      return { mishap: { label: args.label, kind: 'threw', detail: detailOf(error) } }
+      return {
+        mishap: { label: args.label, kind: EHookMishapKind.Threw, detail: detailOf(error) },
+      }
     }
   })()
 
