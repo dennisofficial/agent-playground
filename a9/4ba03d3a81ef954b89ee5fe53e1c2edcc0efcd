@@ -1,0 +1,40 @@
+packages/core/src/context/instruction-files.ts
+  s_9ea8649920f6cc::t_4d2e341f87114b 5,21-28,36-40,43-46,71-74,82,85-86,89-90,105
+packages/core/src/settings/registry.ts
+  s_9ea8649920f6cc::t_88e1b9f6b6bac0 141,150,157,160
+  s_2ee334b9d0aff9::t_0f55680e91e286 152
+apps/tui/src/composition/__tests__/instruction-plan.spec.ts
+  s_9ea8649920f6cc::t_bddd34d2e2d7b6 36-38
+apps/tui/src/composition/instruction-plan.ts
+  s_9ea8649920f6cc::t_88e1b9f6b6bac0 12
+packages/harness/src/context/__tests__/read-instructions.spec.ts
+  s_9ea8649920f6cc::t_4814b2287b89dc 90-92
+  s_9ea8649920f6cc::t_33030565cd757d 64,67,69,72,75,78-89,106-107,116
+packages/core/src/context/__tests__/instruction-files.spec.ts
+  s_9ea8649920f6cc::t_4814b2287b89dc 3,57-59,66-68,77-79,176-178
+  s_9ea8649920f6cc::t_ecdee01abe5738 22-30,33,39-41,45,49,52,56,61,63,70,72,76,85,88,94,98,111,114-115,138,146-147,149,151,155,157-158,160-175,193,215
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "a94ba03d3a81ef954b89ee5fe53e1c2edcc0efcd",
+  "prompts": {},
+  "sessions": {
+    "s_2ee334b9d0aff9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d3cde86-230c-45c2-b31b-701e60787293",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_9ea8649920f6cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a8f9b9ab-0573-46cb-bd0c-b60914d81dff",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
