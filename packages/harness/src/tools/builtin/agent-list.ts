@@ -5,6 +5,7 @@ import {
   EAgentStatus,
   EToolEffect,
   SchemaTool,
+  TAKES_NO_PATHS,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
@@ -44,6 +45,7 @@ export class AgentListTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Read
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
   override readonly isConcurrencySafe = (): boolean => true
 
   constructor( private readonly agents: AgentRegistrySource) {

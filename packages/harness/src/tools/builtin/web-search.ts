@@ -2,6 +2,7 @@ import {
   EToolEffect,
   renderFindings,
   SchemaTool,
+  TAKES_NO_PATHS,
   type EWebSearchBackend,
   type SecretsPort,
   type ToolOutcome,
@@ -33,6 +34,7 @@ export class WebSearchTool extends SchemaTool<typeof inputSchema> {
   readonly effect = EToolEffect.Read
   override readonly isConcurrencySafe = (): boolean => true
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   constructor(
      private readonly backendOf: () => EWebSearchBackend,

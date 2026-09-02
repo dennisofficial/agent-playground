@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import type { DeclaredPathField, ToolDeclaration } from '@dltech/atlas-core'
+import { declaredFieldsOf, type DeclaredPathField, type ToolDeclaration } from '@dltech/atlas-core'
 
 export const ABSENT = Symbol('absent')
 
@@ -36,10 +36,10 @@ export function createDeclaredPaths(args: { tools: readonly ToolDeclaration[] })
     forTool: (name) => {
       if (!fieldsByTool.has(name)) return { kind: EPathDeclaration.Unregistered }
 
-      const fields = fieldsByTool.get(name)
-      if (fields === undefined) return { kind: EPathDeclaration.Undeclared }
+      const claim = fieldsByTool.get(name)
+      if (claim === undefined) return { kind: EPathDeclaration.Undeclared }
 
-      return { kind: EPathDeclaration.Declared, fields }
+      return { kind: EPathDeclaration.Declared, fields: declaredFieldsOf({ claim }) }
     },
   }
 }

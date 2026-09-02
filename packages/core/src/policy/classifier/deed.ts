@@ -51,6 +51,11 @@ export function mutates({ deed }: { deed: Deed }): boolean {
   return !QUIET_DEEDS.has(deed.action)
 }
 
+export function contendsForItsPlace({ deed }: { deed: Deed }): boolean {
+  if (deed.action === EDeed.Unreadable) return false
+  return deed.action !== EDeed.ReadOnly
+}
+
 export function filesystemTargets({ deed }: { deed: Deed }): readonly DeedTarget[] {
   return deed.targets.filter((target) => FILESYSTEM_REALMS.has(target.realm))
 }

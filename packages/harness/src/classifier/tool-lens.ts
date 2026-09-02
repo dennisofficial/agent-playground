@@ -1,7 +1,9 @@
 import { z } from 'zod'
 
 import {
+  declaredFieldsOf,
   deedsOf,
+  EPathClaim,
   EPathDeclaration,
   EToolEffect,
   readCommand,
@@ -38,9 +40,12 @@ export type ToolLens = {
 }
 
 function viewOf({ declaration }: { declaration: ToolDeclaration }): PathDeclarationView {
-  const fields = declaration.pathFields
-  if (fields === undefined) return { kind: EPathDeclaration.Undeclared }
-  return { kind: EPathDeclaration.Declared, fields }
+  const claim = declaration.pathFields
+  if (claim === undefined || claim === EPathClaim.PathsItCannotName) {
+    return { kind: EPathDeclaration.Undeclared }
+  }
+  if (claim === EPathClaim.TouchesNoPaths) return { kind: EPathDeclaration.TouchesNoPaths }
+  return { kind: EPathDeclaration.Declared, fields: declaredFieldsOf({ claim }) }
 }
 
 export function toolLensFor({ tools }: { tools: readonly ToolDeclaration[] }): ToolLens {

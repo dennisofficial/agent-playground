@@ -35,7 +35,25 @@ export type DeclaredPathField = {
   content: EContentAccess
 }
 
-export const TAKES_NO_PATHS: readonly DeclaredPathField[] = []
+export enum EPathClaim {
+  TouchesNoPaths = 'touches-no-paths',
+  PathsItCannotName = 'paths-it-cannot-name',
+}
+
+export type PathFieldClaim = EPathClaim | readonly DeclaredPathField[]
+
+export const TAKES_NO_PATHS = EPathClaim.TouchesNoPaths
+
+export const TOUCHES_PATHS_IT_CANNOT_NAME = EPathClaim.PathsItCannotName
+
+export function declaredFieldsOf({
+  claim,
+}: {
+  claim: PathFieldClaim | undefined
+}): readonly DeclaredPathField[] {
+  if (claim === undefined || typeof claim === 'string') return []
+  return claim
+}
 
 export type ToolCall = {
   callId: CallId
@@ -110,7 +128,7 @@ export type ToolDeclaration = {
   effect: EToolEffect
   inputSchema: ZodType
   jsonSchema?: unknown
-  pathFields?: readonly DeclaredPathField[]
+  pathFields?: PathFieldClaim
   isConcurrencySafe?(input: unknown): boolean
   revealsWholeFile?(args: WholeFileClaim<unknown>): boolean
   revealsLinesOf?(args: RevealedLines<unknown>): readonly string[]
@@ -139,7 +157,7 @@ export abstract class ToolDefinition<TSchema extends ZodType = ZodType> {
   abstract readonly description: string
   abstract readonly effect: EToolEffect
   abstract readonly inputSchema: TSchema
-  readonly pathFields?: readonly DeclaredPathField[]
+  readonly pathFields?: PathFieldClaim
   isConcurrencySafe?(input: z.output<TSchema>): boolean
   revealsWholeFile?(args: WholeFileClaim<z.output<TSchema>>): boolean
   revealsLinesOf?(args: RevealedLines<z.output<TSchema>>): readonly string[]
@@ -148,7 +166,7 @@ export abstract class ToolDefinition<TSchema extends ZodType = ZodType> {
 }
 
 export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends ToolDefinition<TSchema> {
-  override readonly pathFields: readonly DeclaredPathField[] = TAKES_NO_PATHS
+  abstract override readonly pathFields: PathFieldClaim
 
   protected abstract run(args: ToolRun<TSchema>): Promise<ToolOutcome>
 

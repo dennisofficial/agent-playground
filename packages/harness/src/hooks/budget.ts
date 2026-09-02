@@ -1,6 +1,6 @@
 export const HOOK_BUDGET_MS = 5_000
 
-export type HookMishapKind = 'threw' | 'overran' | 'returned-nothing'
+export type HookMishapKind = 'threw' | 'overran' | 'returned-nothing' | 'disarmed'
 
 export type HookMishap = { label: string; kind: HookMishapKind; detail: string }
 

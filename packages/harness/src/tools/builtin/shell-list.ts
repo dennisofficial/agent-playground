@@ -5,6 +5,7 @@ import {
   quotedShellCommand,
   SchemaTool,
   shellEnding,
+  TAKES_NO_PATHS,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
@@ -45,6 +46,7 @@ export class ShellListTool extends SchemaTool<typeof inputSchema> {
   override readonly isConcurrencySafe = (): boolean => true
 
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   constructor( private readonly shells: ShellRegistryPort) {
     super()

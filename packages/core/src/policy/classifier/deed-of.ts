@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   EContentAccess,
   EPathForm,
+  EPathPresence,
   EToolEffect,
   type DeclaredPathField,
   type ToolCall,
@@ -27,19 +28,15 @@ import { resolveAgainst } from './path-set'
 export enum EPathDeclaration {
   Unregistered = 'unregistered',
   Undeclared = 'undeclared',
+  TouchesNoPaths = 'touches-no-paths',
   Declared = 'declared',
 }
 
 export type PathDeclarationView =
   | { kind: EPathDeclaration.Unregistered }
   | { kind: EPathDeclaration.Undeclared }
+  | { kind: EPathDeclaration.TouchesNoPaths }
   | { kind: EPathDeclaration.Declared; fields: readonly DeclaredPathField[] }
-
-export const TOOLS_WHOSE_CALLS_ARE_ROUTINE: ReadonlySet<string> = new Set([
-  'agent_resume',
-  'agent_say',
-  'agent_spawn',
-])
 
 const VERB_TABLES: readonly VerbTable[] = [
   gitVerbs,
@@ -184,16 +181,18 @@ function declaredDeeds(args: {
   }
 
   const blind = unreadable({ summary: `${call.name} does not say which paths it touches` })
-  if (writes.length > 0) return [deedOf({ call, cwd: undefined, sketch: blind })]
+  if (writes.some((field) => field.presence === EPathPresence.Required)) {
+    return [deedOf({ call, cwd: undefined, sketch: blind })]
+  }
 
-  if (TOOLS_WHOSE_CALLS_ARE_ROUTINE.has(call.name)) {
+  if (writes.length > 0) {
     return [
       deedOf({
         call,
         cwd: undefined,
         sketch: sketch({
           action: EDeed.Routine,
-          summary: `${call.name} drives the harness itself`,
+          summary: `${call.name} was given none of the paths it can write`,
         }),
       }),
     ]
@@ -233,6 +232,19 @@ export function deedsOf(args: {
   }
 
   if (reading !== undefined) return bashDeeds({ call, reading })
+
+  if (declaration.kind === EPathDeclaration.TouchesNoPaths) {
+    return [
+      deedOf({
+        call,
+        cwd: undefined,
+        sketch: sketch({
+          action: EDeed.Routine,
+          summary: `${call.name} touches no path of its own`,
+        }),
+      }),
+    ]
+  }
 
   if (declaration.kind === EPathDeclaration.Undeclared) {
     return [

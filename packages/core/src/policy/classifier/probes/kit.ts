@@ -1,4 +1,11 @@
-import { EDeed, EDeedRealm, filesystemTargets, mutates, type Deed } from '../deed'
+import {
+  contendsForItsPlace,
+  EDeed,
+  EDeedRealm,
+  filesystemTargets,
+  mutates,
+  type Deed,
+} from '../deed'
 import type { ERiskDimension, ESeverity } from '../dimension'
 import type { CallEvidence } from '../evidence'
 import {
@@ -57,6 +64,10 @@ export function riskSignal(args: {
 
 export function mutatingDeeds({ evidence }: { evidence: CallEvidence }): readonly Deed[] {
   return evidence.deeds.filter((deed) => mutates({ deed }))
+}
+
+export function contendingDeeds({ evidence }: { evidence: CallEvidence }): readonly Deed[] {
+  return evidence.deeds.filter((deed) => contendsForItsPlace({ deed }))
 }
 
 export function placesOf({ deed }: { deed: Deed }): readonly string[] {

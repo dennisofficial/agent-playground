@@ -1,27 +1,16 @@
 import { describe, expect, it } from 'bun:test'
-import { z } from 'zod'
 
 import {
-  BeforeToolHook,
-  DEFAULT_CLASSIFIER_POLICY,
   EBeforeToolDecision,
   EClassifierMode,
   EConsultation,
-  EToolEffect,
   JudgePort,
-  ToolDefinition,
-  WorkspaceFactsPort,
-  toCallId,
-  toThreadId,
   type BeforeToolOutcome,
   type Consultation,
-  type ToolCall,
 } from '@dltech/atlas-core'
 
-import { createIsolatedContainer, portToken, resolveSet } from '../../container/injection'
-import { ClassifierPolicyToken, WorkspaceRoot } from '../../container/tokens'
-import { registerClassifier } from '../register-classifier'
-import { factsInAWorktree, judgedIn, OURS, RecordingFacts, REPO, SIBLING } from './fixtures'
+import { chainWith } from './chain-kit'
+import { judgedIn, SIBLING } from './fixtures'
 
 class UnreachableJudge extends JudgePort {
   async consult(): Promise<Consultation> {
@@ -29,48 +18,8 @@ class UnreachableJudge extends JudgePort {
   }
 }
 
-const bashTool: ToolDefinition = {
-  name: 'bash',
-  description: 'runs a command',
-  effect: EToolEffect.Destructive,
-  inputSchema: z.object({ command: z.string(), workdir: z.string().optional() }),
-  invoke: async () => ({ ok: true, output: '', modelText: 'ran' }),
-}
-
-const removingASiblingWorktree: ToolCall = {
-  callId: toCallId('call-1'),
-  name: 'bash',
-  input: { command: `rm -rf ${SIBLING}` },
-  effect: EToolEffect.Destructive,
-  threadId: toThreadId('thread-1'),
-}
-
-async function armedNudgeOver(args: { judge?: JudgePort | undefined }): Promise<BeforeToolOutcome> {
-  const container = createIsolatedContainer()
-  container.register(portToken(ToolDefinition), { useValue: bashTool })
-  container.register(portToken(WorkspaceFactsPort), {
-    useValue: new RecordingFacts(factsInAWorktree({ siblingChangedCount: 12 })),
-  })
-  container.register(WorkspaceRoot, { useValue: REPO })
-  if (args.judge !== undefined) container.register(portToken(JudgePort), { useValue: args.judge })
-
-  registerClassifier({ container })
-  container.register(ClassifierPolicyToken, {
-    useValue: () => ({ ...DEFAULT_CLASSIFIER_POLICY, mode: EClassifierMode.Nudge }),
-  })
-
-  const classifier = resolveSet({ container, token: portToken(BeforeToolHook) }).find(
-    (hook) => hook.name === 'classifyCall',
-  )
-  if (classifier === undefined) throw new Error('the classifier hook was never registered')
-
-  return classifier.run({
-    call: removingASiblingWorktree,
-    projectDirectory: OURS,
-    events: [],
-    signal: new AbortController().signal,
-  })
-}
+const armedNudgeOver = (args: { judge?: JudgePort | undefined }): Promise<BeforeToolOutcome> =>
+  chainWith({ mode: EClassifierMode.Nudge, judge: args.judge }).weigh()
 
 describe('the classifier chain built without a judge', () => {
   it('cannot pause the operator, because nothing read the evidence', async () => {

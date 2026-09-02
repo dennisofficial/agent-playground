@@ -25,8 +25,6 @@ export type Prefiltered = { candidacy: ECandidacy; deeds: readonly Deed[] }
 
 const NESTED_CHECKOUT_SEGMENTS: ReadonlySet<string> = new Set(['worktrees', '.git'])
 
-const QUIET_DEEDS: ReadonlySet<EDeed> = new Set([EDeed.Routine, EDeed.ReadOnly])
-
 const alreadyApproved = ({
   events,
   callId,
@@ -55,6 +53,11 @@ function placesTouched({ deed }: { deed: Deed }): readonly string[] {
   return deed.cwd === undefined ? [] : [deed.cwd]
 }
 
+const DEEDS_THAT_CLEAR_WHERE_THEY_RUN: ReadonlySet<EDeed> = new Set([
+  EDeed.Routine,
+  EDeed.WriteFile,
+])
+
 function settledInPlace({
   deed,
   projectDirectory,
@@ -62,8 +65,8 @@ function settledInPlace({
   deed: Deed
   projectDirectory: string
 }): boolean {
-  if (QUIET_DEEDS.has(deed.action)) return true
-  if (deed.action !== EDeed.WriteFile) return false
+  if (deed.action === EDeed.ReadOnly) return true
+  if (!DEEDS_THAT_CLEAR_WHERE_THEY_RUN.has(deed.action)) return false
 
   return placesTouched({ deed }).every((path) => insideOurCheckout({ projectDirectory, path }))
 }

@@ -4,6 +4,7 @@ import {
   EAgentStatus,
   EToolEffect,
   SchemaTool,
+  TAKES_NO_PATHS,
   toThreadId,
   type ToolOutcome,
   type ToolRun,
@@ -29,6 +30,7 @@ export class AgentSayTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Write
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   constructor( private readonly agents: AgentRegistrySource) {
     super()

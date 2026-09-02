@@ -6,6 +6,7 @@ import {
   planTasks,
   renderPlan,
   SchemaTool,
+  TAKES_NO_PATHS,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
@@ -28,6 +29,7 @@ export class TaskWriteTool extends SchemaTool<typeof planInputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Read
   readonly inputSchema = planInputSchema
+  override readonly pathFields = TAKES_NO_PATHS
   override readonly isConcurrencySafe = (): boolean => true
 
   protected override async run({ input }: ToolRun<typeof planInputSchema>): Promise<ToolOutcome> {

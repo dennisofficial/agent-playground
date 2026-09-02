@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
+import {
+  EToolEffect,
+  SchemaTool,
+  TAKES_NO_PATHS,
+  type ToolOutcome,
+  type ToolRun,
+} from '@dltech/atlas-core'
 
 import { type Worktree } from '../../workspace/worktrees'
 import { repositoryAt } from './worktree-support'
@@ -30,6 +36,7 @@ export class WorktreeListTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Read
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   override isConcurrencySafe(): boolean {
     return true

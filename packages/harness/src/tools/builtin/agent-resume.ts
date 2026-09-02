@@ -3,6 +3,7 @@ import { z } from 'zod'
 import {
   EToolEffect,
   SchemaTool,
+  TAKES_NO_PATHS,
   toThreadId,
   type ToolOutcome,
   type ToolRun,
@@ -26,6 +27,7 @@ export class AgentResumeTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Write
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   constructor( private readonly agents: AgentRegistrySource) {
     super()

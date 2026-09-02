@@ -20,8 +20,19 @@ project=$PWD
 
 cd "$tui"
 
-if [ "${ATLAS_DEV_SKIP_DB:-}" = "" ]; then
-  bun run --filter @dltech/atlas-harness db:ensure >/dev/null 2>&1 || true
+quietly() {
+  if ! output=$("$@" 2>&1); then
+    printf '%s\n' "$output" >&2
+    printf 'atlas-dev: %s failed; the launch would have read a stale manifest\n' "$*" >&2
+    exit 1
+  fi
+}
+
+if [ "${ATLAS_DEV_SKIP_GENERATE:-}" = "" ]; then
+  quietly bun run --filter @dltech/atlas-harness db:ensure
+  quietly bun scripts/generate-manifest.ts
+  quietly bun scripts/generate-skills.ts
+  quietly bun scripts/generate-plugins.ts
 fi
 
 exec bun src/main.tsx --cwd "$project" "$@"

@@ -4,9 +4,9 @@ import { EOccupancy, type WorkspaceFacts, type WorktreeFact } from '../facts'
 import { basenameOf } from '../path-set'
 import type { RiskSignal, SignalProbe } from '../signals'
 import {
+  contendingDeeds,
   isOurs,
   losesSomething,
-  mutatingDeeds,
   ourWorktree,
   placesOf,
   riskSignal,
@@ -149,7 +149,7 @@ function branchCheckedOutElsewhere({
 export const contentionProbe: SignalProbe = {
   dimension,
   probe: (evidence) =>
-    mutatingDeeds({ evidence }).flatMap((deed) => [
+    contendingDeeds({ evidence }).flatMap((deed) => [
       ...occupiedBySomeoneElse({ deed, facts: evidence.facts }),
       ...branchCheckedOutElsewhere({ deed, facts: evidence.facts }),
     ]),

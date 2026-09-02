@@ -3,6 +3,7 @@ import {
   BeforeToolHook,
   EBeforeToolDecision,
   EClassifierMode,
+  EConsultation,
   EJudgment,
   EStage,
   ETriage,
@@ -39,19 +40,26 @@ export type JudgeSeam = {
   }): Promise<Consultation>
 }
 
+export type JudgeSource = () => JudgeSeam | undefined
+
 export type ClassifyCallDeps = {
   tools: readonly ToolDeclaration[]
   facts: WorkspaceFactsPort
   launchDirectory: string
   policy: () => ClassifierPolicy
   probes?: readonly SignalProbe[] | undefined
-  judge?: JudgeSeam | undefined
+  judge?: JudgeSource | undefined
+  reportDisarm?: ((detail: string) => void) | undefined
   now?: (() => number) | undefined
 }
 
 type Weighed = { triage: Triage; consultation: Consultation | undefined }
 
 const REASON_LIMIT = 400
+
+const NO_JUDGE = 'no judge is bound to this session'
+
+const CANNOT_PAUSE = `set to nudge, but ${NO_JUDGE}, so it is running as shadow and cannot pause you`
 
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
@@ -107,9 +115,12 @@ export class ClassifyCallHook extends BeforeToolHook {
   private readonly launchDirectory: string
   private readonly policy: () => ClassifierPolicy
   private readonly probes: readonly SignalProbe[] | undefined
-  private readonly judge: JudgeSeam | undefined
+  private readonly judgeSource: JudgeSource | undefined
+  private readonly reportDisarm: ((detail: string) => void) | undefined
   private readonly now: () => number
   private readonly lens: ToolLens
+
+  private disarmAnnounced = false
 
   constructor(deps: ClassifyCallDeps) {
     super()
@@ -117,7 +128,8 @@ export class ClassifyCallHook extends BeforeToolHook {
     this.launchDirectory = deps.launchDirectory
     this.policy = deps.policy
     this.probes = deps.probes
-    this.judge = deps.judge
+    this.judgeSource = deps.judge
+    this.reportDisarm = deps.reportDisarm
     this.now = deps.now ?? (() => Date.now())
     this.lens = toolLensFor({ tools: deps.tools })
   }
@@ -127,11 +139,12 @@ export class ClassifyCallHook extends BeforeToolHook {
     let mode = EClassifierMode.Shadow
 
     try {
-      const policy = this.policy()
+      const judge = this.judgeSource?.()
+      const policy = this.policyItCanHonour({ policy: this.policy(), judge })
       mode = policy.mode
       if (mode === EClassifierMode.Off) return allowing({ call })
 
-      const weighed = await this.weigh({ call, projectDirectory, events, signal, policy })
+      const weighed = await this.weigh({ call, projectDirectory, events, signal, policy, judge })
       if (weighed === undefined) return allowing({ call })
 
       return adjudicate({
@@ -149,14 +162,38 @@ export class ClassifyCallHook extends BeforeToolHook {
     }
   }
 
+  private policyItCanHonour({
+    policy,
+    judge,
+  }: {
+    policy: ClassifierPolicy
+    judge: JudgeSeam | undefined
+  }): ClassifierPolicy {
+    if (judge !== undefined) {
+      this.disarmAnnounced = false
+      return policy
+    }
+    if (policy.mode !== EClassifierMode.Nudge) return policy
+
+    this.announceDisarm()
+    return { ...policy, mode: EClassifierMode.Shadow }
+  }
+
+  private announceDisarm(): void {
+    if (this.disarmAnnounced) return
+    this.disarmAnnounced = true
+    this.reportDisarm?.(CANNOT_PAUSE)
+  }
+
   private async weigh(args: {
     call: ToolCall
     projectDirectory: string
     events: readonly Event[]
     signal: AbortSignal
     policy: ClassifierPolicy
+    judge: JudgeSeam | undefined
   }): Promise<Weighed | undefined> {
-    const { call, projectDirectory, events, signal, policy } = args
+    const { call, projectDirectory, events, signal, policy, judge } = args
 
     const reading = this.lens.readingFor({
       name: call.name,
@@ -190,13 +227,15 @@ export class ClassifyCallHook extends BeforeToolHook {
       asksSoFar: asksSoFarIn({ events, threadId: call.threadId }),
     })
 
-    if (triage.triage !== ETriage.Consult || this.judge === undefined) {
-      return { triage, consultation: undefined }
+    if (triage.triage !== ETriage.Consult) return { triage, consultation: undefined }
+
+    if (judge === undefined) {
+      return { triage, consultation: { kind: EConsultation.Unreachable, fault: NO_JUDGE } }
     }
 
     return {
       triage,
-      consultation: await this.judge.consult({
+      consultation: await judge.consult({
         evidence,
         standing: triage.standing,
         events,

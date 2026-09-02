@@ -22,7 +22,7 @@ const pathField: DeclaredPathField = {
 
 const declaration = (args: {
   name: string
-  pathFields?: readonly DeclaredPathField[]
+  pathFields?: ToolDeclaration['pathFields']
 }): ToolDeclaration => ({
   name: args.name,
   description: `the ${args.name} tool`,

@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
+import {
+  EToolEffect,
+  SchemaTool,
+  TAKES_NO_PATHS,
+  type ToolOutcome,
+  type ToolRun,
+} from '@dltech/atlas-core'
 
 import {  portToken } from '../../container/injection'
 import { EKilledBy, EShellStatus } from '../../shells/background-shell'
@@ -24,6 +30,7 @@ export class ShellKillTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   constructor( private readonly shells: ShellRegistryPort) {
     super()

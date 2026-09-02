@@ -4,6 +4,7 @@ import {
   EToolEffect,
   EWorktreeExit,
   SchemaTool,
+  TOUCHES_PATHS_IT_CANNOT_NAME,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
@@ -47,6 +48,7 @@ export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
+  override readonly pathFields = TOUCHES_PATHS_IT_CANNOT_NAME
 
   constructor( private readonly launchDirectory: string) {
     super()

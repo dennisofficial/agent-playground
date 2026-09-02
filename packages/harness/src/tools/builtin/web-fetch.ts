@@ -4,6 +4,7 @@ import {
   renderFetchedPage,
   renderFound,
   SchemaTool,
+  TAKES_NO_PATHS,
   wrapUntrusted,
   type FetchedPage,
   type ToolOutcome,
@@ -43,6 +44,7 @@ export class WebFetchTool extends SchemaTool<typeof inputSchema> {
   readonly effect = EToolEffect.Read
   override readonly isConcurrencySafe = (): boolean => true
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   private readonly cache = new PageCache()
 

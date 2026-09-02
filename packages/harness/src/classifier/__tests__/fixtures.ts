@@ -25,7 +25,7 @@ import {
   type WorkspaceFacts,
 } from '@dltech/atlas-core'
 
-import { ClassifyCallHook, type ClassifyCallDeps } from '../classify-call'
+import { ClassifyCallHook, type ClassifyCallDeps, type JudgeSeam } from '../classify-call'
 
 export const REPO = '/repo'
 export const OURS = `${REPO}/.claude/worktrees/eng-327-api-eslint`
@@ -145,13 +145,21 @@ export function policyIn(mode: EClassifierMode): () => ClassifierPolicy {
   return () => ({ ...DEFAULT_CLASSIFIER_POLICY, mode })
 }
 
-export function hookOver(deps: Partial<ClassifyCallDeps> & { facts: WorkspaceFactsPort }) {
+export function hookOver(
+  deps: Partial<Omit<ClassifyCallDeps, 'judge'>> & {
+    facts: WorkspaceFactsPort
+    judge?: JudgeSeam | undefined
+  },
+) {
+  const { judge, ...rest } = deps
+
   return new ClassifyCallHook({
     tools: TOOLS,
     launchDirectory: REPO,
     policy: policyIn(EClassifierMode.Shadow),
     now: () => 0,
-    ...deps,
+    ...rest,
+    ...(judge === undefined ? {} : { judge: () => judge }),
   })
 }
 

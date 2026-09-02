@@ -6,6 +6,7 @@ import {
   EKilledBy,
   EToolEffect,
   SchemaTool,
+  TAKES_NO_PATHS,
   toThreadId,
   type ToolOutcome,
   type ToolRun,
@@ -30,6 +31,7 @@ export class AgentStopTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
+  override readonly pathFields = TAKES_NO_PATHS
 
   constructor( private readonly agents: AgentRegistrySource) {
     super()

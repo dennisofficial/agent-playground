@@ -1,6 +1,15 @@
 import { z } from 'zod'
 
-import { EToolEffect, SchemaTool, type ToolOutcome, type ToolRun } from '@dltech/atlas-core'
+import {
+  EContentAccess,
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  SchemaTool,
+  type DeclaredPathField,
+  type ToolOutcome,
+  type ToolRun,
+} from '@dltech/atlas-core'
 
 import { WorkspaceRoot, WorktreeDirectoryToken } from '../../container/tokens'
 import {
@@ -49,6 +58,15 @@ export class EnterWorktreeTool extends SchemaTool<typeof inputSchema> {
   readonly description = description
   readonly effect = EToolEffect.Destructive
   readonly inputSchema = inputSchema
+
+  override readonly pathFields: readonly DeclaredPathField[] = [
+    {
+      field: 'path',
+      presence: EPathPresence.Optional,
+      form: EPathForm.Absolute,
+      content: EContentAccess.Amends,
+    },
+  ]
 
   constructor(
      private readonly launchDirectory: string,

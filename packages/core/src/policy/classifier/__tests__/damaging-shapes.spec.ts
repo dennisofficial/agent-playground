@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'bun:test'
 
+import {
+  EContentAccess,
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+} from '../../../tools/tool'
 import { ESeverity } from '../dimension'
 import { EOccupancy } from '../facts'
+import { EPathDeclaration } from '../deed-of'
 import { ETriage } from '../triage'
 import {
   HOME,
@@ -11,6 +19,7 @@ import {
   factsAt,
   inAWorktree,
   onMain,
+  toolEvidence,
   triageFor,
   worktreeFact,
   writeEvidence,
@@ -111,6 +120,50 @@ describe('the deeds that take a dirty checkout away from whoever is standing in 
         ETriage.Consult,
       )
     }
+  })
+})
+
+describe('a deed that loses nothing but reaches a checkout that is not ours', () => {
+  it('consults on a fast-forward pull aimed at a sibling carrying uncommitted work', () => {
+    const evidence = bashEvidence({
+      command: `git -C ${SIBLING} pull --ff-only`,
+      facts: inAWorktree({ siblingChangedCount: 12 }),
+    })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
+  })
+
+  it('consults gravely on a fast-forward pull under a live session, clean tree or not', () => {
+    const evidence = bashEvidence({
+      command: `git -C ${SIBLING} pull --ff-only`,
+      facts: inAWorktree({ siblingOccupancy: EOccupancy.LiveOther, siblingHeldBy: 4242 }),
+    })
+    const triage = triageFor({ evidence })
+
+    expect(triage.triage).toBe(ETriage.Consult)
+    expect(triage.standing.map((signal) => signal.severity)).toContain(ESeverity.Grave)
+  })
+
+  it('consults on entering a worktree another agent has uncommitted work in', () => {
+    const evidence = toolEvidence({
+      name: 'enter_worktree',
+      effect: EToolEffect.Destructive,
+      input: { path: SIBLING },
+      declaration: {
+        kind: EPathDeclaration.Declared,
+        fields: [
+          {
+            field: 'path',
+            presence: EPathPresence.Optional,
+            form: EPathForm.Absolute,
+            content: EContentAccess.Amends,
+          } satisfies DeclaredPathField,
+        ],
+      },
+      facts: inAWorktree({ siblingChangedCount: 12 }),
+    })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
   })
 })
 

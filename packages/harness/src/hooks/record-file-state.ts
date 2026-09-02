@@ -3,6 +3,7 @@ import { isAbsolute } from 'node:path'
 
 import {
   AfterToolHook,
+  declaredFieldsOf,
   EContentAccess,
   EStage,
   ToolDefinition,
@@ -42,7 +43,7 @@ export class RecordFileStateHook extends AfterToolHook {
     const declaration = this.declarations.get(call.name)
     if (declaration === undefined) return {}
 
-    for (const declared of declaration.pathFields ?? []) {
+    for (const declared of declaredFieldsOf({ claim: declaration.pathFields })) {
       await this.recordField({ call, declaration, declared, output: result.output })
     }
 

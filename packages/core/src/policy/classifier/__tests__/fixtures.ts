@@ -8,7 +8,7 @@ import {
 } from '../../../tools/tool'
 import { readCommand } from '../command/read-command'
 import { EDeedRealm } from '../deed'
-import { EPathDeclaration, deedsOf } from '../deed-of'
+import { EPathDeclaration, deedsOf, type PathDeclarationView } from '../deed-of'
 import type { CallEvidence, RecentAct } from '../evidence'
 import { EOccupancy, type RefFact, type WorkspaceFacts, type WorktreeFact } from '../facts'
 import type { Grant } from '../grant'
@@ -195,6 +195,33 @@ export function writeEvidence(args: {
     recent: args.recent ?? [],
     said: [],
     grants: args.grants ?? [],
+  }
+}
+
+export function toolEvidence(args: {
+  name: string
+  effect: EToolEffect
+  input: unknown
+  declaration: PathDeclarationView
+  facts: WorkspaceFacts
+}): CallEvidence {
+  const call = callTo({ name: args.name, input: args.input, effect: args.effect })
+
+  return {
+    deeds: deedsOf({
+      call,
+      declaration: args.declaration,
+      reading: undefined,
+      projectDirectory: args.facts.projectDirectory,
+    }),
+    toolName: args.name,
+    effect: args.effect,
+    threadId: toThreadId('thread-1'),
+    reading: undefined,
+    facts: args.facts,
+    recent: [],
+    said: [],
+    grants: [],
   }
 }
 

@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EToolEffect } from '../../../tools/tool'
+import {
+  EContentAccess,
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  type DeclaredPathField,
+} from '../../../tools/tool'
 import { checkCorpusCase } from '../corpus'
+import { EPathDeclaration } from '../deed-of'
 import { ETriage } from '../triage'
 import { CORPUS_DIRECTORY, readCorpus } from './corpus'
 import {
@@ -12,6 +19,7 @@ import {
   bashEvidence,
   inAWorktree,
   onMain,
+  toolEvidence,
   triageFor,
   writeEvidence,
 } from './fixtures'
@@ -89,6 +97,49 @@ describe('the main checkout, which always carries the operator own uncommitted w
 
   it('clears copying a file into the main checkout, because an added file takes nothing away', () => {
     expect(clearsInAWorktree(`cp notes.md ${REPO}/notes.md`)).toBe(ETriage.Clear)
+  })
+})
+
+describe('the harness tools that drive agents and shells rather than files', () => {
+  const PATHLESS = [
+    ['agent_spawn', EToolEffect.Write],
+    ['agent_say', EToolEffect.Write],
+    ['agent_resume', EToolEffect.Write],
+    ['agent_stop', EToolEffect.Destructive],
+    ['shell_kill', EToolEffect.Destructive],
+  ] as const
+
+  it('clears a tool that says it touches no path, however destructive its effect', () => {
+    for (const [name, effect] of PATHLESS) {
+      const evidence = toolEvidence({
+        name,
+        effect,
+        input: { agentId: 'agent-1' },
+        declaration: { kind: EPathDeclaration.TouchesNoPaths },
+        facts: onMain(),
+      })
+
+      expect(triageFor({ evidence }).triage).toBe(ETriage.Clear)
+    }
+  })
+
+  const worktreePath: DeclaredPathField = {
+    field: 'path',
+    presence: EPathPresence.Optional,
+    form: EPathForm.Absolute,
+    content: EContentAccess.Amends,
+  }
+
+  it('clears enter_worktree creating a worktree, where the optional path names nothing', () => {
+    const evidence = toolEvidence({
+      name: 'enter_worktree',
+      effect: EToolEffect.Destructive,
+      input: { name: 'eng-500-sidebar' },
+      declaration: { kind: EPathDeclaration.Declared, fields: [worktreePath] },
+      facts: onMain(),
+    })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Clear)
   })
 })
 
