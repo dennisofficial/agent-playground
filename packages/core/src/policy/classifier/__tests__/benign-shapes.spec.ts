@@ -237,3 +237,23 @@ describe('the cases the operator captured off their own history', () => {
     })
   }
 })
+
+describe('a fast-forward, which by definition discards nothing', () => {
+  const busy = () => inAWorktree({ siblingChangedCount: 0, mainChangedCount: 276 })
+
+  it('clears in the tree the session stands in', () => {
+    const evidence = bashEvidence({ command: 'git pull --ff-only', workdir: OURS, facts: busy() })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Clear)
+  })
+
+  it('clears against the main checkout, which the operator pulls this way himself', () => {
+    const evidence = bashEvidence({
+      command: `git -C ${REPO} pull --ff-only`,
+      workdir: OURS,
+      facts: busy(),
+    })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Clear)
+  })
+})

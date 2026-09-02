@@ -189,7 +189,7 @@ export class GitWorkspaceFacts extends WorkspaceFactsPort {
     named: readonly string[]
     ourPath: string | undefined
   }): ReadonlySet<string> {
-    const relevant = new Set<string>(args.ourPath === undefined ? [] : [args.ourPath])
+    const relevant = new Set<string>()
     for (const path of args.named) {
       const found = containingWorktree({ listing: args.listing, path })
       if (found !== undefined) relevant.add(found.path)

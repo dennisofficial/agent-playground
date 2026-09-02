@@ -70,6 +70,8 @@ function signalsAt({
 
   if (changed === 0) return []
 
+  if (worktree.isMain && deed.action === EDeed.FastForward) return []
+
   if (movesTheWholeCheckout({ deed })) {
     return [
       riskSignal({

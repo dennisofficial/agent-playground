@@ -13,6 +13,7 @@ import { EPathDeclaration } from '../deed-of'
 import { ETriage } from '../triage'
 import {
   HOME,
+  OURS,
   REPO,
   SIBLING,
   bashEvidence,
@@ -213,6 +214,30 @@ describe('shells the reader cannot vouch for', () => {
 
   it('consults on an rm whose operand only exists at run time', () => {
     const evidence = bashEvidence({ command: 'rm -rf "$TARGET"', facts: onMain() })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
+  })
+})
+
+describe('a pull aimed somewhere other than the tree it runs in', () => {
+  const busy = () => inAWorktree({ siblingChangedCount: 7, mainChangedCount: 276 })
+
+  it("consults on a fast-forward into another agent's dirty worktree", () => {
+    const evidence = bashEvidence({
+      command: `git -C ${SIBLING} pull --ff-only`,
+      workdir: OURS,
+      facts: busy(),
+    })
+
+    expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
+  })
+
+  it('consults on a plain merge into the main checkout, which is free to conflict', () => {
+    const evidence = bashEvidence({
+      command: `git -C ${REPO} pull`,
+      workdir: OURS,
+      facts: busy(),
+    })
 
     expect(triageFor({ evidence }).triage).toBe(ETriage.Consult)
   })

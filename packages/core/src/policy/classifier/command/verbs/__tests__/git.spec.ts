@@ -38,8 +38,8 @@ describe('the read side of git', () => {
     expect(actionOf('git stash save wip')).toBe(EDeed.WriteFile)
   })
 
-  it('reads a fast-forward pull as routine and any other pull as a merge', () => {
-    expect(actionOf('git pull --ff-only')).toBe(EDeed.Routine)
+  it('reads a fast-forward pull as a fast-forward, and any other pull as a merge', () => {
+    expect(actionOf('git pull --ff-only')).toBe(EDeed.FastForward)
     expect(actionOf('git pull')).toBe(EDeed.WriteFile)
   })
 

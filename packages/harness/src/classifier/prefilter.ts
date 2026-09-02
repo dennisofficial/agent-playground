@@ -56,6 +56,7 @@ function placesTouched({ deed }: { deed: Deed }): readonly string[] {
 const DEEDS_THAT_CLEAR_WHERE_THEY_RUN: ReadonlySet<EDeed> = new Set([
   EDeed.Routine,
   EDeed.WriteFile,
+  EDeed.FastForward,
 ])
 
 function settledInPlace({

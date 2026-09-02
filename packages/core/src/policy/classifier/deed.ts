@@ -11,6 +11,7 @@ export enum EDeed {
   Routine = 'routine',
   ReadOnly = 'read-only',
   WriteFile = 'write-file',
+  FastForward = 'fast-forward',
   RemovePath = 'remove-path',
   DiscardWorkingTree = 'discard-working-tree',
   RewriteHistory = 'rewrite-history',

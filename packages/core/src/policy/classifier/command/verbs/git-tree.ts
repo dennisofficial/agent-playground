@@ -110,7 +110,11 @@ export const stash: GitHandler = ({ view }) => {
 
 export const pull: GitHandler = ({ view }) => {
   if (view.flags.has('--ff-only')) {
-    return routine({ summary: 'fast-forwards the branch, merging and discarding nothing' })
+    return sketch({
+      action: EDeed.FastForward,
+      targets: [worktreeTarget({ view })],
+      summary: 'fast-forwards the branch, merging and discarding nothing',
+    })
   }
 
   return applyToTree({ view, summary: 'merges remote commits into the working tree' })
