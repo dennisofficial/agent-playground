@@ -1,0 +1,35 @@
+packages/core/src/policy/classifier/probes/contention.ts
+  s_85c48373ea61a3::t_7a79da74bf542d 73
+  s_85c48373ea61a3::t_a5518ee753d0e0 74
+packages/harness/src/classifier/workspace-facts.ts
+  s_85c48373ea61a3::t_fd23775ae5227f 192
+packages/core/src/policy/classifier/__tests__/benign-shapes.spec.ts
+  s_85c48373ea61a3::t_3b5895351db7f2 240-259
+packages/core/src/policy/classifier/deed.ts
+  s_85c48373ea61a3::t_7a79da74bf542d 14
+packages/harness/src/classifier/prefilter.ts
+  s_85c48373ea61a3::t_2686ad21946073 59
+packages/core/src/policy/classifier/__tests__/damaging-shapes.spec.ts
+  s_85c48373ea61a3::t_3b5895351db7f2 16,221-240
+packages/core/src/policy/classifier/command/verbs/__tests__/git.spec.ts
+  s_85c48373ea61a3::t_19ba227578e3dd 41-42
+packages/core/src/policy/classifier/command/verbs/git-tree.ts
+  s_85c48373ea61a3::t_7a79da74bf542d 113-115
+  s_85c48373ea61a3::t_fd23775ae5227f 116-117
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "3701a533927fc54c46fb15d07bba1cb8c1cb9277",
+  "prompts": {},
+  "sessions": {
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
