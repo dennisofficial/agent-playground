@@ -1,0 +1,85 @@
+apps/tui/src/ui/__tests__/sidebar-grants-render.spec.tsx
+  s_8ae1fa940f8094::t_5aca4af84efe26 87-88,92
+  s_8ae1fa940f8094::t_7ae7b51879014d 1-61,64-86,89-91,93-101
+  s_8ae1fa940f8094::t_28cd3e024d5df8 62-63
+apps/tui/src/store/sidebar-model.ts
+  s_8ae1fa940f8094::t_277c6a285fe265 4,9,50,116,128
+apps/tui/src/composition/__tests__/use-approval.spec.tsx
+  s_8ae1fa940f8094::t_c297f34d9a6be9 1-8,15,29-34,176-213
+packages/harness/src/classifier/__tests__/standing-grants.spec.ts
+  s_8ae1fa940f8094::t_723372fb4e0e61 1-8,10-106,121-178
+  s_8ae1fa940f8094::t_5e21c8935b716c 107-113,118-120
+  s_8ae1fa940f8094::t_b386f3d9ee1e90 9,114-117
+packages/core/src/policy/classifier/__tests__/grant.spec.ts
+  s_8ae1fa940f8094::t_ffab59c83988c4 3-4,8-15,151-205
+  s_8ae1fa940f8094::t_adcbf8c25d5285 5-6
+  s_8ae1fa940f8094::t_30cd748aa609c8 1-2,7,16-109,111-139,141-143,146-150,206-207
+  s_8ae1fa940f8094::t_3798154cf9598d 110,140,144-145
+packages/core/src/policy/classifier/__tests__/shadow-row.spec.ts
+  s_8ae1fa940f8094::t_1c407ca15ffdc3 4,14,68-93,104
+apps/tui/src/ui/__tests__/approval-model.spec.ts
+  s_8ae1fa940f8094::t_19adfa58494416 58
+  s_8ae1fa940f8094::t_ec070fb18ebb2d 108
+apps/tui/src/store/__tests__/sidebar-model.spec.ts
+  s_8ae1fa940f8094::t_55161daade812e 4,241-266
+apps/tui/src/ui/components/approval.tsx
+  s_8ae1fa940f8094::t_846397f75e3100 7-9,41-45,141,151
+apps/tui/src/ui/approval-model.ts
+  s_8ae1fa940f8094::t_90d66af7a70c14 148
+  s_8ae1fa940f8094::t_3e1f337cd8c352 4,11,16,28,36,47,49-61,63-70,78,84,91-92,103-120,125-126,128-134,136-141,153,155-159
+apps/tui/src/composition/use-conversation.ts
+  s_8ae1fa940f8094::t_61ad3a9c4d32c4 127
+  s_48295040cb6dcc::t_6c73316b6b5151 319
+packages/core/src/policy/classifier/grant.ts
+  s_8ae1fa940f8094::t_e8272cbd8092f5 54-61,64-76
+  s_8ae1fa940f8094::t_c5b4b08fd65a4f 62-63
+packages/core/src/events/body.ts
+  s_8ae1fa940f8094::t_94285ac62ba71f 5
+  s_8ae1fa940f8094::t_d861da5c08ec67 143
+apps/tui/src/composition/revoke-grant.ts
+  s_8ae1fa940f8094::t_0b204b7d5a1b77 1-26
+packages/core/src/events/schema.ts
+  s_8ae1fa940f8094::t_e2c1c1cbdb97c7 207
+  s_8ae1fa940f8094::t_80b4531bd6f6e7 65-69
+apps/tui/src/ui/__tests__/approval-grants.spec.ts
+  s_8ae1fa940f8094::t_bba0c09ccff2f8 92-94
+  s_8ae1fa940f8094::t_818fcb2ad68e0c 1-91,95-178
+packages/core/src/policy/classifier/adjudicate.ts
+  s_8ae1fa940f8094::t_fee2280cf0f00a 126-128
+  s_8ae1fa940f8094::t_8ea101cb54cf6a 4
+apps/tui/src/ui/components/sidebar/grants.tsx
+  s_8ae1fa940f8094::t_2d5288c9c9a5f1 37
+  s_8ae1fa940f8094::t_739da2b5fd2679 1-11,14-28,30-36,43-49
+  s_8ae1fa940f8094::t_138d2d9db60bb0 12-13,29,38-42
+apps/tui/src/ui/__tests__/approval-render.spec.tsx
+  s_8ae1fa940f8094::t_19adfa58494416 4,29,39,140
+  s_8ae1fa940f8094::t_de79edb546d44e 93-114
+apps/tui/src/composition/use-approval.ts
+  s_8ae1fa940f8094::t_2714e1ae7118f3 9,12,41-48,64-65
+apps/tui/src/ui/components/sidebar.tsx
+  s_8ae1fa940f8094::t_35a7e1bb8d9a65 16,93,138-141
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f1ef90b7a067b8bdf1669e937a6577c09bc089ec",
+  "prompts": {},
+  "sessions": {
+    "s_48295040cb6dcc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55551e84-ab8b-4991-93be-25f567615e25",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
