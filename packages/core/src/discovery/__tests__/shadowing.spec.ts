@@ -78,3 +78,53 @@ describe('resolveShadowing', () => {
     expect(resolve([])).toEqual([])
   })
 })
+
+describe('an unshadowable origin', () => {
+  const layer = (definitions: readonly Definition[]): readonly Definition[] =>
+    resolveShadowing({
+      definitions,
+      nameOf: (definition) => definition.name,
+      unshadowable: EDefinitionOrigin.BuiltIn,
+    })
+
+  it('keeps the built-in and the user definition that shares its name', () => {
+    const layered = layer([
+      at({ name: 'commit', origin: EDefinitionOrigin.BuiltIn }),
+      at({ name: 'commit', origin: EDefinitionOrigin.User }),
+    ])
+
+    expect(layered.map((definition) => definition.body)).toEqual(['built-in commit', 'user commit'])
+  })
+
+  it('still resolves shadowing among the definitions that can be shadowed', () => {
+    const layered = layer([
+      at({ name: 'commit', origin: EDefinitionOrigin.BuiltIn }),
+      at({ name: 'commit', origin: EDefinitionOrigin.User }),
+      at({ name: 'commit', origin: EDefinitionOrigin.Project }),
+    ])
+
+    expect(layered.map((definition) => definition.body)).toEqual([
+      'built-in commit',
+      'project commit',
+    ])
+  })
+
+  it('places every unshadowable definition ahead of the rest, whatever the names', () => {
+    const layered = layer([
+      at({ name: 'alpha', origin: EDefinitionOrigin.Project }),
+      at({ name: 'zeta', origin: EDefinitionOrigin.BuiltIn }),
+      at({ name: 'mid', origin: EDefinitionOrigin.BuiltIn }),
+    ])
+
+    expect(layered.map((definition) => definition.name)).toEqual(['mid', 'zeta', 'alpha'])
+  })
+
+  it('keeps two built-ins that share a name rather than dropping one', () => {
+    const layered = layer([
+      { name: 'commit', body: 'first', origin: EDefinitionOrigin.BuiltIn },
+      { name: 'commit', body: 'second', origin: EDefinitionOrigin.BuiltIn },
+    ])
+
+    expect(layered.map((definition) => definition.body)).toEqual(['first', 'second'])
+  })
+})

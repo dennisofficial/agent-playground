@@ -95,7 +95,10 @@ describe('what the loader registers', () => {
   })
 
   it('namespaces every hook with the plugin that contributed it', async () => {
-    const { container } = await load([native('alpha', observing('tick')), native('beta', observing('tick'))])
+    const { container } = await load([
+      native('alpha', observing('tick')),
+      native('beta', observing('tick')),
+    ])
 
     expect([...afterToolNames(container)].sort()).toEqual(['alpha:tick', 'beta:tick'])
   })
@@ -107,8 +110,31 @@ describe('what the loader registers', () => {
   })
 })
 
-describe('shadowing', () => {
-  it('lets a project plugin beat a user plugin beat a built-in of the same id', async () => {
+describe('shadowing and layering', () => {
+  abstract class Greeter {
+    abstract greet(): string
+  }
+
+  const greeting = (text: string): PluginContribution => ({
+    ports: [{ token: Greeter, use: { greet: () => text } }],
+  })
+
+  it('lets a project plugin beat a user plugin of the same id', async () => {
+    const { result, container } = await load([
+      repo({ id: 'comp', origin: EDefinitionOrigin.User, contribution: observing('from-user') }),
+      repo({
+        id: 'comp',
+        origin: EDefinitionOrigin.Project,
+        contribution: observing('from-project'),
+      }),
+    ])
+
+    expect(afterToolNames(container)).toEqual(['project:comp:from-project'])
+    expect(result.loaded).toEqual([{ id: 'comp', origin: EDefinitionOrigin.Project }])
+    expect(result.shadowed).toEqual([{ id: 'comp', origin: EDefinitionOrigin.User }])
+  })
+
+  it('layers a repo plugin over the native whose id it shares rather than replacing it', async () => {
     const { result, container } = await load([
       native('github', observing('from-builtin')),
       repo({ id: 'github', origin: EDefinitionOrigin.User, contribution: observing('from-user') }),
@@ -119,30 +145,62 @@ describe('shadowing', () => {
       }),
     ])
 
-    expect(afterToolNames(container)).toEqual(['github:from-project'])
-    expect(result.loaded).toEqual([{ id: 'github', origin: EDefinitionOrigin.Project }])
-    expect(result.shadowed.map((entry) => entry.origin).sort()).toEqual([
-      EDefinitionOrigin.BuiltIn,
-      EDefinitionOrigin.User,
+    expect(afterToolNames(container)).toEqual([
+      'github:from-builtin',
+      'project:github:from-project',
     ])
+    expect(result.loaded).toEqual([
+      { id: 'github', origin: EDefinitionOrigin.BuiltIn },
+      { id: 'github', origin: EDefinitionOrigin.Project },
+    ])
+    expect(result.shadowed).toEqual([{ id: 'github', origin: EDefinitionOrigin.User }])
   })
 
-  it('never calls contribute on a plugin that lost', async () => {
-    let ran = false
+  it('lets a layered plugin take over a port the native bound', async () => {
     const { container } = await load([
-      native('github', async () => {
-        ran = true
-        return observing('from-builtin')
-      }),
+      native('github', greeting('from-builtin')),
+      repo({ id: 'github', origin: EDefinitionOrigin.User, contribution: greeting('from-user') }),
+    ])
+
+    expect(container.resolve(portToken(Greeter)).greet()).toBe('from-user')
+    expect(resolveSet({ container, token: portToken(Greeter) })).toHaveLength(2)
+  })
+
+  it('names a layered plugin by its origin so two of one id stay apart', async () => {
+    const { result } = await load([
+      native('github', { surfaces: [() => ({})] }),
       repo({
         id: 'github',
+        origin: EDefinitionOrigin.User,
+        contribution: { surfaces: [() => ({})] },
+      }),
+    ])
+
+    expect(result.surfaces.map((surface) => surface.pluginId)).toEqual(['github', 'user:github'])
+  })
+
+  it('never calls register on a plugin that lost', async () => {
+    let ran = false
+    const { container } = await load([
+      {
+        origin: EDefinitionOrigin.User,
+        plugin: {
+          id: 'comp',
+          register: () => {
+            ran = true
+            return observing('from-user')
+          },
+        },
+      },
+      repo({
+        id: 'comp',
         origin: EDefinitionOrigin.Project,
         contribution: observing('from-project'),
       }),
     ])
 
     expect(ran).toBe(false)
-    expect(afterToolNames(container)).toEqual(['github:from-project'])
+    expect(afterToolNames(container)).toEqual(['project:comp:from-project'])
   })
 })
 

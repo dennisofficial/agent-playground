@@ -61,8 +61,11 @@ const PHASE_TOKENS: Readonly<Record<EHookPhase, PortConstructor<RegisteredHookLi
   [EHookPhase.AfterTurn]: AfterTurnHook,
 }
 
-export const namespacedHook = (args: { id: string; hookName: string }): string =>
-  `${args.id}:${args.hookName}`
+export const pluginLabel = (identity: PluginIdentity): string =>
+  identity.origin === EDefinitionOrigin.BuiltIn ? identity.id : `${identity.origin}:${identity.id}`
+
+export const namespacedHook = (args: { identity: PluginIdentity; hookName: string }): string =>
+  `${pluginLabel(args.identity)}:${args.hookName}`
 
 const REFUSED = Symbol('atlas.PluginRefused')
 
@@ -86,12 +89,12 @@ const contributionOf = (args: {
 
 function registerHook(args: {
   container: DependencyContainer
-  id: string
+  identity: PluginIdentity
   hook: PluginHook
 }): void {
   const { hook } = args
   const registered: RegisteredHookLike = {
-    name: namespacedHook({ id: args.id, hookName: hook.name }),
+    name: namespacedHook({ identity: args.identity, hookName: hook.name }),
     order: hook.order,
     run: hook.run,
   }
@@ -100,13 +103,13 @@ function registerHook(args: {
 
 function registerContribution(args: {
   container: DependencyContainer
-  id: string
+  identity: PluginIdentity
   contribution: PluginContribution
 }): void {
   const { container, contribution } = args
 
   for (const hook of contribution.hooks ?? []) {
-    registerHook({ container, id: args.id, hook })
+    registerHook({ container, identity: args.identity, hook })
   }
   for (const tool of contribution.tools ?? []) {
     container.register(portToken(ToolDefinition), { useValue: tool })
@@ -124,6 +127,12 @@ function registerContribution(args: {
   }
 }
 
+/**
+ * A native is a harness feature rather than one authoring of a name, so it is never shadowed: a
+ * repo plugin sharing its id layers over it instead of replacing it, and every native contributes
+ * before anything read off disk. That ordering is what makes a port binding overridable — tsyringe
+ * hands a singular resolve the last registration — while the native's hooks and surfaces survive.
+ */
 export async function loadPlugins(args: {
   plugins: readonly OriginatedPlugin[]
   host: (identity: PluginIdentity) => PluginHost
@@ -133,6 +142,7 @@ export async function loadPlugins(args: {
   const winners = resolveShadowing({
     definitions: args.plugins,
     nameOf: (entry) => entry.plugin.id,
+    unshadowable: EDefinitionOrigin.BuiltIn,
   })
   const survived = new Set(winners)
 
@@ -142,8 +152,9 @@ export async function loadPlugins(args: {
 
   for (const entry of winners) {
     const identity = identityOf(entry)
+    const label = pluginLabel(identity)
     const produced = await withinBudget<unknown>({
-      label: identity.id,
+      label,
       run: () => contributionOf({ entry, host: () => args.host(identity) }),
       fallback: (mishap) => {
         refused.push({ ...identity, reason: `${mishap.kind}: ${mishap.detail}` })
@@ -154,7 +165,7 @@ export async function loadPlugins(args: {
 
     if (produced === REFUSED) continue
 
-    const checked = validatePluginContribution({ contribution: produced, pluginId: identity.id })
+    const checked = validatePluginContribution({ contribution: produced, pluginId: label })
     if (!checked.ok) {
       refused.push({ ...identity, reason: `${checked.refusal}: ${checked.detail}` })
       continue
@@ -162,11 +173,11 @@ export async function loadPlugins(args: {
 
     registerContribution({
       container: args.container,
-      id: identity.id,
+      identity,
       contribution: checked.contribution,
     })
     for (const use of checked.contribution.surfaces ?? []) {
-      surfaces.push({ pluginId: identity.id, use })
+      surfaces.push({ pluginId: label, use })
     }
     loaded.push(identity)
   }
