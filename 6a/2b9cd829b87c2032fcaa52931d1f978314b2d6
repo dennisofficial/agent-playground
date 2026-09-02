@@ -1,0 +1,122 @@
+packages/harness/src/classifier/__tests__/no-judge.spec.ts
+  s_8ae1fa940f8094::t_02f98aa9e2bc55 12-13,21-22
+apps/tui/bin/atlas-dev
+  s_2ee334b9d0aff9::t_ec6399681313fb 23-35
+apps/tui/package.json
+  s_2ee334b9d0aff9::t_ec6399681313fb 12
+packages/core/src/policy/classifier/deed.ts
+  s_85c48373ea61a3::t_b31fcdc7374bcb 54-58
+packages/core/src/policy/classifier/__tests__/benign-shapes.spec.ts
+  s_85c48373ea61a3::t_2f91ddc2dbd384 3-9,11,22,103-142
+packages/harness/src/tools/declared-paths.ts
+  s_85c48373ea61a3::t_526acc5ba87692 3,39-40,42
+packages/harness/src/classifier/__tests__/chain-kit.ts
+  s_8ae1fa940f8094::t_eaaf3e24617e95 1-17,23-91
+  s_85c48373ea61a3::t_94809cd74b095b 18-22
+packages/harness/src/classifier/__tests__/path-claims.spec.ts
+  s_85c48373ea61a3::t_379c64ceade7fb 1-218
+packages/harness/src/tools/builtin/worktree-list.ts
+  s_85c48373ea61a3::t_0fe2bf1b644a26 3-9
+  s_85c48373ea61a3::t_05bf918e71e635 39
+packages/harness/src/classifier/__tests__/late-judge.spec.ts
+  s_8ae1fa940f8094::t_3de4c949098dfe 1-93,95-98,100-101,103-104
+  s_8ae1fa940f8094::t_be78c5c62c849b 94,99,102
+packages/harness/src/classifier/prefilter.ts
+  s_85c48373ea61a3::t_b31fcdc7374bcb 56-60,68-69
+packages/harness/src/tools/builtin/agent-resume.ts
+  s_85c48373ea61a3::t_05bf918e71e635 6,30
+packages/harness/src/tools/builtin/shell-output.ts
+  s_85c48373ea61a3::t_05bf918e71e635 79
+  s_85c48373ea61a3::t_0fe2bf1b644a26 7
+packages/harness/src/tools/builtin/web-fetch.ts
+  s_85c48373ea61a3::t_0fe2bf1b644a26 7
+  s_85c48373ea61a3::t_05bf918e71e635 47
+packages/harness/src/tools/builtin/shell-list.ts
+  s_85c48373ea61a3::t_05bf918e71e635 49
+  s_85c48373ea61a3::t_0fe2bf1b644a26 8
+packages/core/src/policy/classifier/probes/kit.ts
+  s_85c48373ea61a3::t_b31fcdc7374bcb 1-8,69-70
+packages/harness/src/classifier/__tests__/fixtures.ts
+  ai_agent 28,148-155,161-162
+packages/harness/src/tools/builtin/task-write.ts
+  s_85c48373ea61a3::t_0fe2bf1b644a26 9
+  s_85c48373ea61a3::t_05bf918e71e635 32
+packages/harness/src/classifier/tool-lens.ts
+  s_85c48373ea61a3::t_fc341031b8038d 44-46
+  s_85c48373ea61a3::t_526acc5ba87692 4,6,43,47-48
+packages/core/src/policy/classifier/__tests__/fixtures.ts
+  s_85c48373ea61a3::t_0cb9382e864fb6 11,201-224
+packages/harness/src/hooks/record-file-state.ts
+  s_85c48373ea61a3::t_526acc5ba87692 6,46
+packages/harness/src/hooks/budget.ts
+  s_8ae1fa940f8094::t_0e407aa7d8585d 3
+packages/harness/src/classifier/classify-call.ts
+  s_85c48373ea61a3::t_a704f66ff2125e 6,43-44,51-52,60-63,118-119,123-124,131-132,142-143,147,165-187,194,196,230-233,238
+packages/harness/src/classifier/register-classifier.ts
+  s_85c48373ea61a3::t_a704f66ff2125e 11-12,15-18,20-21,23-24,26-30,34-45,55-57
+packages/harness/src/tools/builtin/enter-worktree.ts
+  s_85c48373ea61a3::t_b81d5d9d6548ea 3-12,62-69
+packages/core/src/tools/tool.ts
+  s_85c48373ea61a3::t_fc341031b8038d 40,43,47-48
+  s_85c48373ea61a3::t_181957fbfc6f27 54
+  s_85c48373ea61a3::t_da30ce14db3aa0 38-39,41-42,44-46,49-53,55-56,131,160,169
+packages/core/src/policy/classifier/probes/contention.ts
+  s_85c48373ea61a3::t_b31fcdc7374bcb 7,152
+packages/core/src/policy/classifier/deed-of.ts
+  s_85c48373ea61a3::t_8b850e75bd9963 31,38
+  s_85c48373ea61a3::t_181957fbfc6f27 6,184-186,188,195
+  s_85c48373ea61a3::t_d6b278cad37397 236-248
+packages/harness/src/tools/builtin/web-search.ts
+  s_85c48373ea61a3::t_05bf918e71e635 5,37
+packages/harness/src/tools/builtin/agent-list.ts
+  s_85c48373ea61a3::t_05bf918e71e635 8,48
+packages/harness/src/tools/__tests__/declared-paths.spec.ts
+  s_85c48373ea61a3::t_526acc5ba87692 25
+packages/harness/src/tools/builtin/skill.ts
+  s_85c48373ea61a3::t_05bf918e71e635 7,97
+packages/harness/src/tools/builtin/agent-say.ts
+  s_85c48373ea61a3::t_05bf918e71e635 7,33
+packages/harness/src/tools/builtin/exit-worktree.ts
+  s_85c48373ea61a3::t_fc341031b8038d 7,51
+packages/harness/src/tools/builtin/shell-kill.ts
+  s_85c48373ea61a3::t_0fe2bf1b644a26 3-9
+  s_85c48373ea61a3::t_05bf918e71e635 33
+packages/harness/src/tools/builtin/agent-spawn.ts
+  s_85c48373ea61a3::t_05bf918e71e635 7,87
+packages/harness/src/tools/builtin/agent-stop.ts
+  s_85c48373ea61a3::t_05bf918e71e635 9,34
+packages/core/src/policy/classifier/__tests__/damaging-shapes.spec.ts
+  s_85c48373ea61a3::t_2f91ddc2dbd384 3-9,12,22,126-166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6a2b9cd829b87c2032fcaa52931d1f978314b2d6",
+  "prompts": {},
+  "sessions": {
+    "s_2ee334b9d0aff9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d3cde86-230c-45c2-b31b-701e60787293",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
