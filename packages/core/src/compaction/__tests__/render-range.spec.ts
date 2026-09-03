@@ -66,4 +66,21 @@ describe('transcriptOfRange', () => {
 
     expect(transcriptOfRange({ events, throughSeq: 1 }).length).toBeLessThan(1_000)
   })
+
+  it('drops tool lines when only prose is wanted, keeping speech and summaries', () => {
+    const events = eventsFrom([
+      compacted(0, 'A parser was written.'),
+      said('now the lexer'),
+      called('call-1'),
+      resulted('call-1'),
+      denied('call-2'),
+      replied('lexer done'),
+    ])
+
+    expect(transcriptOfRange({ events, throughSeq: 6, proseOnly: true })).toBe(
+      'Summary of the conversation before this: A parser was written.\n' +
+        'Operator: now the lexer\n' +
+        'Atlas: lexer done',
+    )
+  })
 })

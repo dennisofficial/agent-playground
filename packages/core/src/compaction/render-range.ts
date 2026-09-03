@@ -44,17 +44,25 @@ function lineOf(event: Event): string | undefined {
   return undefined
 }
 
+const isProse = (event: Event): boolean =>
+  event.type === 'history-compacted' ||
+  event.type === 'user-said' ||
+  event.type === 'assistant-said'
+
 export function transcriptOfRange({
   events,
   fromSeq = 0,
   throughSeq,
+  proseOnly = false,
 }: {
   events: readonly Event[]
   fromSeq?: number | undefined
   throughSeq: number
+  proseOnly?: boolean | undefined
 }): string {
   return events
     .filter((event) => event.seq >= fromSeq && event.seq <= throughSeq)
+    .filter((event) => !proseOnly || isProse(event))
     .flatMap((event) => {
       const line = lineOf(event)
       return line === undefined ? [] : [line]
