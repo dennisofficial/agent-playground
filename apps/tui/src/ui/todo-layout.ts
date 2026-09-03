@@ -35,3 +35,29 @@ export function todoRows(args: { tasks: readonly SidebarTask[]; cells: number })
 
   return args.tasks.flatMap((task) => taskRows({ task, cells: room }))
 }
+
+export const TODO_DONE_TAIL = 2
+export const TODO_FOLD_MIN = 2
+
+export type TodoFold = {
+  shown: readonly SidebarTask[]
+  hidden: number
+}
+
+export function foldTodo(args: {
+  tasks: readonly SidebarTask[]
+  expanded: boolean
+}): TodoFold {
+  const completed = args.tasks.filter((task) => task.state === ESidebarTaskState.Done)
+  const folded = completed.length - TODO_DONE_TAIL
+  if (folded < TODO_FOLD_MIN) return { shown: args.tasks, hidden: 0 }
+
+  const active = args.tasks.filter((task) => task.state !== ESidebarTaskState.Done)
+  const hidden = completed.slice(0, folded)
+  const tail = completed.slice(folded)
+
+  return {
+    shown: [...(args.expanded ? hidden : []), ...tail, ...active],
+    hidden: hidden.length,
+  }
+}

@@ -1,8 +1,9 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 import { ESidebarTaskState, type SidebarTask } from '../../../store/sidebar-model'
+import { useClickRegion } from '../../hooks/use-click-region'
 import { glyph, theme } from '../../theme'
-import { ETodoRow, todoRows, type TodoRow } from '../../todo-layout'
+import { ETodoRow, foldTodo, todoRows, type TodoRow } from '../../todo-layout'
 import type { Span } from '../spans'
 import { Row, Section } from './row'
 
@@ -21,17 +22,45 @@ const markOf = (row: TodoRow): Span => {
 const labelFgOf = (row: TodoRow): string =>
   row.state === ESidebarTaskState.Running ? theme.bright : theme.hint
 
+function DoneFoldRow(props: {
+  hidden: number
+  expanded: boolean
+  onToggle: () => void
+}): React.ReactNode {
+  const region = useClickRegion(props.onToggle)
+
+  return (
+    <text wrapMode="none" flexShrink={0} {...region.handlers}>
+      <span fg={theme.ok} {...region.wash}>
+        {`${DONE} `}
+      </span>
+      <span fg={region.hovered ? theme.hover : theme.hint} {...region.wash}>
+        {`${props.hidden} more done ${props.expanded ? '▾' : '▸'}`}
+      </span>
+    </text>
+  )
+}
+
 export function TodoSection(props: {
   tasks: readonly SidebarTask[]
   cells: number
 }): React.ReactNode {
+  const [expanded, setExpanded] = useState(false)
   if (props.tasks.length === 0) return null
 
   const done = props.tasks.filter((task) => task.state === ESidebarTaskState.Done).length
+  const fold = foldTodo({ tasks: props.tasks, expanded })
 
   return (
     <Section label="Todo" count={`${done}/${props.tasks.length}`}>
-      {todoRows({ tasks: props.tasks, cells: props.cells }).map((row) => (
+      {fold.hidden === 0 ? null : (
+        <DoneFoldRow
+          hidden={fold.hidden}
+          expanded={expanded}
+          onToggle={() => setExpanded((value) => !value)}
+        />
+      )}
+      {todoRows({ tasks: fold.shown, cells: props.cells }).map((row) => (
         <Row
           key={row.key}
           label={row.text}
