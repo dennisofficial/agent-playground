@@ -1,6 +1,6 @@
 import {
   eventBodySchema,
-  stampDrafts,
+  stampEvent,
   type Event,
   type EventDraft,
   type EventEnvelope,
@@ -28,29 +28,88 @@ export type DecodedLog = {
   unreadable: UnreadableRow[]
 }
 
-export function decodeEventRows(rows: readonly EventRow[]): DecodedLog {
-  const drafts: EventDraft[] = []
-  const envelopes: EventEnvelope[] = []
+type CachedDecode = { event: Event; bytes: number } | { gap: UnreadableRow; bytes: number }
+
+const DEFAULT_BYTE_CAP = 64 * 1024 * 1024
+
+/**
+ * Rows are immutable once written — nothing updates an Event body, only rewind deletes rows, and
+ * deletes cannot serve stale decodes because every read re-fetches rows first. That makes the row
+ * id a safe cache key, which is what lets a long session re-read its whole log per step boundary
+ * without re-parsing and re-validating every body each time.
+ */
+export class EventDecodeCache {
+  private readonly entries = new Map<string, CachedDecode>()
+  private held = 0
+
+  constructor(private readonly byteCap: number = DEFAULT_BYTE_CAP) {}
+
+  lookup({ row }: { row: EventRow }): CachedDecode | undefined {
+    if (row.id === '') return undefined
+
+    const hit = this.entries.get(row.id)
+    if (hit === undefined) return undefined
+
+    this.entries.delete(row.id)
+    this.entries.set(row.id, hit)
+    return hit
+  }
+
+  keep({ row, decoded }: { row: EventRow; decoded: CachedDecode }): void {
+    if (row.id === '' || this.entries.has(row.id)) return
+
+    this.entries.set(row.id, decoded)
+    this.held += decoded.bytes
+
+    while (this.held > this.byteCap) {
+      const oldest = this.entries.keys().next()
+      if (oldest.done) break
+      const dropped = this.entries.get(oldest.value)
+      this.entries.delete(oldest.value)
+      this.held -= dropped?.bytes ?? 0
+    }
+  }
+}
+
+export function decodeEventRows({
+  rows,
+  cache,
+}: {
+  rows: readonly EventRow[]
+  cache?: EventDecodeCache | undefined
+}): DecodedLog {
+  const events: Event[] = []
   const unreadable: UnreadableRow[] = []
 
   for (const row of rows) {
+    const cached = cache?.lookup({ row })
+    if (cached !== undefined) {
+      if ('gap' in cached) unreadable.push(cached.gap)
+      else events.push(cached.event)
+      continue
+    }
+
     const decoded = decodeRow(row)
     if ('reason' in decoded) {
-      unreadable.push({
+      const gap: UnreadableRow = {
         id: row.id,
         seq: row.seq,
         threadId: row.threadId,
         type: row.type,
         reason: decoded.reason,
         detail: decoded.detail,
-      })
+      }
+      unreadable.push(gap)
+      cache?.keep({ row, decoded: { gap, bytes: row.body.length } })
       continue
     }
-    drafts.push(decoded.draft)
-    envelopes.push(decoded.envelope)
+
+    const event = stampEvent({ draft: decoded.draft, envelope: decoded.envelope })
+    events.push(event)
+    cache?.keep({ row, decoded: { event, bytes: row.body.length } })
   }
 
-  return { events: stampDrafts({ drafts, envelopes }), unreadable }
+  return { events, unreadable }
 }
 
 type Undecodable = { reason: EUnreadableReason; detail: string }

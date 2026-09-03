@@ -67,6 +67,6 @@ export function loadThread(args: { path: string; threadId?: string | undefined }
     .all(thread.id)
   database.close()
 
-  const decoded = decodeEventRows(rows)
+  const decoded = decodeEventRows({ rows })
   return { thread, events: decoded.events, unreadable: decoded.unreadable.length }
 }
