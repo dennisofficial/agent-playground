@@ -57,8 +57,8 @@ describe('the footer', () => {
     const rows = rowsOf(frame)
     expect(rows).toHaveLength(1)
     const row = rows[0] ?? ''
-    expect(row.trimStart()).toStartWith(`${MODEL} · med`)
-    expect(row).toEndWith('124.0k ctx · 62%')
+    expect(row.trimStart()).toStartWith(`${MODEL} med`)
+    expect(row).toEndWith('124.0k ctx 62%')
     expect(row).toContain('   ')
   })
 
@@ -89,7 +89,7 @@ describe('the footer', () => {
   it('draws no gauge — the figures carry the reading now', async () => {
     const frame = await frameOf(footer({ width: 120, percent: 62, tokensUsed: 124_000 }), 120)
     expect(frame).not.toContain('█')
-    expect(frame).toContain('124.0k ctx · 62%')
+    expect(frame).toContain('124.0k ctx 62%')
   })
 
   it('spells out the consequence once the window is under pressure', async () => {

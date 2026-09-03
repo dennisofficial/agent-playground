@@ -132,7 +132,7 @@ describe('usePullRequest', () => {
     const { probe, section, done } = await mounted({ reading: FOUND })
 
     try {
-      expect(probe.control?.badge?.label).toBe('PR #123')
+      expect(probe.control?.badge?.label).toBe('#123')
       expect(probe.control?.badge?.checks).toBe(EChecksState.Running)
 
       const rows = section()

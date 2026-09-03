@@ -1,5 +1,6 @@
 import type { Span } from './components/spans'
 import { cellsOf } from './hint-layout'
+import { theme } from './theme'
 
 /**
  * Three states rather than two booleans set against each other: `Keyboard` stops the arrows, fires
@@ -16,7 +17,25 @@ export type FooterItem = {
   id: string
   spans: readonly Span[]
   reach: EFooterItemReach
+  ground?: string | undefined
   onActivate?: (() => void) | undefined
+}
+
+export function chipItem(args: {
+  id: string
+  text: string
+  ground: string
+  ink?: string
+  reach: EFooterItemReach
+  onActivate?: (() => void) | undefined
+}): FooterItem {
+  return {
+    id: args.id,
+    spans: [{ text: args.text, fg: args.ink ?? theme.appBg }],
+    reach: args.reach,
+    ground: args.ground,
+    onActivate: args.onActivate,
+  }
 }
 
 export const NO_FOOTER_ITEMS: readonly FooterItem[] = []

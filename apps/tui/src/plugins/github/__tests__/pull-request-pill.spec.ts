@@ -1,61 +1,59 @@
 import { EChecksState, EPullRequestState, type PullRequestBadge } from '../pure'
 import { describe, expect, it } from 'bun:test'
 
-import { pullRequestPill } from '../pull-request-pill'
-import { glyph, theme } from '../../../ui/theme'
+import { pullRequestChip } from '../pull-request-pill'
+import { theme } from '../../../ui/theme'
 
 const badge = (args: { state: EPullRequestState; checks: EChecksState }): PullRequestBadge => ({
-  label: 'PR #123',
+  label: '#123',
   url: 'https://github.com/o/r/pull/123',
   state: args.state,
   checks: args.checks,
 })
 
-const textOf = (badgeArgs: { state: EPullRequestState; checks: EChecksState }): string =>
-  pullRequestPill(badge(badgeArgs))
-    .map((span) => span.text)
-    .join('')
+const groundOf = (badgeArgs: { state: EPullRequestState; checks: EChecksState }): string =>
+  pullRequestChip(badge(badgeArgs)).ground
 
-describe('pullRequestPill', () => {
-  it('shows the label alone when there are no checks', () => {
-    const spans = pullRequestPill(
-      badge({ state: EPullRequestState.Open, checks: EChecksState.None }),
-    )
+describe('pullRequestChip', () => {
+  it('spells the number and nothing else — the fill is the whole reading', () => {
+    const chip = pullRequestChip(badge({ state: EPullRequestState.Open, checks: EChecksState.None }))
 
-    expect(spans).toEqual([{ text: 'PR #123', fg: theme.meta }])
+    expect(chip.spans).toEqual([{ text: '#123', fg: theme.appBg }])
   })
 
-  it('marks passing, failing and running checks with a static glyph', () => {
-    expect(textOf({ state: EPullRequestState.Open, checks: EChecksState.Passing })).toBe(
-      `PR #123 ${glyph.passed}`,
+  it('fills the chip with the check reading, which outranks the state', () => {
+    expect(groundOf({ state: EPullRequestState.Open, checks: EChecksState.Failing })).toBe(
+      theme.error,
     )
-    expect(textOf({ state: EPullRequestState.Open, checks: EChecksState.Failing })).toBe(
-      `PR #123 ${glyph.failed}`,
+    expect(groundOf({ state: EPullRequestState.Open, checks: EChecksState.Running })).toBe(
+      theme.warn,
     )
-    expect(textOf({ state: EPullRequestState.Open, checks: EChecksState.Running })).toBe(
-      `PR #123 ${glyph.available}`,
+    expect(groundOf({ state: EPullRequestState.Open, checks: EChecksState.Passing })).toBe(
+      theme.ok,
+    )
+    expect(groundOf({ state: EPullRequestState.Draft, checks: EChecksState.Failing })).toBe(
+      theme.error,
     )
   })
 
-  it('tones a failing check as an error and a passing one as ordinary', () => {
-    const failing = pullRequestPill(
-      badge({ state: EPullRequestState.Open, checks: EChecksState.Failing }),
+  it('fills each checkless state apart, none of them green', () => {
+    expect(groundOf({ state: EPullRequestState.Open, checks: EChecksState.None })).toBe(theme.link)
+    expect(groundOf({ state: EPullRequestState.Merged, checks: EChecksState.None })).toBe(
+      theme.court.external,
     )
-    const passing = pullRequestPill(
-      badge({ state: EPullRequestState.Open, checks: EChecksState.Passing }),
+    expect(groundOf({ state: EPullRequestState.Draft, checks: EChecksState.None })).toBe(
+      theme.selectedBg,
     )
-
-    expect(failing.at(-1)?.fg).toBe(theme.error)
-    expect(passing.at(-1)?.fg).toBe(theme.meta)
+    expect(groundOf({ state: EPullRequestState.Closed, checks: EChecksState.None })).toBe(
+      theme.selectedBg,
+    )
   })
 
-  it('tones each pull request state apart', () => {
-    const toneOf = (state: EPullRequestState): string | undefined =>
-      pullRequestPill(badge({ state, checks: EChecksState.None })).at(0)?.fg
+  it('reads the muted chip in body ink so the label survives the dark fill', () => {
+    const chip = pullRequestChip(
+      badge({ state: EPullRequestState.Closed, checks: EChecksState.None }),
+    )
 
-    expect(toneOf(EPullRequestState.Open)).toBe(theme.meta)
-    expect(toneOf(EPullRequestState.Draft)).toBe(theme.rule)
-    expect(toneOf(EPullRequestState.Merged)).toBe(theme.court.external)
-    expect(toneOf(EPullRequestState.Closed)).toBe(theme.rule)
+    expect(chip.spans.at(0)?.fg).toBe(theme.body)
   })
 })

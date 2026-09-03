@@ -105,6 +105,7 @@ import {
 import { useOverlayKeys } from './use-overlay-keys'
 import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
+import { subagentsSurface } from './agents-surface'
 import { shellsSurface } from './shells-surface'
 import { usePluginSurfaces } from './use-plugin-surfaces'
 import { useFooterStrip } from './use-footer-strip'
@@ -661,7 +662,11 @@ function Workspace(props: {
   ])
 
   const surfaces = usePluginSurfaces({
-    surfaces: [...props.app.pluginSurfaces, shellsSurface({ shells })],
+    surfaces: [
+      ...props.app.pluginSurfaces,
+      shellsSurface({ shells }),
+      subagentsSurface({ agents, picker: agentsPicker }),
+    ],
   })
 
   /**
