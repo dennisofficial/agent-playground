@@ -180,6 +180,8 @@ export * from './settings/resolve'
 export * from './settings/edit'
 export * from './settings/registry'
 
+export * from './version/semver'
+
 export * from './secrets/mask'
 export * from './secrets/prompt'
 

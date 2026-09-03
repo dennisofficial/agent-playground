@@ -1,0 +1,11 @@
+{
+  "packages": {
+    "apps/tui": {
+      "component": "tui",
+      "release-type": "simple",
+      "include-component-in-tag": true,
+      "bump-minor-pre-major": true,
+      "changelog-path": "CHANGELOG.md"
+    }
+  }
+}
