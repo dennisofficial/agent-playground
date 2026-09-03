@@ -11,6 +11,7 @@ export enum ECommandGroup {
 
 export type CommandSpec = {
   name: string
+  aliases?: readonly string[] | undefined
   kind: ECommandKind
   summary: string
   group: ECommandGroup

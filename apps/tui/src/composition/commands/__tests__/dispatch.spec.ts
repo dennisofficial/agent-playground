@@ -181,6 +181,30 @@ describe('localCommands', () => {
   })
 })
 
+describe('the new command and its alias', () => {
+  it('starts a fresh conversation on /new and on /clear alike', async () => {
+    const started: string[] = []
+    const commands = localCommands(handlers({ onNewConversation: () => started.push('new') }))
+
+    await dispatchSubmission({ text: '/new', commands, skills: [] })
+    await dispatchSubmission({ text: '/clear', commands, skills: [] })
+
+    expect(started).toEqual(['new', 'new'])
+  })
+
+  it('waits for the turn to settle under either name', async () => {
+    const dispatched = await dispatchSubmission({
+      text: '/clear',
+      commands: localCommands(handlers()),
+      skills: [],
+      working: true,
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('wait for the turn')
+  })
+})
+
 describe('the skills command', () => {
   it('reloads and reports what the reload holds', async () => {
     let reloads = 0
