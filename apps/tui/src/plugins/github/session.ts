@@ -75,9 +75,13 @@ export function createSessionFacts({ launchDirectory }: { launchDirectory: strin
         return {}
       }
 
-      if (exitedWorktreeOf(result.output) === undefined || directory === launchDirectory) return {}
+      const exited = exitedWorktreeOf(result.output)
+      if (exited === undefined) return {}
 
-      directory = launchDirectory
+      const home = exited.returnTo ?? launchDirectory
+      if (directory === home) return {}
+
+      directory = home
       announce()
       return {}
     },
