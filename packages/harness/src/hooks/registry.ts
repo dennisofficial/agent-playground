@@ -17,6 +17,7 @@ import {
   type HookOrder,
   type HookOutcome,
   type OnChunk,
+  type OnThreadOpen,
   type ProviderPrompt,
 } from '@dltech/atlas-core'
 
@@ -41,6 +42,7 @@ export type HookChainArgs = {
   afterShell?: readonly RegisteredHook<AfterShell>[] | undefined
   onChunk?: readonly RegisteredHook<OnChunk>[] | undefined
   afterTurn?: readonly RegisteredHook<AfterTurn>[] | undefined
+  onThreadOpen?: readonly RegisteredHook<OnThreadOpen>[] | undefined
   onMishap?: OnHookMishap | undefined
   budgetMs?: number | undefined
 }
@@ -98,6 +100,7 @@ export class HookChain {
   private readonly afterShellHooks: readonly RegisteredHook<AfterShell>[]
   private readonly onChunkHooks: readonly RegisteredHook<OnChunk>[]
   private readonly afterTurnHooks: readonly RegisteredHook<AfterTurn>[]
+  private readonly onThreadOpenHooks: readonly RegisteredHook<OnThreadOpen>[]
   readonly bounds: Bounds
 
   constructor(args: HookChainArgs) {
@@ -110,6 +113,7 @@ export class HookChain {
     this.afterShellHooks = orderHooks(args.afterShell ?? [])
     this.onChunkHooks = orderHooks(args.onChunk ?? [])
     this.afterTurnHooks = orderHooks(args.afterTurn ?? [])
+    this.onThreadOpenHooks = orderHooks(args.onThreadOpen ?? [])
   }
 
   async beforeTurn(args: {
@@ -117,6 +121,13 @@ export class HookChain {
     projectDirectory: string
   }): Promise<readonly EventDraft[]> {
     return collectDrafts({ hooks: this.beforeTurnHooks, args, bounds: this.bounds })
+  }
+
+  async onThreadOpen(args: {
+    threadId: ThreadId
+    projectDirectory: string
+  }): Promise<readonly EventDraft[]> {
+    return collectDrafts({ hooks: this.onThreadOpenHooks, args, bounds: this.bounds })
   }
 
   async beforeStep(args: { assembled: Assembled; trace: AssemblyTrace }): Promise<Assembled> {

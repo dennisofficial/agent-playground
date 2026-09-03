@@ -214,6 +214,25 @@ describe('HookChain', () => {
     ])
   })
 
+  it('gathers what thread-open hooks return, carrying the directory the opened log implies', async () => {
+    const seen: string[] = []
+    const chain = new HookChain({
+      onThreadOpen: [
+        {
+          name: 'github:thread-opened',
+          order: observe(0),
+          run: async ({ projectDirectory }) => {
+            seen.push(projectDirectory)
+            return {}
+          },
+        },
+      ],
+    })
+
+    expect(await chain.onThreadOpen({ threadId, projectDirectory: '/repo/.claude/worktrees/x' })).toEqual([])
+    expect(seen).toEqual(['/repo/.claude/worktrees/x'])
+  })
+
   it('renders additionalContext as a context-loaded draft slotted under the hook that returned it', async () => {
     const chain = new HookChain({
       beforeTurn: [
@@ -256,5 +275,6 @@ describe('HookChain', () => {
     expect(await chain.onChunk({ chunk: delta })).toBe(delta)
     expect(await chain.beforeTurn({ threadId, projectDirectory: '/repo' })).toEqual([])
     expect(await chain.afterTurn({ threadId })).toEqual([])
+    expect(await chain.onThreadOpen({ threadId, projectDirectory: '/repo' })).toEqual([])
   })
 })

@@ -22,6 +22,7 @@ export enum EHookPhase {
   AfterShell = 'after-shell',
   OnChunk = 'on-chunk',
   AfterTurn = 'after-turn',
+  OnThreadOpen = 'on-thread-open',
 }
 
 export type BeforeTurn = (args: {
@@ -59,6 +60,17 @@ export type OnChunk = (chunk: Chunk) => Promise<Chunk | null>
 
 export type AfterTurn = (args: { threadId: ThreadId }) => Promise<HookOutcome>
 
+/**
+ * The second phase no turn drives (AfterShell is the first): opening a conversation says nothing
+ * to the model, so the app fires this when a thread becomes the visible one — at boot resume and on
+ * every switch — carrying the directory the opened log puts the session in. Its drafts append to
+ * that thread's log by the caller, never to a thread the log has not opened yet.
+ */
+export type OnThreadOpen = (args: {
+  threadId: ThreadId
+  projectDirectory: string
+}) => Promise<HookOutcome>
+
 abstract class PhaseHook<TRun> {
   abstract readonly name: string
   abstract readonly order: HookOrder
@@ -80,3 +92,5 @@ export abstract class AfterShellHook extends PhaseHook<AfterShell> {}
 export abstract class OnChunkHook extends PhaseHook<OnChunk> {}
 
 export abstract class AfterTurnHook extends PhaseHook<AfterTurn> {}
+
+export abstract class OnThreadOpenHook extends PhaseHook<OnThreadOpen> {}

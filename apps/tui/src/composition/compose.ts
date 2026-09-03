@@ -197,6 +197,7 @@ export type AtlasApp = {
   pluginProjections: readonly ContributedProjection[]
   pluginSurfaces: readonly ContributedSurface[]
   mcp: () => readonly McpServerStatus[]
+  threadOpened: (args: { threadId: ThreadId; projectDirectory: string }) => Promise<void>
   close: () => Promise<void>
 }
 
@@ -624,6 +625,18 @@ export async function composeAtlas(args: {
     shells,
     agents,
     mcp: () => mcp.servers(),
+    /**
+     * Drafts append only to a thread the store already knows: a conversation nobody has spoken in
+     * is opened by its first turn, and an OnThreadOpen draft must not open it early.
+     */
+    threadOpened: async ({ threadId, projectDirectory }) => {
+      const chain = container.resolve(HookChainToken)
+      const drafts = await chain.onThreadOpen({ threadId, projectDirectory })
+      if (drafts.length === 0) return
+      if ((await threads.find({ threadId })) === undefined) return
+
+      await log.append({ threadId, runId: ids.nextRunId(), drafts })
+    },
     model,
     modelPinned: pinnedByFlag,
     models,

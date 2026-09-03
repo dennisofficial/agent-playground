@@ -13,6 +13,7 @@ import type {
   HookOrder,
   IdPort,
   OnChunk,
+  OnThreadOpen,
   PromptFragment,
   ToolDefinition,
   WorkspacePort,
@@ -37,6 +38,7 @@ export type PluginHook =
   | Phase<EHookPhase.AfterShell, AfterShell>
   | Phase<EHookPhase.OnChunk, OnChunk>
   | Phase<EHookPhase.AfterTurn, AfterTurn>
+  | Phase<EHookPhase.OnThreadOpen, OnThreadOpen>
 
 export type PortBinding<TPort = unknown> = {
   token: abstract new (...args: never[]) => TPort

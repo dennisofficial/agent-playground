@@ -1,4 +1,11 @@
-import type { AfterTurn, BeforeTurn } from '@dltech/atlas-core'
+import {
+  enteredWorktreeOf,
+  exitedWorktreeOf,
+  type AfterTool,
+  type AfterTurn,
+  type BeforeTurn,
+  type OnThreadOpen,
+} from '@dltech/atlas-core'
 
 export type SessionFacts = {
   directory: () => string
@@ -7,14 +14,17 @@ export type SessionFacts = {
   subscribe: (listener: () => void) => () => void
   beforeTurn: BeforeTurn
   afterTurn: AfterTurn
+  followWorktree: AfterTool
+  threadOpened: OnThreadOpen
 }
 
 /**
  * A surface hook takes no arguments, so the two facts the pull request follows — which directory
  * the session is working in, and whether a turn is running — are heard on the hook phases that
- * already carry them rather than passed down from the render tree. `BeforeTurn` is the only phase
- * that names a project directory, and the turn boundary it brackets with `AfterTurn` is the same
- * edge a re-probe used to key on.
+ * already carry them rather than passed down from the render tree. The turn boundary brackets
+ * `working`, and the directory moves on three edges: `OnThreadOpen` when a conversation becomes
+ * visible, the tool result of `enter_worktree` / `exit_worktree` mid-turn, and `BeforeTurn` for
+ * anything those two missed.
  */
 export function createSessionFacts({ launchDirectory }: { launchDirectory: string }): SessionFacts {
   const listeners = new Set<() => void>()
@@ -50,6 +60,31 @@ export function createSessionFacts({ launchDirectory }: { launchDirectory: strin
       if (!working) return {}
 
       working = false
+      announce()
+      return {}
+    },
+    followWorktree: async ({ result }) => {
+      if (!result.ok) return {}
+
+      const entered = enteredWorktreeOf(result.output)
+      if (entered !== undefined) {
+        if (directory === entered.path) return {}
+
+        directory = entered.path
+        announce()
+        return {}
+      }
+
+      if (exitedWorktreeOf(result.output) === undefined || directory === launchDirectory) return {}
+
+      directory = launchDirectory
+      announce()
+      return {}
+    },
+    threadOpened: async ({ projectDirectory }) => {
+      if (directory === projectDirectory) return {}
+
+      directory = projectDirectory
       announce()
       return {}
     },

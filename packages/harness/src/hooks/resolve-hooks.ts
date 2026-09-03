@@ -7,6 +7,7 @@ import {
   BeforeToolHook,
   BeforeTurnHook,
   OnChunkHook,
+  OnThreadOpenHook,
 } from '@dltech/atlas-core'
 
 import {
@@ -40,5 +41,6 @@ export function resolveHookChain(args: { container: DependencyContainer }): Hook
     afterShell: phase(AfterShellHook),
     onChunk: phase(OnChunkHook),
     afterTurn: phase(AfterTurnHook),
+    onThreadOpen: phase(OnThreadOpenHook),
   })
 }
