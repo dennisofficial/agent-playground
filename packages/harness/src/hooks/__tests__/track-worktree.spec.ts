@@ -50,6 +50,16 @@ describe('what the hook records about worktrees', () => {
     ])
   })
 
+  it('carries the returnTo an exit recorded into the event', async () => {
+    const output = {
+      exitedWorktree: { path: TREE, action: EWorktreeExit.Keep, returnTo: '/Users/dev/project' },
+    }
+
+    expect(await draftsFor(succeeded(output))).toEqual([
+      { type: 'worktree-exited', path: TREE, action: EWorktreeExit.Keep, returnTo: '/Users/dev/project' },
+    ])
+  })
+
   it('records nothing when the tool failed, whatever it claimed to have done', async () => {
     const failed: ToolOutcome = { ok: false, reason: 'git refused' }
 

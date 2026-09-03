@@ -7,6 +7,8 @@ import {
   rowsOwnedBy,
   activeWorktreeAfter,
   activeWorktreeOf,
+  homeDirectoryAfter,
+  homeDirectoryOf,
   type ActiveWorktree,
   type ThreadId,
   type CallId,
@@ -40,6 +42,7 @@ export function createSettlePending(deps: {
     events: readonly Event[]
     signal: AbortSignal
     projectDirectory: string
+    homeDirectory: string
     activeWorktree: ActiveWorktree | undefined
   }): Promise<readonly EventDraft[]> => {
     const { call, refusal } = args
@@ -52,6 +55,7 @@ export function createSettlePending(deps: {
       call,
       signal: args.signal,
       projectDirectory: args.projectDirectory,
+      homeDirectory: args.homeDirectory,
       activeWorktree: args.activeWorktree,
       events: args.events,
     })
@@ -78,11 +82,12 @@ export function createSettlePending(deps: {
 
     const launchDirectory = deps.launchDirectory ?? process.cwd()
     let activeWorktree: ActiveWorktree | undefined = activeWorktreeOf(events)
+    let homeDirectory = homeDirectoryOf({ events, launchDirectory })
 
     for (const run of runs) {
       if (signal.aborted) return {}
 
-      const projectDirectory = activeWorktree?.path ?? launchDirectory
+      const projectDirectory = activeWorktree?.path ?? homeDirectory
       const settled = await Promise.all(
         run.map((call) =>
           settleOne({
@@ -91,6 +96,7 @@ export function createSettlePending(deps: {
             events,
             signal,
             projectDirectory,
+            homeDirectory,
             activeWorktree,
           }),
         ),
@@ -105,6 +111,7 @@ export function createSettlePending(deps: {
       const drafts = settled.flat()
 
       activeWorktree = activeWorktreeAfter({ drafts, active: activeWorktree })
+      homeDirectory = homeDirectoryAfter({ drafts, home: homeDirectory })
 
       const asked = drafts.find((draft) => draft.type === 'approval-requested')
       if (asked !== undefined) return { paused: { callId: asked.callId, reason: asked.reason } }

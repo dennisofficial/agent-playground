@@ -10,6 +10,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { WorkspaceRoot } from '../../container/tokens'
+import { probeWorkspace } from '../../workspace/probe'
 import { releaseWorktree } from '../../workspace/worktree-lock'
 import { inspectWorktree, removeWorktree, type WorktreeInspection } from '../../workspace/worktrees'
 import { repositoryAt, worktreeAt } from './worktree-support'
@@ -20,9 +21,10 @@ const inputSchema = z.strictObject({
 })
 
 const description = [
-  'Leave the worktree the session is in and return to the directory Atlas was launched in.',
+  'Leave the worktree the session is in and return to the home directory - the directory Atlas was launched in, or the main checkout if the session already left a worktree it was launched inside.',
   'keep leaves the worktree and its branch on disk to come back to; remove deletes both.',
-  'remove only ever touches a worktree Atlas created with enter_worktree name. One the session merely entered by path already existed, so it is left on disk whichever action is asked for, and the developer removes it themselves.',
+  'remove only ever touches a worktree Atlas created with enter_worktree name. One the session merely entered by path, or was launched inside, already existed, so it is left on disk whichever action is asked for, and the developer removes it themselves.',
+  'A session launched inside a worktree is in one even though it never entered: exiting moves the session to the main checkout of the repository and always keeps the worktree.',
   'Call it only when the developer asks to leave, never on your own initiative, and never as tidying up after finishing a task.',
   'A remove is refused while the worktree holds uncommitted changes, or commits that are on neither its upstream nor the ref the branch was cut from; the refusal names what would be lost.',
   'discardChanges forces that removal through, so ask the developer before setting it rather than deciding for them.',
@@ -57,34 +59,32 @@ export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     projectDirectory,
+    homeDirectory,
     activeWorktree,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    if (projectDirectory === this.launchDirectory) {
-      return {
-        ok: true,
-        output: { exited: false },
-        modelText: `The session is not in a worktree - it is in ${this.launchDirectory}, where it started - so nothing was left and nothing was removed.`,
-      }
+    if (activeWorktree === undefined) {
+      return this.leaveLaunchDirectory({ input, projectDirectory })
     }
 
+    const home = homeDirectory ?? this.launchDirectory
     const path = projectDirectory
 
     const repository = await repositoryAt({ cwd: path })
     if (repository.ok) await releaseWorktree({ cwd: repository.view.root, path })
 
-    if (input.action === EWorktreeExit.Remove && activeWorktree?.adopted === true) {
+    if (input.action === EWorktreeExit.Remove && activeWorktree.adopted) {
       return {
         ok: true,
-        output: { exitedWorktree: { path, action: EWorktreeExit.Keep } },
-        modelText: `Left the worktree at ${path}. Atlas did not create it - the session entered one that already existed - so it stays on disk with its branch and nothing was removed. Tell the developer that, and let them remove it themselves if they want it gone. The project directory is ${this.launchDirectory} again.`,
+        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo: home } },
+        modelText: `Left the worktree at ${path}. Atlas did not create it - the session entered one that already existed - so it stays on disk with its branch and nothing was removed. Tell the developer that, and let them remove it themselves if they want it gone. The project directory is ${home} again.`,
       }
     }
 
     if (input.action === EWorktreeExit.Keep) {
       return {
         ok: true,
-        output: { exitedWorktree: { path, action: EWorktreeExit.Keep } },
-        modelText: `Left the worktree at ${path}, which stays on disk with its branch. The project directory is ${this.launchDirectory} again.`,
+        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo: home } },
+        modelText: `Left the worktree at ${path}, which stays on disk with its branch. The project directory is ${home} again.`,
       }
     }
 
@@ -95,7 +95,7 @@ export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
     const branch = target?.branch
 
     if (input.discardChanges !== true) {
-      const base = activeWorktree?.base
+      const base = activeWorktree.base
       const inspection = await inspectWorktree({
         cwd: path,
         ...(base === undefined ? {} : { base }),
@@ -127,8 +127,58 @@ export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
 
     return {
       ok: true,
-      output: { exitedWorktree: { path, action: EWorktreeExit.Remove } },
-      modelText: `Removed the worktree at ${path}${branch === undefined ? '' : ` and its branch ${branch}`}.${branchNote} The project directory is ${this.launchDirectory} again.`,
+      output: { exitedWorktree: { path, action: EWorktreeExit.Remove, returnTo: home } },
+      modelText: `Removed the worktree at ${path}${branch === undefined ? '' : ` and its branch ${branch}`}.${branchNote} The project directory is ${home} again.`,
+    }
+  }
+
+  private async leaveLaunchDirectory(args: {
+    input: z.output<typeof inputSchema>
+    projectDirectory: string
+  }): Promise<ToolOutcome> {
+    if (args.projectDirectory !== this.launchDirectory) {
+      return {
+        ok: true,
+        output: { exited: false },
+        modelText: `The session is not in a worktree - it is in ${args.projectDirectory} - so nothing was left and nothing was removed.`,
+      }
+    }
+
+    const identity = await probeWorkspace({ cwd: this.launchDirectory })
+    if (identity.repo === null || identity.workspace === identity.repo) {
+      return this.notInAWorktree()
+    }
+
+    const repository = await repositoryAt({ cwd: this.launchDirectory })
+    if (!repository.ok) return this.notInAWorktree()
+
+    const launched = worktreeAt({ view: repository.view, path: identity.workspace })
+    if (launched === undefined || launched.isMain) return this.notInAWorktree()
+
+    const path = launched.path
+    const returnTo = repository.view.root
+    await releaseWorktree({ cwd: returnTo, path })
+
+    if (args.input.action === EWorktreeExit.Remove) {
+      return {
+        ok: true,
+        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo } },
+        modelText: `Left the worktree at ${path}, which the session was launched inside. Atlas did not create it, so it stays on disk with its branch and nothing was removed. Tell the developer that, and let them remove it themselves if they want it gone. The project directory is now ${returnTo}, the repository's main checkout.`,
+      }
+    }
+
+    return {
+      ok: true,
+      output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo } },
+      modelText: `Left the worktree at ${path}, which the session was launched inside; it stays on disk with its branch. The project directory is now ${returnTo}, the repository's main checkout.`,
+    }
+  }
+
+  private notInAWorktree(): ToolOutcome {
+    return {
+      ok: true,
+      output: { exited: false },
+      modelText: `The session is not in a worktree - it is in ${this.launchDirectory}, where it started - so nothing was left and nothing was removed.`,
     }
   }
 }

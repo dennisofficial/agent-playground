@@ -139,6 +139,7 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     type: z.literal('worktree-exited'),
     path: z.string().min(1),
     action: z.enum(EWorktreeExit),
+    returnTo: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal('background-shell-ended'),

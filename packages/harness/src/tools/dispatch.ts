@@ -41,6 +41,7 @@ export abstract class ToolDispatcher {
     call: DispatchableCall
     signal: AbortSignal
     projectDirectory: string
+    homeDirectory?: string | undefined
     events: readonly Event[]
     activeWorktree?: ActiveWorktree | undefined
   }): Promise<readonly EventDraft[]>
@@ -81,10 +82,11 @@ export class HookedToolDispatcher extends ToolDispatcher {
     call: DispatchableCall
     signal: AbortSignal
     projectDirectory: string
+    homeDirectory?: string | undefined
     events: readonly Event[]
     activeWorktree?: ActiveWorktree | undefined
   }): Promise<readonly EventDraft[]> {
-    const { call, signal, projectDirectory, activeWorktree, events } = args
+    const { call, signal, projectDirectory, homeDirectory, activeWorktree, events } = args
     const definition = this.registry.find(call.name)
     if (definition === undefined) return [this.unknownToolDraft({ call })]
 
@@ -135,6 +137,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
       signal,
       idempotencyKey,
       projectDirectory,
+      homeDirectory,
       activeWorktree,
       threadId: call.threadId,
     })
@@ -235,6 +238,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     signal: AbortSignal
     idempotencyKey: string
     projectDirectory: string
+    homeDirectory: string | undefined
     activeWorktree: ActiveWorktree | undefined
     threadId: ThreadId
   }): Promise<ToolOutcome> {
@@ -244,6 +248,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
         signal: args.signal,
         idempotencyKey: args.idempotencyKey,
         projectDirectory: args.projectDirectory,
+        homeDirectory: args.homeDirectory,
         activeWorktree: args.activeWorktree,
         threadId: args.threadId,
       })

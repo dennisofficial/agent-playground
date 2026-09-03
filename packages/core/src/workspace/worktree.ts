@@ -43,9 +43,31 @@ export function activeWorktreeAfter(args: {
   return args.active
 }
 
+export function homeDirectoryOf(args: {
+  events: readonly Event[]
+  launchDirectory: string
+}): string {
+  let home = args.launchDirectory
+  for (const event of args.events) {
+    if (event.type === 'worktree-exited' && event.returnTo !== undefined) home = event.returnTo
+  }
+  return home
+}
+
+export function homeDirectoryAfter(args: {
+  drafts: readonly EventDraft[]
+  home: string
+}): string {
+  let home = args.home
+  for (const draft of args.drafts) {
+    if (draft.type === 'worktree-exited' && draft.returnTo !== undefined) home = draft.returnTo
+  }
+  return home
+}
+
 export function projectDirectoryOf(args: {
   events: readonly Event[]
   launchDirectory: string
 }): string {
-  return activeWorktreeOf(args.events)?.path ?? args.launchDirectory
+  return activeWorktreeOf(args.events)?.path ?? homeDirectoryOf(args)
 }

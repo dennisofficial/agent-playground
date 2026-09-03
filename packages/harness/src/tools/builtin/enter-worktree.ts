@@ -78,6 +78,7 @@ export class EnterWorktreeTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     projectDirectory,
+    activeWorktree,
     threadId,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     if (input.name !== undefined && input.path !== undefined) {
@@ -131,10 +132,10 @@ export class EnterWorktreeTool extends SchemaTool<typeof inputSchema> {
     const complaint = nameComplaint(name)
     if (complaint !== undefined) return { ok: false, reason: complaint }
 
-    if (projectDirectory !== this.launchDirectory) {
+    if (activeWorktree !== undefined) {
       return {
         ok: false,
-        reason: `the session is already in the worktree at ${projectDirectory}. Leave it with exit_worktree before creating another, or switch straight to an existing one by passing its path.`,
+        reason: `the session is already in the worktree at ${activeWorktree.path}. Leave it with exit_worktree before creating another, or switch straight to an existing one by passing its path.`,
       }
     }
 

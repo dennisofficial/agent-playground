@@ -285,7 +285,11 @@ describe('leaving a worktree the session adopted', () => {
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
 
-    expect(exitedWorktreeOf(outcome.output)).toEqual({ path: tree, action: EWorktreeExit.Keep })
+    expect(exitedWorktreeOf(outcome.output)).toEqual({
+      path: tree,
+      action: EWorktreeExit.Keep,
+      returnTo: root,
+    })
     expect(outcome.modelText).toContain('Atlas did not create it')
     expect(await Bun.file(join(tree, 'README.md')).exists()).toBe(true)
   })

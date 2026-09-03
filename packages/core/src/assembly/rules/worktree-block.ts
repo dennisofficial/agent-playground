@@ -1,4 +1,4 @@
-import { activeWorktreeOf, type ActiveWorktree } from '../../workspace/worktree'
+import { activeWorktreeOf, homeDirectoryOf, type ActiveWorktree } from '../../workspace/worktree'
 import { defineRule, type Rule } from '../rule'
 
 const branchLineOf = (worktree: ActiveWorktree): string => {
@@ -12,17 +12,17 @@ const branchLineOf = (worktree: ActiveWorktree): string => {
 
 const leavingLineOf = (worktree: ActiveWorktree): string =>
   worktree.adopted
-    ? 'Commit and push on this branch. exit_worktree returns the session to the launch directory and leaves this worktree exactly where it is; it will not remove a worktree Atlas did not create.'
+    ? 'Commit and push on this branch. exit_worktree returns the session to the home directory and leaves this worktree exactly where it is; it will not remove a worktree Atlas did not create.'
     : 'Commit and push on this branch. exit_worktree leaves it, keeping or removing it as the developer asks.'
 
 export function worktreeNote(args: {
   worktree: ActiveWorktree
-  launchDirectory: string
+  homeDirectory: string
 }): string {
   return [
     `You are working in a git worktree at ${args.worktree.path}, ${branchLineOf(args.worktree)}`,
     'That worktree is the project directory: paths you pass to a tool resolve against it and a bash command starts there.',
-    `The repository this worktree belongs to is checked out at ${args.launchDirectory}; leave that checkout alone and reach it only with absolute paths.`,
+    `The repository this worktree belongs to is checked out at ${args.homeDirectory}; leave that checkout alone and reach it only with absolute paths.`,
     leavingLineOf(args.worktree),
   ].join(' ')
 }
@@ -34,8 +34,9 @@ export function worktreeBlock({ launchDirectory }: { launchDirectory: string }):
       const worktree = activeWorktreeOf(ctx.events)
       if (worktree === undefined) return input
 
+      const homeDirectory = homeDirectoryOf({ events: ctx.events, launchDirectory })
       return {
-        system: [...input.system, { text: worktreeNote({ worktree, launchDirectory }) }],
+        system: [...input.system, { text: worktreeNote({ worktree, homeDirectory }) }],
         messages: input.messages,
       }
     },

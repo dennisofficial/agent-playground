@@ -876,9 +876,12 @@ There are two directories, and they answer different questions.
 
 The **launch directory** is fixed for the life of the process: it is what `--cwd` named, and it is
 the only one held in the container, as `WorkspaceRoot`. The **project directory** is where the
-session is working — the launch directory, or the worktree it has entered. It is the single anchor:
-it anchors `.atlas/settings.json`, project skills, the instruction-file descent, every relative path
-a tool is given, and the directory every bash command starts in.
+session is working — the session's home directory, or the worktree it has entered. Home starts as
+the launch directory and moves only when a `worktree-exited` records a `returnTo`, which is what
+leaving a worktree the session was *launched* inside does: the session is re-homed to the
+repository's main checkout rather than sent back to a checkout it just left. The project directory
+is the single anchor: it anchors `.atlas/settings.json`, project skills, the instruction-file
+descent, every relative path a tool is given, and the directory every bash command starts in.
 
 There is deliberately no second, movable directory. A shell that can `cd` its way somewhere the file
 tools do not follow gives the model two roots to keep straight, and the only way to make that
@@ -895,10 +898,23 @@ ran it — which ends with the call.
 
 The project directory is not held anywhere: it is
 `projectDirectoryOf({ events, launchDirectory })`, the path of the last unclosed `worktree-entered`
-in the log. That fold sits in the Conversation row so that rewind, fork and resume agree about it
-without a second record to keep in step; a mutable holder in the container would have been the
-checkpointer the two rules exist to refuse. `enter_worktree` moves it the only way anything moves
-here — tool output an `AfterTool` hook turns into an event, never a setter.
+in the log, falling back to `homeDirectoryOf` over the same log — the latest `returnTo`, or the
+launch directory when no exit has recorded one. That fold sits in the Conversation row so that
+rewind, fork and resume agree about it without a second record to keep in step; a mutable holder in
+the container would have been the checkpointer the two rules exist to refuse. `enter_worktree`
+moves it the only way anything moves here — tool output an `AfterTool` hook turns into an event,
+never a setter.
+
+A session *launched* inside a worktree holds no `worktree-entered` at all, so "is this session in a
+worktree" cannot be read from the log alone — the old guard did exactly that, and such a session
+could never leave. When the log is silent, `exit_worktree` asks git instead: `probeWorkspace`
+resolves the launch directory's toplevel, and `repositoryAt` confirms that toplevel is a listed
+linked worktree — which also keeps a launch inside a submodule from being misread as a worktree of
+its superproject. The exit stamps `returnTo` with the main checkout, releases the lock
+`claimLaunchWorktree` took at boot, and treats the worktree as adopted for removal: Atlas did not
+create it, so `remove` downgrades to `keep`. From then on the home fold is what every later exit
+lands on, so entering and leaving further worktrees returns to the main checkout, not to a
+worktree the developer already watched the session leave.
 
 Resolving tool paths against the project directory is also what makes rewind honest. A path resolved
 against a cursor the conversation can move means a different file when the same log replays from a
@@ -935,8 +951,8 @@ may have neither an upstream nor a base. That flag is the whole point of recordi
 will not remove a worktree Atlas did not create, whatever action it is asked for, because a clean
 fully-pushed checkout passes the uncommitted-work guard and would otherwise be deleted along with its
 branch. Tools learn it the same way they learn the project directory — `settle-pending` folds the log
-into an `ActiveWorktree` and hands it down with each dispatch, so rewind and fork agree about
-ownership as they already agree about location.
+into an `ActiveWorktree` and a home directory and hands both down with each dispatch, so rewind and
+fork agree about ownership as they already agree about location.
 
 That fold is also what makes the removal guard honest. "Commits you would lose" is unanswerable from
 the worktree alone: with no upstream set, counting `<branch>..HEAD` compares the branch against
