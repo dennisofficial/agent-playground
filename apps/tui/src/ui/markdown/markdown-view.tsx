@@ -8,7 +8,12 @@ import { registerFallbackRenderer, registerFencedRenderer } from './registry'
 import { codeRenderer, plainRenderer } from './renderers/code'
 import { diffRenderer } from './renderers/diff'
 import { lexicalRenderer } from './renderers/lexical'
-import { type MarkdownSegment, segmentMarkdown, steadySegments } from './segment'
+import {
+  growingSegments,
+  type MarkdownSegment,
+  segmentMarkdown,
+  steadySegments,
+} from './segment'
 import { TableBlock } from './table-block'
 
 // Registration order is precedence. `lexicalRenderer` precedes `codeRenderer` because the code
@@ -19,6 +24,36 @@ registerFencedRenderer(codeRenderer)
 registerFallbackRenderer(plainRenderer)
 
 type Colours = { fg?: string; bg?: string }
+
+type FenceSegment = Extract<MarkdownSegment, { kind: 'fence' }>
+
+const fenceMeasures = new WeakMap<FenceSegment, { forWidth: number; measured: number }>()
+
+function levelledWidth(args: {
+  segments: readonly MarkdownSegment[]
+  width: number
+}): number {
+  let levelled = 0
+  for (const segment of args.segments) {
+    if (segment.kind !== 'fence') continue
+    levelled = Math.max(levelled, measuredFence({ segment, width: args.width }))
+  }
+  return levelled
+}
+
+function measuredFence(args: { segment: FenceSegment; width: number }): number {
+  const hit = fenceMeasures.get(args.segment)
+  if (hit !== undefined && hit.forWidth === args.width) return hit.measured
+
+  const measured = fenceWidth({
+    language: args.segment.language,
+    filename: args.segment.filename,
+    source: args.segment.source,
+    width: args.width,
+  })
+  fenceMeasures.set(args.segment, { forWidth: args.width, measured })
+  return measured
+}
 
 const isBlank = (segment: MarkdownSegment): boolean =>
   segment.kind === 'prose' && segment.text.trim().length === 0
@@ -42,8 +77,8 @@ export function MarkdownView(props: {
 }): React.ReactNode {
   const streaming = props.streaming === true
   const segments = useMemo(() => {
-    const lexed = segmentMarkdown(props.source)
-    return streaming ? steadySegments({ segments: lexed }) : lexed
+    if (!streaming) return segmentMarkdown(props.source)
+    return steadySegments({ segments: growingSegments({ source: props.source }) })
   }, [props.source, streaming])
 
   /**
@@ -51,25 +86,7 @@ export function MarkdownView(props: {
    * available, so a message of short snippets stays a column of slabs instead of a wall of fill —
    * but a message of several never draws a ragged right edge.
    */
-  const levelled = useMemo(
-    () =>
-      Math.max(
-        0,
-        ...segments
-          .filter((segment) => segment.kind === 'fence')
-          .map((segment) =>
-            segment.kind === 'fence'
-              ? fenceWidth({
-                  language: segment.language,
-                  filename: segment.filename,
-                  source: segment.source,
-                  width: props.width,
-                })
-              : 0,
-          ),
-      ),
-    [segments, props.width],
-  )
+  const levelled = levelledWidth({ segments, width: props.width })
 
   return (
     <box flexDirection="column">

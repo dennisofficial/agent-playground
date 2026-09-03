@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { tail, thinkingSummary, wrapWords } from '../text-flow'
+import { tail, thinkingSummary, wrapStreamingLines, wrapWords } from '../text-flow'
 
 describe('wrapping prose', () => {
   it('breaks on words and never past the band', () => {
@@ -44,6 +44,51 @@ describe('tailing a stream', () => {
 
   it('says line, singular, for one', () => {
     expect(tail({ items: ['a', 'b'], limit: 1 }).notice).toBe('… +1 line above')
+  })
+})
+
+describe('wrapping a streaming text', () => {
+  const batchRows = (text: string, width: number): string[] =>
+    text.split('\n').flatMap((line) => wrapWords({ text: line, width }))
+
+  it('returns the batch rows untouched when nothing is frozen yet', () => {
+    expect(wrapStreamingLines({ text: 'no newline yet at all', width: 10 })).toEqual(
+      batchRows('no newline yet at all', 10),
+    )
+  })
+
+  it('matches a fresh whole-text wrap at every step of a growing stream', () => {
+    const full = [
+      'Weighed a jti denylist against a per-user token version, and the denylist wins on',
+      'operational cost.',
+      '',
+      'A much longer consideration with /Users/dennis/Developer/atlas/apps/tui/src/ui/theme.ts',
+      'hard-split across the band.',
+      '',
+      'Final partial line still being typed',
+    ].join('\n')
+
+    for (const width of [7, 12, 40]) {
+      for (let end = 0; end <= full.length; end += 1) {
+        const slice = full.slice(0, end)
+        expect(wrapStreamingLines({ text: slice, width })).toEqual(batchRows(slice, width))
+      }
+    }
+  })
+
+  it('does not let one width answer for another', () => {
+    const text = 'frozen line one\nfrozen line two\ntrailing'
+    const wide = wrapStreamingLines({ text, width: 40 })
+    const narrow = wrapStreamingLines({ text, width: 10 })
+
+    expect(narrow).toEqual(batchRows(text, 10))
+    expect(wide).toEqual(batchRows(text, 40))
+    expect(narrow.length).toBeGreaterThan(wide.length)
+  })
+
+  it('keeps a trailing newline as a blank row, matching the batch split', () => {
+    const text = 'first line\n'
+    expect(wrapStreamingLines({ text, width: 40 })).toEqual(batchRows(text, 40))
   })
 })
 

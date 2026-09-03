@@ -80,6 +80,22 @@ export function createConversationStore(args: {
 
   const sidebarNow = (): SidebarModel => sidebarFrom({ fold: foldNow(), turn, name })
 
+  const sameSidebar = (left: SidebarModel, right: SidebarModel): boolean =>
+    left.title === right.title &&
+    left.turnCount === right.turnCount &&
+    left.totalTokens === right.totalTokens &&
+    left.approvals === right.approvals &&
+    left.lastActivity === right.lastActivity &&
+    left.liveOutputTokens === right.liveOutputTokens &&
+    left.lastTurnOutputTokens === right.lastTurnOutputTokens &&
+    left.todo === right.todo &&
+    left.subagents === right.subagents &&
+    left.crewFold === right.crewFold &&
+    left.teammates === right.teammates &&
+    left.sections === right.sections &&
+    left.classifier === right.classifier &&
+    left.grants === right.grants
+
   let model = assembleTranscript({ durable: durableNow(), live: [], thinking })
   let sidebar = sidebarNow()
 
@@ -111,7 +127,8 @@ export function createConversationStore(args: {
     model = settled(
       assembleTranscript({ durable: durableNow(), live: tracker.live(events), reveal: gate, thinking }),
     )
-    sidebar = sidebarNow()
+    const nextSidebar = sidebarNow()
+    if (!sameSidebar(sidebar, nextSidebar)) sidebar = nextSidebar
     if (projected !== events) {
       args.projectEvents?.({ events })
       projected = events
@@ -177,7 +194,10 @@ export function createConversationStore(args: {
       if (next === turn) return
 
       turn = next
-      sidebar = sidebarNow()
+      const nextSidebar = sidebarNow()
+      if (sameSidebar(sidebar, nextSidebar)) return
+
+      sidebar = nextSidebar
       wake()
     },
 

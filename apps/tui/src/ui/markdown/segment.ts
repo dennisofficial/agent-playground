@@ -48,6 +48,79 @@ export function segmentMarkdown(source: string): readonly MarkdownSegment[] {
   return segments
 }
 
+const SETTLED_CACHE_LIMIT = 8
+
+const settledCache = new Map<string, readonly MarkdownSegment[]>()
+
+/**
+ * marked's tokens tile their input, and only a fence can span a blank line — so everything before
+ * the last blank line outside a fence lexes the same whether it stands alone or has more message
+ * after it. Streamed growth re-lexes only the tail; the settled prefix is cached by its own text.
+ */
+export function growingSegments(args: { source: string }): readonly MarkdownSegment[] {
+  const boundary = stableBoundary(args.source)
+  if (boundary === 0) return segmentMarkdown(args.source)
+
+  return joinSeam({
+    settled: settledSegments(args.source.slice(0, boundary)),
+    live: segmentMarkdown(args.source.slice(boundary)),
+  })
+}
+
+function settledSegments(prefix: string): readonly MarkdownSegment[] {
+  const hit = settledCache.get(prefix)
+  if (hit !== undefined) return hit
+
+  const segments = segmentMarkdown(prefix)
+  if (settledCache.size >= SETTLED_CACHE_LIMIT) settledCache.clear()
+  settledCache.set(prefix, segments)
+  return segments
+}
+
+function joinSeam(args: {
+  settled: readonly MarkdownSegment[]
+  live: readonly MarkdownSegment[]
+}): readonly MarkdownSegment[] {
+  const last = args.settled.at(-1)
+  const first = args.live[0]
+  if (last === undefined || last.kind !== 'prose' || first === undefined || first.kind !== 'prose') {
+    return [...args.settled, ...args.live]
+  }
+  return [
+    ...args.settled.slice(0, -1),
+    { kind: 'prose', text: last.text + first.text },
+    ...args.live.slice(1),
+  ]
+}
+
+function stableBoundary(source: string): number {
+  let boundary = 0
+  let open: string | null = null
+  let offset = 0
+
+  const lines = source.split('\n')
+  for (const line of lines.slice(0, -1)) {
+    offset += line.length + 1
+
+    const marker = FENCE_OPENER.exec(line)?.[1]
+    if (marker !== undefined) {
+      if (open === null) {
+        open = marker
+      } else if (
+        marker.charAt(0) === open.charAt(0) &&
+        marker.length >= open.length &&
+        line.trim() === marker
+      ) {
+        open = null
+      }
+      continue
+    }
+
+    if (open === null && line.trim().length === 0) boundary = offset
+  }
+  return boundary
+}
+
 /**
  * A fence that is still arriving changes shape under the renderer: its info string types out one
  * character at a time, so the language reads `t` then `ts`, and its last line is a fragment that
