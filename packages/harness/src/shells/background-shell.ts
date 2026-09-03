@@ -39,6 +39,7 @@ export type BackgroundShell = {
   since(offset: number): OutputDelta
   tail(limit: number): string
   kill(by: EKilledBy): void
+  release(): void
   exited: Promise<void>
 }
 
@@ -248,6 +249,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     since: (offset) => buffer.since(offset),
     tail: (limit) => buffer.tail(limit),
     kill,
+    release: () => buffer.release(),
 
     exited: settled.then(() => {
       try {

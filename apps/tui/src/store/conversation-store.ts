@@ -2,26 +2,25 @@ import type { ThreadId, Event } from '@dltech/atlas-core'
 import type {
   ChannelSignal,
   DeltaChannel,
-  StepSignal,
   TurnSpend,
   Unsubscribe,
 } from '@dltech/atlas-harness'
 
 import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
-import { deriveTranscript } from './derive-transcript'
-import { prunedSignals, withoutFailedTail } from './in-flight-steps'
+import { assembleTranscript } from './derive-transcript'
+import { durableEntries } from './durable-entries'
 import {
   advancedGate,
   attachedGate,
   FRAME_MS,
   gateIsDraining,
-  tailRunOf,
   type RevealGate,
 } from './reveal'
-import { deriveSidebar, type SidebarModel } from './sidebar-model'
+import { sidebarFoldOf, sidebarFrom, type SidebarEventFold, type SidebarModel } from './sidebar-model'
 import { stabilisedEntries } from './stable-entries'
+import { createStepTracker } from './step-tracker'
 import { SHIPPED_THINKING, type EThinkingVisibility } from './thinking-fold'
-import type { StepFailure, TranscriptModel } from './transcript-model'
+import type { StepFailure, TranscriptEntry, TranscriptModel } from './transcript-model'
 
 export type ConversationStore = {
   subscribe(listener: () => void): Unsubscribe
@@ -34,8 +33,6 @@ export type ConversationStore = {
   setName(name: string | null): void
   dispose(): void
 }
-
-const NO_SIGNALS: readonly StepSignal[] = Object.freeze([])
 
 const NO_TURNS: readonly TurnSpend[] = Object.freeze([])
 
@@ -53,15 +50,41 @@ export function createConversationStore(args: {
   let thinking: EThinkingVisibility = args.thinking ?? SHIPPED_THINKING
   let name: string | null = args.name ?? null
   let events: readonly Event[] = args.events ?? []
-  let signals: readonly StepSignal[] = NO_SIGNALS
   let turns: readonly TurnSpend[] = args.turns ?? NO_TURNS
   let turn: TurnClock = IDLE_TURN
   let gate: RevealGate | null = null
   let frame: ReturnType<typeof setTimeout> | undefined
-  let model = deriveTranscript({ events, signals, turns, thinking })
-  let sidebar = deriveSidebar({ events, turn, name })
+  const tracker = createStepTracker()
+  let durable: { events: readonly Event[]; turns: readonly TurnSpend[]; entries: TranscriptEntry[] } | null =
+    null
+  let folded: { events: readonly Event[]; fold: SidebarEventFold } | null = null
+  let projected: readonly Event[] | null = null
+
+  const durableNow = (): readonly TranscriptEntry[] => {
+    if (durable !== null && durable.events === events && durable.turns === turns) {
+      return durable.entries
+    }
+
+    const entries = durableEntries({ events, turns })
+    durable = { events, turns, entries }
+    return entries
+  }
+
+  const foldNow = (): SidebarEventFold => {
+    if (folded !== null && folded.events === events) return folded.fold
+
+    const fold = sidebarFoldOf(events)
+    folded = { events, fold }
+    return fold
+  }
+
+  const sidebarNow = (): SidebarModel => sidebarFrom({ fold: foldNow(), turn, name })
+
+  let model = assembleTranscript({ durable: durableNow(), live: [], thinking })
+  let sidebar = sidebarNow()
 
   args.projectEvents?.({ events })
+  projected = events
 
   const listeners = new Set<() => void>()
 
@@ -84,10 +107,15 @@ export function createConversationStore(args: {
   }
 
   const republish = () => {
-    signals = prunedSignals({ signals, events })
-    model = settled(deriveTranscript({ events, signals, turns, reveal: gate, thinking }))
-    sidebar = deriveSidebar({ events, turn, name })
-    args.projectEvents?.({ events })
+    tracker.pruneSuperseded(events)
+    model = settled(
+      assembleTranscript({ durable: durableNow(), live: tracker.live(events), reveal: gate, thinking }),
+    )
+    sidebar = sidebarNow()
+    if (projected !== events) {
+      args.projectEvents?.({ events })
+      projected = events
+    }
     wake()
   }
 
@@ -96,7 +124,7 @@ export function createConversationStore(args: {
 
     frame = setTimeout(() => {
       frame = undefined
-      const tail = tailRunOf({ events, signals })
+      const tail = tracker.tailRun(events)
       gate = advancedGate({ gate, tail })
       republish()
       if (gateIsDraining({ gate, tail })) scheduleFrame()
@@ -112,7 +140,7 @@ export function createConversationStore(args: {
       return
     }
 
-    signals = [...signals, signal]
+    tracker.absorb(signal)
 
     if (!paceReveal || signal.type !== 'chunk') {
       gate = null
@@ -120,7 +148,7 @@ export function createConversationStore(args: {
       return
     }
 
-    gate = attachedGate({ gate, tail: tailRunOf({ events, signals }) })
+    gate = attachedGate({ gate, tail: tracker.tailRun(events) })
     scheduleFrame()
   }
 
@@ -146,16 +174,16 @@ export function createConversationStore(args: {
     },
 
     setTurn(next) {
+      if (next === turn) return
+
       turn = next
-      sidebar = deriveSidebar({ events, turn, name })
+      sidebar = sidebarNow()
       wake()
     },
 
     supersedeFailure() {
-      const kept = withoutFailedTail({ signals, events })
-      if (kept === signals) return
+      if (!tracker.dropFailedTail(events)) return
 
-      signals = kept
       republish()
     },
 

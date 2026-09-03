@@ -108,7 +108,13 @@ export function turnAdvanced(args: {
   }
 
   const characters = args.progress.characters + text.length
-  return { characters, clock: { ...clock, outputTokens: tokensOf(characters), reasoning, retry } }
+  const outputTokens = tokensOf(characters)
+
+  if (outputTokens === clock.outputTokens && reasoning === clock.reasoning && clock.retry === null) {
+    return { characters, clock }
+  }
+
+  return { characters, clock: { ...clock, outputTokens, reasoning, retry } }
 }
 
 export function turnSettled(args: { progress: TurnProgress; now: number }): TurnProgress {

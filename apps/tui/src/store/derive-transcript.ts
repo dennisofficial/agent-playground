@@ -64,6 +64,30 @@ function entriesOfStep(args: { step: InFlightStep; reveal: RevealGate | null }):
   })
 }
 
+export function assembleTranscript(args: {
+  durable: readonly TranscriptEntry[]
+  live: readonly InFlightStep[]
+  reveal?: RevealGate | null
+  thinking?: EThinkingVisibility
+}): TranscriptModel {
+  const reveal = args.reveal ?? null
+  const entries = foldThoughts({
+    entries: toolsAboveThoughts([
+      ...args.durable,
+      ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
+    ]),
+    visibility: args.thinking ?? SHIPPED_THINKING,
+  })
+  const streaming = args.live.some((step) => step.end === null)
+  const failure = failureOf(args.live)
+
+  if (entries.length === 0 && !streaming && failure === null) {
+    return EMPTY_TRANSCRIPT
+  }
+
+  return { entries, isEmpty: entries.length === 0, streaming, failure }
+}
+
 export function deriveTranscript(args: {
   events: readonly Event[]
   signals: readonly StepSignal[]
@@ -71,21 +95,10 @@ export function deriveTranscript(args: {
   reveal?: RevealGate | null
   thinking?: EThinkingVisibility
 }): TranscriptModel {
-  const reveal = args.reveal ?? null
-  const live = liveSteps({ steps: stepsOfSignals(args.signals), events: args.events })
-  const entries = foldThoughts({
-    entries: toolsAboveThoughts([
-      ...durableEntries({ events: args.events, turns: args.turns }),
-      ...live.flatMap((step) => entriesOfStep({ step, reveal })),
-    ]),
-    visibility: args.thinking ?? SHIPPED_THINKING,
+  return assembleTranscript({
+    durable: durableEntries({ events: args.events, turns: args.turns }),
+    live: liveSteps({ steps: stepsOfSignals(args.signals), events: args.events }),
+    ...(args.reveal === undefined ? {} : { reveal: args.reveal }),
+    ...(args.thinking === undefined ? {} : { thinking: args.thinking }),
   })
-  const streaming = live.some((step) => step.end === null)
-  const failure = failureOf(live)
-
-  if (entries.length === 0 && !streaming && failure === null) {
-    return EMPTY_TRANSCRIPT
-  }
-
-  return { entries, isEmpty: entries.length === 0, streaming, failure }
 }

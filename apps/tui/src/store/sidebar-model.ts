@@ -72,19 +72,6 @@ const approvalNames = (events: readonly Event[]): SidebarApproval[] => {
   return [{ callId: outstanding, reason: requested.reason }]
 }
 
-const nameOrOpening = (args: { events: readonly Event[]; name: string | null }): string | null => {
-  const named = args.name === null ? null : oneLineOf(args.name)
-  if (named !== null) return named
-
-  const opening = eventsOfType({ events: args.events, type: 'user-said' }).at(0)
-  return opening === undefined ? null : oneLineOf(opening.text)
-}
-
-const titleOf = (args: { events: readonly Event[]; name: string | null }): string | null => {
-  const title = nameOrOpening(args)
-  return title === null ? null : truncateCells({ text: title, cells: TITLE_CELLS })
-}
-
 const TASK_STATE_OF: Record<EPlanStatus, ESidebarTaskState> = {
   [EPlanStatus.Pending]: ESidebarTaskState.Pending,
   [EPlanStatus.InProgress]: ESidebarTaskState.Running,
@@ -99,34 +86,64 @@ const todoOf = (events: readonly Event[]): readonly SidebarTask[] =>
     ...(task.activeForm === undefined ? {} : { activeForm: task.activeForm }),
   }))
 
-export function deriveSidebar(args: {
-  events: readonly Event[]
+export type SidebarEventFold = {
+  opening: string | null
+  turnCount: number
+  approvals: readonly SidebarApproval[]
+  lastActivity: string | null
+  todo: readonly SidebarTask[]
+  classifier: ClassifierFold | null
+  grants: readonly Grant[]
+}
+
+export function sidebarFoldOf(events: readonly Event[]): SidebarEventFold {
+  const opening = eventsOfType({ events, type: 'user-said' }).at(0)
+
+  return {
+    opening: opening === undefined ? null : oneLineOf(opening.text),
+    turnCount: eventsOfType({ events, type: 'user-said' }).length,
+    approvals: approvalNames(events),
+    lastActivity: events.at(-1)?.at ?? null,
+    todo: todoOf(events),
+    classifier: classifierFold({ events }),
+    grants: grantsFrom(events),
+  }
+}
+
+export function sidebarFrom(args: {
+  fold: SidebarEventFold
   turn: TurnClock
   name?: string | null | undefined
 }): SidebarModel {
-  const { events, turn } = args
+  const { fold, turn } = args
   const name = args.name ?? null
 
   const running = turn.startedAt !== null
   const liveOutputTokens = running ? turn.outputTokens : 0
   const lastTurnOutputTokens = running ? null : (turn.completed?.outputTokens ?? null)
-
-  const todo = todoOf(events)
-  const classifier = classifierFold({ events })
-  const grants = grantsFrom(events)
+  const named = name === null ? null : oneLineOf(name)
+  const titleText = named ?? fold.opening
 
   return {
-    title: titleOf({ events, name }),
-    turnCount: eventsOfType({ events, type: 'user-said' }).length,
+    title: titleText === null ? null : truncateCells({ text: titleText, cells: TITLE_CELLS }),
+    turnCount: fold.turnCount,
     totalTokens: liveOutputTokens + (lastTurnOutputTokens ?? 0),
-    approvals: approvalNames(events),
-    lastActivity: events.at(-1)?.at ?? null,
+    approvals: fold.approvals,
+    lastActivity: fold.lastActivity,
     liveOutputTokens,
     lastTurnOutputTokens,
-    ...(todo.length === 0 ? {} : { todo }),
-    ...(classifier === null ? {} : { classifier }),
-    ...(grants.length === 0 ? {} : { grants }),
+    ...(fold.todo.length === 0 ? {} : { todo: fold.todo }),
+    ...(fold.classifier === null ? {} : { classifier: fold.classifier }),
+    ...(fold.grants.length === 0 ? {} : { grants: fold.grants }),
   }
+}
+
+export function deriveSidebar(args: {
+  events: readonly Event[]
+  turn: TurnClock
+  name?: string | null | undefined
+}): SidebarModel {
+  return sidebarFrom({ fold: sidebarFoldOf(args.events), turn: args.turn, name: args.name })
 }
 
 /**

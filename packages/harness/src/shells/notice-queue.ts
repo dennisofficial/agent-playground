@@ -54,12 +54,13 @@ export function take(entry: Tracked): ShellDelta {
   const delta = entry.shell.since(entry.cursor)
   const text = delta.text.slice(0, DELIVERED_CHARACTERS)
   entry.cursor = entry.cursor + delta.droppedCharacters + text.length
+  const remainingCharacters = Math.max(delta.totalCharacters - entry.cursor, 0)
 
-  return {
-    text,
-    droppedCharacters: delta.droppedCharacters,
-    remainingCharacters: Math.max(delta.totalCharacters - entry.cursor, 0),
+  if (remainingCharacters === 0 && entry.shell.snapshot().status !== EShellStatus.Running) {
+    entry.shell.release()
   }
+
+  return { text, droppedCharacters: delta.droppedCharacters, remainingCharacters }
 }
 
 const NOTHING_PENDING: readonly ShellNotice[] = Object.freeze([])

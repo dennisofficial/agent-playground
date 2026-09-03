@@ -27,15 +27,19 @@ const shellMatchedLine = (event: EventOfType<'background-shell-matched'>): strin
 type PartRun = { type: AssistantPart['type']; text: string }
 
 function runsOfParts(parts: readonly AssistantPart[]): PartRun[] {
-  return parts.reduce<PartRun[]>((runs, part) => {
+  const runs: PartRun[] = []
+
+  for (const part of parts) {
     const open = runs.at(-1)
     if (open?.type === part.type) {
       open.text += part.text
-      return runs
+      continue
     }
 
-    return [...runs, { type: part.type, text: part.text }]
-  }, [])
+    runs.push({ type: part.type, text: part.text })
+  }
+
+  return runs
 }
 
 function entriesOfAssistantEvent(event: EventOfType<'assistant-said'>): TranscriptEntry[] {
@@ -94,14 +98,17 @@ function contextLoadedWith(events: readonly Event[]): ReadonlyMap<EventId, Attac
 const NOTHING_PICTURED: readonly SaidImage[] = Object.freeze([])
 
 function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
-  return entries.reduce<TranscriptEntry[]>((folded, entry) => {
+  const folded: TranscriptEntry[] = []
+
+  for (const entry of entries) {
     const open = folded.at(-1)
     if (
       entry.kind !== EEntryKind.OperatorSaid ||
       open?.kind !== EEntryKind.OperatorSaid ||
       open.steer !== entry.steer
     ) {
-      return [...folded, entry]
+      folded.push(entry)
+      continue
     }
 
     folded[folded.length - 1] = {
@@ -112,8 +119,9 @@ function inOneBreath(entries: readonly TranscriptEntry[]): TranscriptEntry[] {
       files: [...new Set([...open.files, ...entry.files])],
       images: [...open.images, ...entry.images],
     }
-    return folded
-  }, [])
+  }
+
+  return folded
 }
 
 export function durableEntries(args: {
