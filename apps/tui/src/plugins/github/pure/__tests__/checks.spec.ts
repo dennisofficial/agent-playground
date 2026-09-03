@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { checksRollup, checksTally, ECheckOutcome } from '../checks'
+import { checksRollup, checksTally, ECheckOutcome, latestAttemptOutcomes } from '../checks'
 import { EChecksState } from '../pull-request'
 
 describe('checksRollup', () => {
@@ -47,5 +47,54 @@ describe('checksTally', () => {
 
   it('is all zeroes with nothing to count', () => {
     expect(checksTally([])).toEqual({ running: 0, passed: 0, failed: 0 })
+  })
+})
+
+describe('latestAttemptOutcomes', () => {
+  it('drops a cancelled run that a newer same-named run superseded', () => {
+    expect(
+      latestAttemptOutcomes([
+        { name: 'lint', startedAt: '2026-09-03T18:39:58Z', outcome: ECheckOutcome.Failed },
+        { name: 'lint', startedAt: '2026-09-03T18:45:10Z', outcome: ECheckOutcome.Passed },
+      ]),
+    ).toEqual([ECheckOutcome.Passed])
+  })
+
+  it('keeps a failure that is still the newest run of its check', () => {
+    expect(
+      latestAttemptOutcomes([
+        { name: 'lint', startedAt: '2026-09-03T18:45:10Z', outcome: ECheckOutcome.Passed },
+        { name: 'lint', startedAt: '2026-09-03T18:50:02Z', outcome: ECheckOutcome.Failed },
+      ]),
+    ).toEqual([ECheckOutcome.Failed])
+  })
+
+  it('ranks runs of different names independently', () => {
+    expect(
+      latestAttemptOutcomes([
+        { name: 'lint', startedAt: '2026-09-03T18:39:58Z', outcome: ECheckOutcome.Failed },
+        { name: 'lint', startedAt: '2026-09-03T18:45:10Z', outcome: ECheckOutcome.Passed },
+        { name: 'build', startedAt: '2026-09-03T18:40:00Z', outcome: ECheckOutcome.Failed },
+      ]),
+    ).toEqual([ECheckOutcome.Passed, ECheckOutcome.Failed])
+  })
+
+  it('keeps an attempt it cannot order, by name or by time, rather than guessing', () => {
+    expect(
+      latestAttemptOutcomes([
+        { name: null, startedAt: '2026-09-03T18:39:58Z', outcome: ECheckOutcome.Failed },
+        { name: 'lint', startedAt: null, outcome: ECheckOutcome.Running },
+        { name: 'lint', startedAt: '2026-09-03T18:45:10Z', outcome: ECheckOutcome.Passed },
+      ]),
+    ).toEqual([ECheckOutcome.Failed, ECheckOutcome.Running, ECheckOutcome.Passed])
+  })
+
+  it('keeps both attempts of a check when their start times tie', () => {
+    expect(
+      latestAttemptOutcomes([
+        { name: 'lint', startedAt: '2026-09-03T18:45:10Z', outcome: ECheckOutcome.Failed },
+        { name: 'lint', startedAt: '2026-09-03T18:45:10Z', outcome: ECheckOutcome.Passed },
+      ]),
+    ).toEqual([ECheckOutcome.Failed, ECheckOutcome.Passed])
   })
 })

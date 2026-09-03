@@ -5,6 +5,8 @@ import {
   checksTally,
   ECheckOutcome,
   EPullRequestState,
+  latestAttemptOutcomes,
+  type CheckAttempt,
   type PullRequest,
 } from './pure'
 
@@ -29,11 +31,18 @@ const CheckRunSchema = z.object({
   __typename: z.literal('CheckRun'),
   status: z.string(),
   conclusion: z.string(),
+  name: z.string().nullable().catch(null),
+  startedAt: z.string().nullable().catch(null),
 })
 
-const StatusContextSchema = z.object({ __typename: z.string(), state: z.string() })
+const StatusContextSchema = z.object({
+  __typename: z.string(),
+  state: z.string(),
+  context: z.string().nullable().catch(null),
+  startedAt: z.string().nullable().catch(null),
+})
 
-const UNRECOGNISED_ENTRY = { __typename: 'unrecognised', state: '' }
+const UNRECOGNISED_ENTRY = { __typename: 'unrecognised', state: '', context: null, startedAt: null }
 
 const RollupEntrySchema = z.union([CheckRunSchema, StatusContextSchema]).catch(UNRECOGNISED_ENTRY)
 
@@ -82,6 +91,14 @@ const outcomeOf = (entry: RollupEntry): ECheckOutcome => {
   return CHECK_RUN_CONCLUSIONS[entry.conclusion] ?? ECheckOutcome.Ignored
 }
 
+const attemptOf = (entry: RollupEntry): CheckAttempt => {
+  if (!('status' in entry)) {
+    return { name: entry.context, startedAt: entry.startedAt, outcome: outcomeOf(entry) }
+  }
+
+  return { name: entry.name, startedAt: entry.startedAt, outcome: outcomeOf(entry) }
+}
+
 const stateOf = (args: { state: string; isDraft: boolean }): EPullRequestState | null => {
   const settled = PULL_REQUEST_STATES[args.state]
   if (settled !== undefined) return settled
@@ -97,7 +114,7 @@ export function parseGhPullRequest(value: unknown): PullRequest | null {
   const state = stateOf({ state: parsed.data.state, isDraft: parsed.data.isDraft })
   if (state === null) return null
 
-  const outcomes = (parsed.data.statusCheckRollup ?? []).map(outcomeOf)
+  const outcomes = latestAttemptOutcomes((parsed.data.statusCheckRollup ?? []).map(attemptOf))
 
   return {
     number: parsed.data.number,

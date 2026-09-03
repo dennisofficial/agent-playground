@@ -85,12 +85,95 @@ describe('parseGhPullRequest', () => {
     expect(errored?.checks).toBe(EChecksState.Failing)
   })
 
-  it('counts a cancelled run as failed, the way the merge box does', () => {
+  it('counts a cancelled run as failed when no newer run of the same check exists', () => {
     const pullRequest = parseGhPullRequest({
       ...OPEN_WITH_ROLLUP,
       statusCheckRollup: [
         { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'CANCELLED' },
         { __typename: 'CheckRun', status: 'COMPLETED', conclusion: 'SUCCESS' },
+      ],
+    })
+
+    expect(pullRequest?.checks).toBe(EChecksState.Failing)
+    expect(pullRequest?.tally).toEqual({ running: 0, passed: 1, failed: 1 })
+  })
+
+  it('drops a cancelled run that a newer same-named run superseded, the way the merge box does', () => {
+    const pullRequest = parseGhPullRequest({
+      ...OPEN_WITH_ROLLUP,
+      statusCheckRollup: [
+        {
+          __typename: 'CheckRun',
+          name: 'Lint PR title',
+          status: 'COMPLETED',
+          conclusion: 'CANCELLED',
+          startedAt: '2026-09-03T18:39:58Z',
+          completedAt: '2026-09-03T18:40:51Z',
+        },
+        {
+          __typename: 'CheckRun',
+          name: 'Lint PR title',
+          status: 'COMPLETED',
+          conclusion: 'SUCCESS',
+          startedAt: '2026-09-03T18:45:10Z',
+          completedAt: '2026-09-03T18:45:40Z',
+        },
+      ],
+    })
+
+    expect(pullRequest?.checks).toBe(EChecksState.Passing)
+    expect(pullRequest?.tally).toEqual({ running: 0, passed: 1, failed: 0 })
+  })
+
+  it('is running when the newer same-named run is still in flight', () => {
+    const pullRequest = parseGhPullRequest({
+      ...OPEN_WITH_ROLLUP,
+      statusCheckRollup: [
+        {
+          __typename: 'CheckRun',
+          name: 'build',
+          status: 'COMPLETED',
+          conclusion: 'CANCELLED',
+          startedAt: '2026-09-03T18:39:58Z',
+        },
+        {
+          __typename: 'CheckRun',
+          name: 'build',
+          status: 'IN_PROGRESS',
+          conclusion: '',
+          startedAt: '2026-09-03T18:45:10Z',
+        },
+      ],
+    })
+
+    expect(pullRequest?.checks).toBe(EChecksState.Running)
+  })
+
+  it('still fails when a different check failed beside a superseded cancellation', () => {
+    const pullRequest = parseGhPullRequest({
+      ...OPEN_WITH_ROLLUP,
+      statusCheckRollup: [
+        {
+          __typename: 'CheckRun',
+          name: 'lint',
+          status: 'COMPLETED',
+          conclusion: 'CANCELLED',
+          startedAt: '2026-09-03T18:39:58Z',
+        },
+        {
+          __typename: 'CheckRun',
+          name: 'lint',
+          status: 'COMPLETED',
+          conclusion: 'SUCCESS',
+          startedAt: '2026-09-03T18:45:10Z',
+        },
+        {
+          __typename: 'CheckRun',
+          name: 'build',
+          status: 'COMPLETED',
+          conclusion: 'FAILURE',
+          startedAt: '2026-09-03T18:40:00Z',
+        },
       ],
     })
 
