@@ -71,11 +71,13 @@ Nothing. The transient-error retry landed (see "Closed").
     layered file and its declared environment variable. No `-p/--print`, no stdin piping, no JSON
     output, so Atlas cannot be scripted or used in CI.
 
-13. **Three providers are wired; reachability is now a credential question, not a code question.**
-    The uncommitted `harness/src/providers/` slice lands a `ProviderAdapter` abstraction with
-    `AnthropicAdapter`, `OpenAiAdapter` and `OpenRouterAdapter` all constructed in `compose.ts:329-331`,
-    backed by a generated catalogue (`models/generated-catalogue.ts` + `models/generated/*.json`)
-    covering Anthropic, OpenAI, OpenRouter and inference rows. `modelIsReachable` and its Anthropic
+13. **Four providers are wired; reachability is now a credential question, not a code question.**
+    The `harness/src/providers/` slice lands a `ProviderAdapter` abstraction with
+    `AnthropicAdapter`, `OpenAiAdapter`, `OpenRouterAdapter` and `InferenceAdapter` all constructed
+    in `compose.ts`, backed by a generated catalogue (`models/generated-catalogue.ts` +
+    `models/generated/*.json`) covering Anthropic, OpenAI, OpenRouter and inference.net rows. The
+    inference.net slice is generated from that vendor's own `/v1/models` rather than models.dev,
+    whose listing for it is stale. `modelIsReachable` and its Anthropic
     hard-code are gone: `providers.ts:66` marks a provider reachable when an account holds a key for
     it, and the switcher dims what you cannot actually call. What remains is operational, not
     architectural — signing into a second provider and driving it daily. The model-agnostic claim is

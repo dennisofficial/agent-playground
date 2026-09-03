@@ -118,11 +118,11 @@ describe('a provider with no account yet', () => {
 
   it('ranks placeholders with the accounts, not in a clump at the end', () => {
     const rows = accountRows({
-      accounts: [account({ id: 'openrouter', provider: EAuthProvider.OpenRouter })],
+      accounts: [account({ id: 'inference', provider: EAuthProvider.Inference })],
       active: {},
     })
 
-    expect(rows.map(rowProvider).at(-1)).toBe(EAuthProvider.OpenRouter)
+    expect(rows.map(rowProvider).at(-1)).toBe(EAuthProvider.Inference)
     expect(rows.at(-1)?.kind).toBe(EAccountRow.Account)
     expect(rows[0]?.kind).toBe(EAccountRow.SignedOut)
   })

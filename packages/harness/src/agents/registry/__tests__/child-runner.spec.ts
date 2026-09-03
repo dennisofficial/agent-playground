@@ -13,6 +13,7 @@ import {
   type ToolOutcome,
 } from '@dltech/atlas-core'
 
+import { createDeltaChannel } from '../../../channel/delta-channel'
 import { HookChain } from '../../../hooks/registry'
 import { buildHarness, type AtlasHarness } from '../../../loop/build-harness'
 import { createTempDatabase, type TempDatabase } from '../../../loop/__tests__/temp-database'
@@ -98,6 +99,7 @@ async function spawn(args: {
         },
         tools,
         hooks: new HookChain({}),
+        channel: createDeltaChannel(),
         drainNotices: async () => [],
         assemblyFor: ({ agentType }) =>
           defaultPipeline({

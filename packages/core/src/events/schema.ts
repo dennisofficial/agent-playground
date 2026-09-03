@@ -10,6 +10,7 @@ import { EJudgment } from '../policy/classifier/verdict'
 import type { ProviderOptions } from '../provider'
 import { EServiceStatus } from '../services/status'
 import { EKilledBy, EShellStatus } from '../shells/status'
+import { ETldrStatus } from '../tldr/status'
 import { ECompactionAnchor, EDecision, EMessageOrigin, EWorktreeExit, type EventBody } from './body'
 import type { EventEnvelope } from './envelope'
 import { threadIdSchema, callIdSchema, eventIdSchema, runIdSchema } from './ids'
@@ -234,4 +235,12 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     reason: z.string(),
   }),
   z.object({ type: z.literal('permission-revoked'), grantId: z.string().min(1) }),
+  z.object({
+    type: z.literal('tldr-written'),
+    anchorSeq: z.number().int().positive(),
+    throughSeq: z.number().int().positive(),
+    text: z.string().min(1),
+    modelId: z.string().min(1),
+    status: z.enum(ETldrStatus).optional(),
+  }),
 ])

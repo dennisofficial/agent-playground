@@ -79,6 +79,7 @@ const TURN_TAKING: readonly EventType[] = [
   'background-shell-ended',
   'background-shell-awaiting-input',
   'background-shell-matched',
+  'service-ended',
   'agent-ended',
 ]
 

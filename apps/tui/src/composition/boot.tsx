@@ -1,5 +1,6 @@
 import { createCliRenderer, type CliRenderer } from "@opentui/core";
 import { createRoot, type Root } from "@opentui/react";
+import { writeFileSync } from "node:fs";
 import React from "react";
 
 import { appearanceOf, applyAppearance } from "../ui/appearance";
@@ -9,6 +10,7 @@ import { classifyRequestOf } from "./classify";
 import { runClassify } from "./classify-run";
 import { resolveConfig } from "./config";
 import { ESession, openSession } from "./open-session";
+import { RESTART_EXIT_CODE, restartResumeHandle } from "./restart";
 import { resumeHint } from "./resume-hint";
 import { loadSettings } from "./settings-binding";
 import { readTerminalSize, settleTerminalSize } from "./terminal-size";
@@ -34,6 +36,7 @@ export async function bootAtlas(args: {
   argv: readonly string[];
   env: Record<string, string | undefined>;
   cwd: string;
+  command: string;
 }): Promise<number> {
   const config = resolveConfig({
     argv: args.argv,
@@ -73,6 +76,9 @@ export async function bootAtlas(args: {
 
   renderer.once("destroy", stopSettling);
 
+  const restartFile = args.env.ATLAS_DEV_RESTART_FILE;
+  let restartRequested = false;
+
   const root = createRoot(renderer);
   root.render(
     <BootScreen
@@ -83,6 +89,14 @@ export async function bootAtlas(args: {
         takeDown({ root, renderer });
         process.exit(ABANDONED);
       }}
+      {...(restartFile === undefined
+        ? {}
+        : {
+            onRestart: () => {
+              restartRequested = true;
+              renderer.destroy();
+            },
+          })}
     />,
   );
 
@@ -100,9 +114,15 @@ export async function bootAtlas(args: {
   }
 
   renderer.on("destroy", () => {
-    const hint = resumeHint(settled.app.activeThread());
+    const active = settled.app.activeThread();
 
     void settled.app.close().finally(() => {
+      if (restartRequested && restartFile !== undefined) {
+        writeFileSync(restartFile, restartResumeHandle({ active }) ?? "");
+        process.exit(RESTART_EXIT_CODE);
+      }
+
+      const hint = resumeHint({ active, command: args.command });
       if (hint !== null) process.stdout.write(hint);
       process.exit(0);
     });

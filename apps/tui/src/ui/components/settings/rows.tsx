@@ -19,6 +19,7 @@ const GAP = 1
 export function SettingsLine(props: {
   band?: string
   press?: PressHandlers
+  id?: string
   children: React.ReactNode
 }): React.ReactNode {
   return (
@@ -27,6 +28,7 @@ export function SettingsLine(props: {
       flexShrink={0}
       paddingLeft={SETTINGS_PAD}
       paddingRight={SETTINGS_PAD}
+      {...(props.id === undefined ? {} : { id: props.id })}
       {...(props.band === undefined ? {} : { backgroundColor: props.band })}
       {...(props.press ?? {})}
     >
@@ -100,6 +102,7 @@ export function SettingLine(props: {
 
   return (
     <SettingsLine
+      id={`setting-${props.setting.definition.id}`}
       {...(props.selected ? { band: theme.hoverBg } : {})}
       {...(props.press === undefined ? {} : { press: props.press })}
     >

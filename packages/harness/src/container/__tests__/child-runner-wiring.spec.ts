@@ -14,6 +14,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { AgentRegistryPort } from '../../agents/registry/port'
+import { createDeltaChannel } from '../../channel/delta-channel'
 import { subAgentPrompt } from '../../agents/registry/child-prompt'
 import type { ChildRunnerDeps } from '../../agents/registry/child-runner'
 import { createTempDatabase, type TempDatabase } from '../../loop/__tests__/temp-database'
@@ -83,6 +84,7 @@ function bindChildRunner({ container }: { container: DependencyContainer }): voi
         },
         tools: container.resolve(portToken(ToolRegistry)),
         hooks: container.resolve(HookChainToken),
+        channel: createDeltaChannel(),
         drainNotices: async () => [],
         assemblyFor: ({ agentType }) =>
           defaultPipeline({

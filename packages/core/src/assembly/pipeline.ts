@@ -5,6 +5,7 @@ import { compactedHistory } from './rules/compacted-history'
 import { imagesInContext } from './rules/images'
 import { messagesFromEvents } from './rules/messages-from-events'
 import { runningAgentsBlock, type RunningAgentsSource } from './rules/running-agents-block'
+import { runningServicesBlock, type RunningServicesSource } from './rules/running-services-block'
 import { runningShellsBlock, type RunningShellsSource } from './rules/running-shells-block'
 import { systemPrompt, type PromptSource } from './rules/system-prompt'
 import { worktreeBlock } from './rules/worktree-block'
@@ -18,11 +19,13 @@ export function defaultRules({
   prompt,
   launchDirectory,
   runningShells,
+  runningServices,
   runningAgents,
 }: {
   prompt: PromptSource
   launchDirectory: string
   runningShells?: RunningShellsSource | undefined
+  runningServices?: RunningServicesSource | undefined
   runningAgents?: RunningAgentsSource | undefined
 }): readonly Rule[] {
   return [
@@ -33,6 +36,7 @@ export function defaultRules({
     imagesInContext(),
     worktreeBlock({ launchDirectory }),
     ...(runningShells === undefined ? [] : [runningShellsBlock({ runningShells })]),
+    ...(runningServices === undefined ? [] : [runningServicesBlock({ runningServices })]),
     ...(runningAgents === undefined ? [] : [runningAgentsBlock({ runningAgents })]),
   ]
 }
@@ -45,15 +49,17 @@ export function defaultPipeline({
   prompt,
   launchDirectory,
   runningShells,
+  runningServices,
   runningAgents,
 }: {
   prompt: PromptSource
   launchDirectory: string
   runningShells?: RunningShellsSource | undefined
+  runningServices?: RunningServicesSource | undefined
   runningAgents?: RunningAgentsSource | undefined
 }): AssemblyPipeline {
   return {
-    rules: defaultRules({ prompt, launchDirectory, runningShells, runningAgents }),
+    rules: defaultRules({ prompt, launchDirectory, runningShells, runningServices, runningAgents }),
     annotators: defaultAnnotators(),
   }
 }

@@ -23,6 +23,7 @@ import {
   type SettingsDocument,
   toThreadId,
   type ThreadId,
+  type WorkspaceIdentity,
 } from '@dltech/atlas-core'
 import type { EventDraft } from '@dltech/atlas-core'
 
@@ -60,6 +61,7 @@ import { heldChoice } from '../model-selection'
 import type { ModelCatalogue } from '../providers'
 import { DEFAULT_MODEL_REF, EOpenMode, type AtlasConfig } from '../config'
 import { fakeAgentRegistry, type FakeAgents } from './fake-agents'
+import { fakeServiceRegistry, type FakeServices } from './fake-services'
 import {
   fakeThreadStore,
   fakeEventLog,
@@ -469,6 +471,7 @@ export type FakeApp = AtlasApp & {
   channel: DeltaChannel
   shells: FakeShells
   agents: FakeAgents
+  services: FakeServices
   skillRegistry: FakeSkills
   log: FakeEventLog
   threads: FakeThreadStore
@@ -489,6 +492,8 @@ export function fakeApp(args: {
   skills?: readonly DiscoveredSkill[]
   agentTypes?: AgentTypeCatalog
   workspaceRoot?: string
+  cwd?: string
+  workspace?: WorkspaceIdentity
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
@@ -498,6 +503,7 @@ export function fakeApp(args: {
   const pending = createPendingQueue()
   const shells = fakeShellRegistry()
   const agents = fakeAgentRegistry()
+  const services = fakeServiceRegistry()
   const skillRegistry = fakeSkillRegistry({ skills: args.skills ?? [] })
   const runner = new PublishingTurnRunner({
     channel,
@@ -577,8 +583,8 @@ export function fakeApp(args: {
       return args.summarises ?? null
     },
 
-    config: FAKE_CONFIG,
-    workspace: { workspace: FAKE_CONFIG.cwd, repo: null },
+    config: { ...FAKE_CONFIG, ...(args.cwd === undefined ? {} : { cwd: args.cwd }) },
+    workspace: args.workspace ?? { workspace: args.cwd ?? FAKE_CONFIG.cwd, repo: null },
     credentials: alwaysAuthorised(),
     channel,
     log,
@@ -587,6 +593,7 @@ export function fakeApp(args: {
     pending,
     shells,
     agents,
+    services,
     model: heldChoice({
       ref: parseRef(FAKE_CONFIG.model ?? '') ?? DEFAULT_MODEL_REF,
       effort: EEffort.Medium,

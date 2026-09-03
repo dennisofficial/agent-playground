@@ -7,7 +7,7 @@ describe('harness barrel', () => {
     expect(typeof harness.generatedCards).toBe('function')
     expect(typeof harness.cardsForProvider).toBe('function')
     expect(typeof harness.withoutDatedDuplicates).toBe('function')
-    expect(harness.GENERATED_MANIFEST.source).toBe('models.dev')
+    expect(harness.GENERATED_MANIFEST.source).toBe('models.dev + api.inference.net')
   })
 
   it('resolves the same catalogue through the barrel as through the module', () => {

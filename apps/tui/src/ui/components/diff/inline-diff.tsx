@@ -6,7 +6,7 @@ import { theme } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { useDiffChunks, type DiffEmphasis } from './diff-chunks'
 import { DiffFooter, filesSpans, type DiffFileCount } from './diff-footer'
-import { FileHeader, HunkHeading } from './diff-header'
+import { FileHeader } from './diff-header'
 import { patchText } from './diff-patch'
 import { InlineDiffRow } from './diff-row'
 import { filetypeOf } from './diff-style'
@@ -16,7 +16,6 @@ export const DIFF_CHROME = PANEL_INSET + PANEL_PAD
 function InlineHunk(props: {
   hunk: DiffHunk
   columns: InlineColumns
-  width: number
   filetype: string
   emphasis: DiffEmphasis | null
 }): React.ReactNode {
@@ -24,7 +23,6 @@ function InlineHunk(props: {
 
   return (
     <box flexDirection="column" flexShrink={0}>
-      <HunkHeading hunk={props.hunk} width={props.width} />
       {props.hunk.lines.map((line, index) => (
         <InlineDiffRow
           key={index}
@@ -78,7 +76,6 @@ export function InlineDiff(props: {
             key={index}
             hunk={hunk}
             columns={columns}
-            width={content}
             filetype={filetype}
             emphasis={props.emphasis ?? null}
           />

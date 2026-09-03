@@ -206,12 +206,16 @@ function AloneBlock(props: {
   const room = Math.max(8, props.inner - 2 - reading.note.length - GAP)
   const label = tailOfPath({ path: said, cells: room })
   const pad = ' '.repeat(Math.max(0, room - [...label].length))
-  /** A change shows what it changed, a picture shows itself, a failure shows what broke. */
+  /**
+   * A change shows what it changed and a picture shows itself. Output stays behind the row whether
+   * or not the call succeeded, and so does the reason a call failed: a failure is already said by
+   * the mark, the colour and the note, and a wall of stderr unfolded unasked buries the rest of the
+   * transcript.
+   */
   const shows =
     reading.detail === EDetail.Diff ||
     reading.detail === EDetail.Created ||
     reading.detail === EDetail.Image ||
-    reading.failed ||
     props.opened.has(call.callId)
   /**
    * A file still being dictated shows the file, not the streaming tail: the content is on the call,

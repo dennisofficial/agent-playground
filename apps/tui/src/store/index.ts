@@ -35,6 +35,7 @@ export {
   shellEndingFailed,
   type ShellEnding,
 } from './shell-ended-line'
+export { serviceEndedLine, serviceEndingFailed, type ServiceEndedNotice } from './service-ended-line'
 export {
   advancedGate,
   attachedGate,
@@ -75,6 +76,7 @@ export {
   type ModelSaidEntry,
   type ModelThoughtEntry,
   type OperatorSaidEntry,
+  type ServiceEndedEntry,
   type StepFailure,
   type ToolsRanEntry,
   type TranscriptEntry,

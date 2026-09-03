@@ -13,7 +13,7 @@ export type EffortDerivation = {
   rungs?: Record<string, string | number>
 }
 
-const MODELS_DEV_OFF = 'none'
+export const WIRE_OFF = 'none'
 
 const THINKING_BUDGETS: readonly (readonly [EEffort, number])[] = [
   [EEffort.Low, 1024],
@@ -21,12 +21,14 @@ const THINKING_BUDGETS: readonly (readonly [EEffort, number])[] = [
   [EEffort.High, 16_384],
 ]
 
-function literalRungs(values: readonly (string | null)[]): Record<string, string> | undefined {
+export function literalRungs(
+  values: readonly (string | null)[],
+): Record<string, string> | undefined {
   const offered = new Set(values.filter((value): value is string => value !== null))
 
   const rungs: Record<string, string> = {}
   for (const rung of EFFORT_LADDER) {
-    const wire = rung === EEffort.Off ? MODELS_DEV_OFF : rung
+    const wire = rung === EEffort.Off ? WIRE_OFF : rung
     if (offered.has(wire)) rungs[rung] = wire
   }
 

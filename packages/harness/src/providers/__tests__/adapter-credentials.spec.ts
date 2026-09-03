@@ -11,6 +11,7 @@ import {
   type ModelCard,
 } from '@dltech/atlas-core'
 
+import { InferenceAdapter, INFERENCE_PROVIDER_ID } from '../inference-adapter'
 import { OpenAiAdapter, OPENAI_PROVIDER_ID } from '../openai-adapter'
 import { OpenRouterAdapter, OPENROUTER_PROVIDER_ID } from '../openrouter-adapter'
 
@@ -68,6 +69,19 @@ describe('a provider adapter asking for a credential', () => {
     }
 
     expect(asked[0]?.provider).toBe(EAuthProvider.OpenAI)
+  })
+
+  it('does the same for inference.net, which shares the same fallback', async () => {
+    asked.length = 0
+    const adapter = new InferenceAdapter({ credentials, cards: [cardOn(INFERENCE_PROVIDER_ID)] })
+
+    try {
+      await adapter.model({ card: cardOn(INFERENCE_PROVIDER_ID), effort }).doGenerate({} as never)
+    } catch {
+      // the request itself never leaves; only the credential it asked for matters here
+    }
+
+    expect(asked[0]?.provider).toBe(EAuthProvider.Inference)
   })
 
   it('names the account when the key is empty, rather than shipping a request without one', async () => {

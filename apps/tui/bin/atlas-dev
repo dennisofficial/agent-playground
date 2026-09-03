@@ -28,11 +28,42 @@ quietly() {
   fi
 }
 
-if [ "${ATLAS_DEV_SKIP_GENERATE:-}" = "" ]; then
-  quietly bun run --filter @dltech/atlas-harness db:ensure
-  quietly bun scripts/generate-manifest.ts
-  quietly bun scripts/generate-skills.ts
-  quietly bun scripts/generate-plugins.ts
-fi
+generate() {
+  if [ "${ATLAS_DEV_SKIP_GENERATE:-}" = "" ]; then
+    quietly bun run --filter @dltech/atlas-harness db:ensure
+    quietly bun scripts/generate-manifest.ts
+    quietly bun scripts/generate-skills.ts
+    quietly bun scripts/generate-plugins.ts
+  fi
+}
 
-exec bun src/main.tsx --cwd "$project" "$@"
+# /restart inside the TUI writes the conversation to resume into this file and exits 75; anything
+# else — ctrl+c included — passes straight through.
+RESTART=75
+
+restart_file=$(mktemp "${TMPDIR:-/tmp}/atlas-dev-restart.XXXXXX")
+trap 'rm -f "$restart_file"' EXIT
+export ATLAS_DEV_RESTART_FILE="$restart_file"
+
+generate
+
+while :; do
+  code=0
+  bun src/main.tsx --cwd "$project" "$@" || code=$?
+
+  if [ "$code" -ne "$RESTART" ]; then
+    exit "$code"
+  fi
+
+  handle=$(cat "$restart_file")
+  : > "$restart_file"
+
+  printf 'atlas-dev: rebuilding and restarting\n' >&2
+  generate
+
+  if [ -n "$handle" ]; then
+    set -- --resume "$handle"
+  else
+    set --
+  fi
+done

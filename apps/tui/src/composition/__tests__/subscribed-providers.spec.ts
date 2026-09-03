@@ -12,6 +12,8 @@ import {
 import {
   AnthropicAdapter,
   cardsForProvider,
+  InferenceAdapter,
+  INFERENCE_PROVIDER_ID,
   OpenRouterAdapter,
   OPENROUTER_PROVIDER_ID,
 } from '@dltech/atlas-harness'
@@ -37,6 +39,7 @@ const catalogueWith = (accounts: readonly Account[]) =>
     adapters: [
       new AnthropicAdapter({ credentials, cards: cardsForProvider(ANTHROPIC_PROVIDER_ID) }),
       new OpenRouterAdapter({ credentials, cards: cardsForProvider(OPENROUTER_PROVIDER_ID) }),
+      new InferenceAdapter({ credentials, cards: cardsForProvider(INFERENCE_PROVIDER_ID) }),
     ],
     accounts,
   })
@@ -66,6 +69,14 @@ describe('which providers report a session and weekly window', () => {
 
     expect(catalogue.subscribed(OPENROUTER_PROVIDER_ID)).toBe(false)
     expect(catalogue.subscribed(ANTHROPIC_PROVIDER_ID)).toBe(true)
+  })
+
+  it('does not count inference.net, which is billed per token like OpenRouter', () => {
+    const catalogue = catalogueWith([
+      account({ provider: EAuthProvider.Inference, kind: EAuthKind.ApiKey }),
+    ])
+
+    expect(catalogue.subscribed(INFERENCE_PROVIDER_ID)).toBe(false)
   })
 
   it('counts nothing before an account exists', () => {

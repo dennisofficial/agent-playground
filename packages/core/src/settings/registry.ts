@@ -21,6 +21,8 @@ export enum ESettingId {
   ReloadInstructions = 'context.reload',
   AutoCompact = 'context.autoCompact',
   ImageRows = 'transcript.imageRows',
+  TldrFooter = 'tldr.footer',
+  TldrStatus = 'tldr.status',
   WorktreeDirectory = 'worktree.directory',
   FooterMeters = 'usage.meters',
   WarnFiveHour = 'usage.warnFiveHour',
@@ -90,6 +92,28 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 80,
     step: 2,
     unit: ' rows',
+  },
+  {
+    id: ESettingId.TldrFooter,
+    page: ESettingPage.General,
+    group: 'Transcript',
+    label: 'tl;dr footer',
+    description:
+      'When a turn ends, a second, cheaper model writes a one-to-two-line summary of it — from your last message to the end — and the transcript shows it as a tl;dr divider under the answer. The summary is for you alone: the agent never reads it. Turning this off stops new footers being written; ones already on the log stay.',
+    environmentVariable: 'ATLAS_TLDR_FOOTER',
+    kind: ESettingKind.Toggle,
+    fallback: true,
+  },
+  {
+    id: ESettingId.TldrStatus,
+    page: ESettingPage.General,
+    group: 'Transcript',
+    label: 'tl;dr status pill',
+    description:
+      'The filled pill centred on the tl;dr divider saying how the turn ended — done, needs you, or waiting. Display only: the status is still written with every footer, so turning this back on shows it on footers that were written while it was off.',
+    environmentVariable: 'ATLAS_TLDR_STATUS',
+    kind: ESettingKind.Toggle,
+    fallback: true,
   },
   {
     id: ESettingId.SidebarWidth,

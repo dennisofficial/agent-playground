@@ -112,6 +112,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       lastTool: undefined,
       lastText: '',
       startedAt: this.clock.now(),
+      steppingSince: undefined,
       endedAt: undefined,
       deliveredAt: undefined,
       abort: new AbortController(),

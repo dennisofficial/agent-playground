@@ -7,13 +7,14 @@ import type { Span } from '../ui/components/spans'
 import type { AccountRow } from '../ui/accounts-model'
 import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
 import { ExitGuard } from '../ui/components/exit-guard'
-import { exitGuardAgentRow, exitGuardRow } from '../ui/exit-guard-model'
+import { exitGuardAgentRow, exitGuardRow, exitGuardServiceRow } from '../ui/exit-guard-model'
 import { Rewind } from '../ui/components/rewind'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
 import { Threads } from '../ui/components/threads'
 import { AgentsPicker } from '../ui/components/agents-picker'
+import { isServiceAlive } from '../ui/services-model'
 import { isShellRunning } from '../ui/shells-model'
 import { isSubagentRunning } from '../store/subagent-row'
 import type { AccountsControl } from './use-accounts'
@@ -22,6 +23,7 @@ import type { AgentsPickerControl } from './use-agents-picker'
 import type { ApprovalControl } from './use-approval'
 import type { ExitGuardControl } from './use-exit-guard'
 import type { RewindControl } from './use-rewind'
+import type { ServicesControl } from './use-services'
 import type { SettingsControl } from './use-settings'
 import type { ShellsControl } from './use-shells'
 import { EModelScope, type SwitcherControl } from './use-switcher'
@@ -34,6 +36,7 @@ export function OverlayStack(props: {
   active: ModelRef
   switcher: SwitcherControl
   shells: ShellsControl
+  services: ServicesControl
   agents: AgentsControl
   agentsPicker: AgentsPickerControl
   settings: SettingsControl
@@ -136,6 +139,7 @@ export function OverlayStack(props: {
           width={Math.min(props.contentWidth, props.width)}
           running={[
             ...shells.everywhere.filter(isShellRunning).map(exitGuardRow),
+            ...props.services.everywhere.filter(isServiceAlive).map(exitGuardServiceRow),
             ...agents.everywhere.filter(isSubagentRunning).map(exitGuardAgentRow),
           ]}
           state={exitGuard.state}

@@ -128,6 +128,11 @@ export const settledStep = (step: ArrivingStep): InFlightStep => ({
   calls: step.calls.map(settledCall),
 })
 
+function deletedFromWindow(args: { ref: EventRef; events: readonly Event[] }): boolean {
+  const head = args.events.reduce((max, event) => Math.max(max, event.seq), 0)
+  return args.ref.seq <= head && args.events.every((event) => event.id !== args.ref.eventId)
+}
+
 function isSuperseded(args: {
   step: Pick<InFlightStep, 'end' | 'supersededBy'>
   events: readonly Event[]
@@ -136,7 +141,10 @@ function isSuperseded(args: {
   if (args.step.end === null) return false
 
   const ref = args.step.supersededBy
-  if (ref !== null) return args.events.some((event) => event.id === ref.eventId)
+  if (ref !== null) {
+    if (args.events.some((event) => event.id === ref.eventId)) return true
+    return deletedFromWindow({ ref, events: args.events })
+  }
 
   return args.step.end !== EStepEnd.Failed || !args.isTrailing
 }

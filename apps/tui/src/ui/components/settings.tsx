@@ -1,5 +1,6 @@
 import type { SecretPrompt as SecretPromptState } from '@dltech/atlas-core'
-import React from 'react'
+import type { ScrollBoxRenderable } from '@opentui/core'
+import React, { useEffect, useRef } from 'react'
 
 import { fitHints, hintSpans, type Hint } from '../hint-layout'
 import { usePress } from '../hooks/use-press'
@@ -82,6 +83,13 @@ export function Settings(props: {
   const page = currentPage({ state: props.state, model: props.model })
   const selected = page?.rows[props.state.rowIndex]
 
+  const scroller = useRef<ScrollBoxRenderable | null>(null)
+  const selectedId = selected?.definition.id
+  useEffect(() => {
+    if (selectedId === undefined) return
+    scroller.current?.scrollChildIntoView(`setting-${selectedId}`)
+  }, [selectedId])
+
   return (
     <box
       flexDirection="column"
@@ -108,7 +116,7 @@ export function Settings(props: {
           flexBasis={0}
           paddingTop={1}
         >
-          <scrollbox flexGrow={1} flexShrink={1} flexBasis={0}>
+          <scrollbox ref={scroller} flexGrow={1} flexShrink={1} flexBasis={0}>
             <box flexDirection="column" flexShrink={0} gap={1}>
               {page?.groups.map((group) => (
                 <box key={group.label} flexDirection="column" flexShrink={0}>

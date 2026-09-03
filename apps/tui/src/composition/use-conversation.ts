@@ -13,8 +13,8 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
 import {
-  createConversationStore,
   pendingRows,
+  trailingSaid,
   type EThinkingVisibility,
   type PendingRow,
   type PendingSaid,
@@ -37,8 +37,9 @@ import { userSaidDraft } from './user-said'
 import { useCompaction } from './use-compaction'
 import { useSessionName } from './use-session-name'
 import { useAgentWake } from './use-agent-wake'
+import { useServiceWake } from './use-service-wake'
 import { useShellWake } from './use-shell-wake'
-import { useThreadEvents } from './use-thread-events'
+import { EThreadRows, useThreadView, type ThreadSeed } from './use-thread-view'
 import { useThreadSwap } from './use-thread-swap'
 import type { ApprovalControl } from './use-approval'
 import { useTurnDriver } from './use-turn-driver'
@@ -92,10 +93,11 @@ export function useConversation(args: {
   paceReveal: boolean
   autoCompactAtPercent: number
   thinking: EThinkingVisibility
+  tldrStatus: boolean
   onUndone: (text: string) => void
   canWake: boolean
 }): Conversation {
-  const { app, paceReveal, thinking, onUndone } = args
+  const { app, paceReveal, thinking, tldrStatus, onUndone } = args
   const [opened, setOpened] = useState<OpenedConversation>(args.opened)
   const [failure, setFailure] = useState<string | null>(null)
   const [reported, setReported] = useState<ModelUsage | null>(null)
@@ -106,33 +108,50 @@ export function useConversation(args: {
 
   const threadId = opened.threadId
 
-  const store = useMemo(
-    () =>
-      createConversationStore({
-        channel: app.channel,
-        threadId: opened.threadId,
-        events: opened.events,
-        turns: opened.turns,
-        paceReveal,
-        name: opened.name,
-        projectEvents: ({ events: folded }) => {
-          const broke = publishProjections({ projections: app.pluginProjections, events: folded })
-          if (broke.length === 0) return
+  const clock = useMemo(() => createAwakeClock(), [])
+  const readClock = clock.read
 
-          notify({ tone: ENoticeTone.Warn, text: `projection failed: ${broke.join(', ')}` })
-        },
-      }),
-    [app.channel, app.pluginProjections, paceReveal, opened],
+  const projectEvents = useCallback(
+    ({ events: folded }: { events: readonly Event[] }) => {
+      const broke = publishProjections({ projections: app.pluginProjections, events: folded })
+      if (broke.length === 0) return
+
+      notify({ tone: ENoticeTone.Warn, text: `projection failed: ${broke.join(', ')}` })
+    },
+    [app.pluginProjections],
   )
 
-  useEffect(() => () => store.dispose(), [store])
+  const initial = useCallback(
+    (): ThreadSeed => ({ events: opened.events, turns: opened.turns }),
+    [opened],
+  )
 
-  const { events, setEvents, refresh } = useThreadEvents({
+  const pending = app.pending
+
+  /**
+   * The rows that landed settle the queue the operator typed ahead into — a concern of whoever owns
+   * the composer, which is why the view reports the read rather than knowing what to do about it.
+   */
+  const afterRead = useCallback(
+    (read: readonly Event[]) => pending.settleTaken({ landed: trailingSaid(read) }),
+    [pending],
+  )
+
+  const view = useThreadView({
     app,
     threadId,
-    store,
-    initial: args.opened.events,
+    rows: EThreadRows.Composed,
+    thinking,
+    tldrStatus,
+    readClock,
+    initial,
+    paceReveal,
+    projectEvents,
+    afterRead,
+    onUsage: setReported,
   })
+
+  const { store, events, setEvents, refresh } = view
 
   const handleRevokeGrant = useRevokeGrant({ app, threadId, refresh })
 
@@ -153,16 +172,10 @@ export function useConversation(args: {
 
   useEffect(() => store.setName(name), [store, name])
 
-  useEffect(() => store.setThinking(thinking), [store, thinking])
+  const derived = view.model
+  const { sidebar } = view
 
-  const derived = useSyncExternalStore(store.subscribe, store.getSnapshot)
-  const sidebar = useSyncExternalStore(store.subscribe, store.getSidebar)
-
-  const pending = app.pending
   const queued = useSyncExternalStore(pending.subscribe, pending.getSnapshot)
-
-  const clock = useMemo(() => createAwakeClock(), [])
-  const readClock = clock.read
 
   const compaction = useCompaction({
     app,
@@ -178,29 +191,24 @@ export function useConversation(args: {
     app,
     threadId,
     started: startedRef,
-    store,
-    events,
-    refresh,
+    view,
     readClock,
     used: usedRef,
     compactIfFull: compaction.compactIfFull,
     cancelCompaction: compaction.cancel,
     onUndone,
-    onUsage: setReported,
     setFailure,
     forgetUsage,
   })
 
-  const { working, progress, drive } = turnDriver
+  const { working, drive } = turnDriver
   const { compacting } = compaction
   const now = useTickingNow({
     ticking: derived.streaming || working || compacting !== null,
     clock,
   })
 
-  const turn = progress.clock
-
-  useEffect(() => store.setTurn(turn), [store, turn])
+  const { turn } = view
 
   const handleWake = useCallback(() => void drive([]), [drive])
 
@@ -214,6 +222,14 @@ export function useConversation(args: {
 
   const agentNotices = useAgentWake({
     agents: app.agents,
+    threadId,
+    working,
+    canWake: args.canWake,
+    onWake: handleWake,
+  })
+
+  const serviceNotices = useServiceWake({
+    services: app.services,
     threadId,
     working,
     canWake: args.canWake,
@@ -301,8 +317,8 @@ export function useConversation(args: {
   usedRef.current = used
 
   const rows = useMemo(
-    () => pendingRows({ messages: queued, notices, agents: agentNotices }),
-    [agentNotices, notices, queued],
+    () => pendingRows({ messages: queued, notices, agents: agentNotices, services: serviceNotices }),
+    [agentNotices, notices, queued, serviceNotices],
   )
 
   const model = transcriptOfTurn({ model: derived, working, failure })

@@ -2,7 +2,13 @@ import type { KeyEvent, PasteEvent } from '@opentui/core'
 import { usePaste } from '@opentui/react'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
-import { EAuthProvider, providerSpec, type Account, type AccountId } from '@dltech/atlas-core'
+import {
+  EAuthProvider,
+  providerSpec,
+  reachableProviders,
+  type Account,
+  type AccountId,
+} from '@dltech/atlas-core'
 import type { AccountsService, LoginTicket, UrlOpener } from '@dltech/atlas-harness'
 
 import { pastedText } from '../ui/pasted-text'
@@ -38,12 +44,6 @@ export type AccountsControl = {
   handleKey: (key: KeyEvent) => void
   handleOpenUrl: () => void
 }
-
-const PROVIDERS: readonly EAuthProvider[] = [
-  EAuthProvider.Anthropic,
-  EAuthProvider.OpenAI,
-  EAuthProvider.OpenRouter,
-]
 
 const reasonOf = (error: unknown): string =>
   error instanceof Error ? error.message : 'the request failed'
@@ -87,7 +87,9 @@ export function useAccounts(args: {
 
     const active: Partial<Record<EAuthProvider, AccountId | undefined>> = {}
 
-    for (const provider of PROVIDERS) active[provider] = await accounts.activeFor(provider)
+    for (const spec of reachableProviders()) {
+      active[spec.provider] = await accounts.activeFor(spec.provider)
+    }
 
     return accountRows({ accounts: stored, active })
   }, [accounts, onAccounts])

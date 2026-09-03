@@ -262,9 +262,7 @@ describe('merging the crew into a sidebar', () => {
     const parent = deriveSidebar({ events: [], turn: IDLE_TURN, name: null })
     const merged = withCrew({ model: parent, subagents: rows({ turns: 9 }) })
 
-    expect(merged.totalTokens).toBe(parent.totalTokens)
-    expect(merged.liveOutputTokens).toBe(parent.liveOutputTokens)
-    expect(merged.lastTurnOutputTokens).toBe(parent.lastTurnOutputTokens)
+    expect(merged.spend).toBe(parent.spend)
   })
 
   /**
@@ -281,9 +279,7 @@ describe('merging the crew into a sidebar', () => {
     const merged = withCrew({ model: parent, subagents: spent })
 
     expect(subagentSpendLabel(merged.subagents?.[0]?.spend ?? null)).toBe('↑ 48.2k  ↓ 3.1k')
-    expect(merged.totalTokens).toBe(parent.totalTokens)
-    expect(merged.liveOutputTokens).toBe(parent.liveOutputTokens)
-    expect(merged.lastTurnOutputTokens).toBe(parent.lastTurnOutputTokens)
+    expect(merged.spend).toBe(parent.spend)
   })
 
   /**
@@ -301,9 +297,7 @@ describe('merging the crew into a sidebar', () => {
     const row = merged.subagents?.[0]
 
     expect(row === undefined ? null : subagentFigures(row)).toBe('↑ 48.2k  ↓ 3.1k  ctx 34%')
-    expect(merged.totalTokens).toBe(parent.totalTokens)
-    expect(merged.liveOutputTokens).toBe(parent.liveOutputTokens)
-    expect(merged.lastTurnOutputTokens).toBe(parent.lastTurnOutputTokens)
+    expect(merged.spend).toBe(parent.spend)
     expect(Object.keys(merged).filter((field) => !(field in parent))).toEqual(['subagents'])
   })
 })

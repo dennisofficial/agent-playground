@@ -265,6 +265,49 @@ only the session that started it knows when nobody is left to read it: container
 whole group. Shells do not survive the process — the registry is memory — which is the one
 place this deliberately stops short of Claude Code, whose tasks survive a session and a `/clear`.
 
+## Services
+
+A background shell is work the model is waiting on; a **service** is infrastructure the model works
+*against* — a dev server, a watcher, anything that should stay up while the work continues. The
+registries are separate because the lifetimes are: a service never times out, never holds a turn
+open, has no watch and no awaiting-input, and nothing about it is scoped to the thread that started
+it. `harness/src/services/` mirrors `harness/src/shells/` member for member over those axioms —
+the same notice-queue → wake → drainPending pipeline, the same process-group lifecycle, the same
+teardown-records-what-it-kills rule — and where a question has no answer here, the answer is
+whatever `ShellRegistryPort` does.
+
+**Output is a file, not a buffer.** A dev server prints unboundedly for hours, which a retained
+window and an overflow kill cannot serve. So stdout and stderr share one append-mode fd under
+`<atlasHome>/services/<id>.log` — interleaving in the log matches interleaving in time — and the
+model reads it with the file tools it already has. There is no `service_output` tool: the
+`service_start` reply names the path, and an ending carries a tail read *at handover*, so a notice
+dropped rather than delivered loses nothing. This is the legacy registry's shape
+(`deprecated/tui`'s `ServiceRegistryService`) carried forward where the shell buffer's shape does
+not fit.
+
+**Every ending notifies, as it does for shells.** Legacy deliberately stayed silent — "a service
+has no completion semantics" — but legacy held backgrounded turns open, so the model was always
+around to notice. Here the ending is a `service-ended` event routing to the log of the thread that
+started it, phrased as infrastructure rather than completed work, with the same `EKilledBy`
+attribution so a user-stopped server is never re-started by a helpful model.
+
+**Listing and stopping are session-global; only endings are owned.** Any thread may `service_list`
+or `service_stop` what any thread started — a conversation opened after the stack came up must be
+able to discover it, and the running-services reminder at the prompt tail is what keeps the model
+from polling to find out. `stop` escalates by pure rule (`core/services/lifecycle`): first stop
+SIGTERMs the process group, every stop after SIGKILLs, and a confirmed-dead service is answered in
+prose without signalling, because a reaped pgid can be reissued to a stranger. `killed` is recorded
+on signal delivery, not death.
+
+**A start that was never viable is not a start.** `service_start` waits a 250 ms settle —
+explicitly not a health check — so `command not found` comes back as an immediate exit with the
+log tail rather than a lying "Started". Health-checking past that is the model's job: read the
+log, hit the endpoint.
+
+**Nothing outlives Atlas.** Quitting reaps every service through the same `closeAll` path as
+shells, the exit guard counts live services alongside shells and agents, and no state persists
+across a restart. Ports, readiness probes and auto-restart are deliberately absent.
+
 ## Sub-agents
 
 **A sub-agent is a first-class Atlas thread that Atlas spawned**, not `runTurn` called recursively
@@ -343,11 +386,24 @@ tools it actually has. Nothing counts hops and nothing needs to. The envelope st
 never foreclosed" is no longer the design. Recursion was foreclosed on purpose.
 
 **Nothing per-run belongs in the DI container; wanting a child container is a smell that
-run-varying config got injected instead of passed.** A child's `LoopTurnRunner` is constructed at
-spawn time with its own registry, dispatcher, model and assembly, exactly as
-`PublishingTurnRunner.runnerFor` already does per call. The supervisor holds a *thunk* for those
+run-varying config got injected instead of passed.** A child's runner is constructed at spawn time
+with its own registry, dispatcher, model and assembly. The supervisor holds a *thunk* for those
 deps rather than the deps themselves, because `agent_spawn` is a `ToolDefinition` the registry
 constructs and resolving a child's tools eagerly would close the cycle.
+
+**A child is built through `PublishingTurnRunner`, not as a bare `LoopTurnRunner`** — the same
+wrapper the root thread runs under, so `buildChildRunner` differs from the composition root only in
+the deps it hands over. A child that skipped it took its steps in silence: it appended to the log
+and nothing on the `DeltaChannel` ever said a step had opened, so a reader of the child could only
+re-read its log whenever the roster happened to settle, and its transcript could not stream and
+could not show that it was working. Publishing is per `threadId`, which is what keeps this on the
+right side of the counted-never-quoted rule: a child publishes under its own id, and a subscriber
+watching the parent hears nothing.
+
+**The supervisor stamps `steppingSince` when it hands a child a step**, cleared when the step
+settles. `startedAt` is the spawn instant and does not move when a child is steered, so it cannot
+answer "how long has this been working"; the reading has to survive the operator closing the child's
+view and opening it again, which a clock kept in the view cannot do.
 
 ### A delegate's work is counted, never quoted
 
@@ -1028,9 +1084,10 @@ Four decisions are pure and live in `core/credentials/`, tested with plain data:
 - `chooseAccount` — which account answers. An `expired` account is ranked last but never excluded,
   because a refresh is the only thing that clears that status and excluding it makes the door
   one-way.
-- The provider registry — what each provider supports and how one signs in to it. Anthropic is
-  wired; OpenAI's device-code flow and OpenRouter's API key are declared and answer `reachable:
-  false`, which is what the switcher reads as `⚠ no key`.
+- The provider registry — what each provider supports, how one signs in to it, and which
+  environment variable carries its key. Anthropic, OpenAI, OpenRouter and inference.net are all
+  wired and answer `reachable: true`; a provider only dims to `⚠ no key` in the switcher once the
+  accounts say nothing holds a key for it.
 
 **A refresh token is single-use.** The server rotates it, so two callers refreshing one account race
 and the loser gets a 400 that reads exactly like a dead credential. `RefreshingCredentialPort` keeps
@@ -1120,7 +1177,8 @@ packages/core/src/
 packages/harness/src/
   loop/          runTurn, settlePending
   model/         ModelPort over AI SDK; the stream accumulator
-  model/providers/   LanguageModelV4 impls: claude-oauth, codex-oauth, api-key
+  providers/     ProviderAdapter impls, one per vendor: anthropic, openai, openrouter, inference
+  models/        the generated model catalogue, one JSON slice per provider
   credentials/   the account vault, the refreshing CredentialPort, OAuth clients, and the
                  sources a login can be imported from and written back to
   files/         what the model has seen of each file on disk, for the read-before-write guard

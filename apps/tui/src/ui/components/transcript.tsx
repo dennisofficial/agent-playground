@@ -50,6 +50,8 @@ export function Transcript(props: {
   sends?: number
   pending?: readonly PendingRow[]
   background?: BackgroundWork
+  /** When the wait on that background work began, held above this mount. See `WaitingLine`. */
+  waitingSince?: number | null
   onRetry?: () => void
   onResume?: () => void
   opened?: ReadonlySet<string>
@@ -165,7 +167,10 @@ export function Transcript(props: {
             />
           </box>
         ) : (
-          <WaitingLine work={props.background ?? NOTHING_IN_BACKGROUND} />
+          <WaitingLine
+            work={props.background ?? NOTHING_IN_BACKGROUND}
+            since={props.waitingSince ?? null}
+          />
         )}
 
         <PendingBlock rows={props.pending ?? NOTHING_PENDING} width={props.width} />

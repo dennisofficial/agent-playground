@@ -27,8 +27,11 @@ export function workspaceFileLoader(browser: FileBrowser): FileLoader {
 export async function mentionedFileDrafts(args: {
   text: string
   load: FileLoader
+  highlighted?: ReadonlySet<string> | undefined
 }): Promise<readonly EventDraft[]> {
-  const paths = mentionedFilePaths(args.text)
+  const parsed = mentionedFilePaths(args.text)
+  const paths =
+    args.highlighted === undefined ? parsed : parsed.filter((path) => args.highlighted?.has(path))
   if (paths.length === 0) return []
 
   const loaded = await Promise.all(paths.map((path) => args.load(path)))

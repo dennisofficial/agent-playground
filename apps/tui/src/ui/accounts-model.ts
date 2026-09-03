@@ -67,6 +67,7 @@ const PROVIDER_ORDER: readonly EAuthProvider[] = [
   EAuthProvider.Anthropic,
   EAuthProvider.OpenAI,
   EAuthProvider.OpenRouter,
+  EAuthProvider.Inference,
 ]
 
 const rank = (row: AccountRow): number => {

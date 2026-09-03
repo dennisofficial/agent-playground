@@ -13,6 +13,7 @@ import {
   backgroundShellMatchedBlock,
 } from './background-shell-block'
 import { nudgeBlock } from './nudge-block'
+import { serviceEndedBlock } from './service-ended-block'
 
 type OpenMessage =
   | { role: 'user'; content: (TextPart | ImagePart)[] }
@@ -193,6 +194,18 @@ function walkEvents(events: readonly Event[]): Walk {
         message: {
           role: 'user',
           content: [{ type: 'text', text: backgroundShellMatchedBlock(event) }],
+        },
+        origin: originOf(event),
+      })
+      openAssistant = undefined
+      continue
+    }
+
+    if (event.type === 'service-ended') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: serviceEndedBlock(event) }],
         },
         origin: originOf(event),
       })

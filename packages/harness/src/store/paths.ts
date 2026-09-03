@@ -7,6 +7,8 @@ export { ATLAS_DIRECTORY_NAME, ATLAS_HOME_ENV } from '@dltech/atlas-core'
 
 export const ATLAS_DATABASE_NAME = 'harness.db'
 export const ATLAS_TAPES_DIRECTORY_NAME = 'tapes'
+export const ATLAS_SERVICES_DIRECTORY_NAME = 'services'
+export const ATLAS_BIN_DIRECTORY_NAME = 'bin'
 
 // `bun build --compile` mounts the bundle on a virtual filesystem rooted at `/$bunfs`, so a module
 // path under it means this is the shipped binary rather than a checkout.
@@ -23,6 +25,14 @@ export function atlasDirectory(): string {
 
 export function atlasTapesDirectory(): string {
   return join(atlasDirectory(), ATLAS_TAPES_DIRECTORY_NAME)
+}
+
+export function atlasServicesDirectory(): string {
+  return join(atlasDirectory(), ATLAS_SERVICES_DIRECTORY_NAME)
+}
+
+export function atlasBinDirectory(): string {
+  return join(atlasDirectory(), ATLAS_BIN_DIRECTORY_NAME)
 }
 
 export function atlasDatabaseFile(): string {

@@ -1,8 +1,13 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CATALOGUE_PROVIDER_IDS, type GeneratedManifest } from '../src/models/generated-card'
-import { mapProvider, type ProviderMapping, type ProviderReport } from './catalogue-map'
+import { MODELS_DEV_PROVIDER_IDS, type GeneratedManifest } from '../src/models/generated-card'
+import { mapProvider } from './catalogue-map'
+import type { ProviderMapping, ProviderReport } from './catalogue-report'
+import { mapInferenceModels } from './inference-map'
+import { fetchInferenceModels, INFERENCE_SOURCE } from './inference-net'
 import { fetchModelsDevIndex, MODELS_DEV_SOURCE } from './models-dev'
+
+const SOURCE = `${MODELS_DEV_SOURCE} + ${INFERENCE_SOURCE}`
 
 const SHRINK_FLOOR = 0.6
 const OUTPUT_DIR = join(dirname(fileURLToPath(import.meta.url)), '../src/models/generated')
@@ -61,7 +66,7 @@ async function assertNoShrink(mappings: readonly ProviderMapping[]): Promise<voi
   const floor = Math.ceil(recorded * SHRINK_FLOOR)
   if (total < floor) {
     throw new Error(
-      `models.dev yielded ${total} models against ${recorded} recorded — below the ${floor} floor, refusing to write`,
+      `${SOURCE} yielded ${total} models against ${recorded} recorded — below the ${floor} floor, refusing to write`,
     )
   }
 }
@@ -82,13 +87,15 @@ async function main(): Promise<void> {
   const index = await fetchModelsDevIndex()
 
   const mappings: ProviderMapping[] = []
-  for (const providerId of CATALOGUE_PROVIDER_IDS) {
+  for (const providerId of MODELS_DEV_PROVIDER_IDS) {
     const provider = index[providerId]
     if (provider === undefined) {
       throw new Error(`models.dev no longer lists provider ${providerId}`)
     }
     mappings.push(mapProvider({ providerId, provider }))
   }
+
+  mappings.push(mapInferenceModels(await fetchInferenceModels()))
 
   await assertNoShrink(mappings)
 
@@ -99,14 +106,14 @@ async function main(): Promise<void> {
   const modelCount = mappings.reduce((sum, mapping) => sum + mapping.cards.length, 0)
   const manifest: GeneratedManifest = {
     generatedAt: new Date().toISOString(),
-    source: MODELS_DEV_SOURCE,
+    source: SOURCE,
     providerCount: mappings.length,
     modelCount,
     hash: hashOf(mappings),
   }
   await writeJson({ path: MANIFEST_PATH, value: manifest })
 
-  console.log(`models.dev → ${modelCount} models across ${mappings.length} providers`)
+  console.log(`${SOURCE} → ${modelCount} models across ${mappings.length} providers`)
   for (const mapping of mappings) printReport(mapping.report)
   console.log(`hash ${manifest.hash}`)
 }

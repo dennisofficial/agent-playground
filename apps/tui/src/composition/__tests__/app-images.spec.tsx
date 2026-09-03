@@ -331,4 +331,77 @@ describe('a screenshot pasted into the draft', () => {
       await mounted.done()
     }
   }, 60_000)
+
+  it('leaves no token behind when the clipboard has no picture to give', async () => {
+    const mounted = await open({ app: scripted(), clipboard: nothingOnTheClipboard })
+
+    try {
+      mounted.pressCtrl('v')
+      await mounted.frame()
+      await new Promise((ready) => setTimeout(ready, 50))
+
+      expect(await mounted.frame()).not.toContain('[Image')
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+})
+
+describe('a block of pasted text', () => {
+  it('folds a long paste into one token, keeping its text for submit', async () => {
+    const mounted = await open({ app: scripted(), clipboard: nothingOnTheClipboard })
+
+    try {
+      await mounted.paste('one\ntwo\nthree\nfour\nfive\nsix\nseven\nheight')
+
+      expect(await mounted.frame()).toContain('[Pasted text #1')
+
+      mounted.pressEnter()
+
+      const sent = await until({
+        holds: async () => {
+          await mounted.frame()
+          const events = await mounted.app.log.read({ threadId: THREAD })
+          return events.some(
+            (event) => event.type === 'user-said' && event.text.includes('five'),
+          )
+        },
+        within: 20_000,
+      })
+
+      expect(sent).toBe(true)
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('counts a second pasted block apart from the first', async () => {
+    const mounted = await open({ app: scripted(), clipboard: nothingOnTheClipboard })
+
+    try {
+      await mounted.paste('one\ntwo\nthree\nfour\nfive')
+      await mounted.frame()
+      await mounted.paste('a\nb\nc\nd\ne')
+
+      const frame = await mounted.frame()
+      expect(frame).toContain('[Pasted text #1')
+      expect(frame).toContain('[Pasted text #2')
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('leaves a short paste spell in the draft as plain text', async () => {
+    const mounted = await open({ app: scripted(), clipboard: nothingOnTheClipboard })
+
+    try {
+      await mounted.paste('one\ntwo')
+
+      const frame = await mounted.frame()
+      expect(frame).toContain('one')
+      expect(frame).not.toContain('[Pasted text')
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
 })

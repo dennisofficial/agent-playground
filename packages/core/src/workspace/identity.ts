@@ -26,6 +26,11 @@ const repoFrom = (commonDir: string | undefined): string | null => {
   return parentOf(present)
 }
 
+export function launchWorktreeOf(identity: WorkspaceIdentity): string | null {
+  if (identity.repo === null || identity.repo === identity.workspace) return null
+  return identity.workspace
+}
+
 export function workspaceFrom(args: {
   cwd: string
   toplevel?: string | undefined

@@ -177,7 +177,7 @@ describe('localCommands', () => {
 
     const settled = commands.filter((one) => one.timing === ECommandTiming.Settled)
 
-    expect(settled.map((one) => one.name).sort()).toEqual(['compact', 'new', 'resume'])
+    expect(settled.map((one) => one.name).sort()).toEqual(['compact', 'new', 'resume', 'rewind'])
   })
 })
 
@@ -364,12 +364,81 @@ describe('the compact command and its scope', () => {
     expect(asked).toEqual([])
   })
 
-  it('still opens an overlay mid-turn, because that rewrites nothing', async () => {
+  it('refuses to open mid-turn, because picking a point would cut what the turn is writing', async () => {
     const opened: string[] = []
     const commands = localCommands(handlers({ onRewind: () => opened.push('rewind') }))
 
-    await dispatchSubmission({ text: '/rewind', commands, skills: [], working: true })
+    const dispatched = await dispatchSubmission({
+      text: '/rewind',
+      commands,
+      skills: [],
+      working: true,
+    })
 
-    expect(opened).toEqual(['rewind'])
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('wait for the turn')
+    expect(opened).toEqual([])
+  })
+})
+
+describe('the restart command', () => {
+  it('exists only where the launch can honor a restart', () => {
+    expect(localCommands(handlers()).some((one) => one.name === 'restart')).toBe(false)
+    expect(
+      localCommands(handlers({ onRestart: () => undefined })).some((one) => one.name === 'restart'),
+    ).toBe(true)
+  })
+
+  it('waits for the turn to settle, the way a quit would', async () => {
+    let restarts = 0
+
+    const dispatched = await dispatchSubmission({
+      text: '/restart',
+      commands: localCommands(
+        handlers({
+          onRestart: () => {
+            restarts += 1
+          },
+        }),
+      ),
+      skills: [],
+      working: true,
+    })
+
+    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(restarts).toBe(0)
+  })
+
+  it('hands off to the restart the launch wired in', async () => {
+    let restarts = 0
+
+    const dispatched = await dispatchSubmission({
+      text: '/restart',
+      commands: localCommands(
+        handlers({
+          onRestart: () => {
+            restarts += 1
+          },
+        }),
+      ),
+      skills: [],
+    })
+
+    expect(dispatched).toEqual({ type: EDispatch.Ran })
+    expect(restarts).toBe(1)
+  })
+
+  it('joins the commands that wait for the turn to settle', () => {
+    const commands = localCommands(handlers({ onRestart: () => undefined }))
+
+    const settled = commands.filter((one) => one.timing === ECommandTiming.Settled)
+
+    expect(settled.map((one) => one.name).sort()).toEqual([
+      'compact',
+      'new',
+      'restart',
+      'resume',
+      'rewind',
+    ])
   })
 })

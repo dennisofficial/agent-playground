@@ -1,6 +1,7 @@
-import type { AgentSnapshot, ShellSnapshot } from '@dltech/atlas-harness'
+import type { AgentSnapshot, ServiceSnapshot, ShellSnapshot } from '@dltech/atlas-harness'
 
 import { subagentLabel } from '../store/subagent-row'
+import { serviceNameLabel } from './services-model'
 import { shellNameLabel } from './shells-model'
 
 export enum EExitChoice {
@@ -12,6 +13,8 @@ export enum EExitChoice {
 export const SHELL_TAG = 'shell'
 
 export const AGENT_TAG = 'agent'
+
+export const SERVICE_TAG = 'service'
 
 export type ExitGuardRow = {
   id: string
@@ -52,6 +55,12 @@ export function exitGuardRow(
   shell: Pick<ShellSnapshot, 'shellId' | 'command'> & { description?: string | undefined },
 ): ExitGuardRow {
   return { id: shell.shellId, tag: SHELL_TAG, label: shellNameLabel(shell) }
+}
+
+export function exitGuardServiceRow(
+  service: Pick<ServiceSnapshot, 'serviceId' | 'command' | 'description'>,
+): ExitGuardRow {
+  return { id: service.serviceId, tag: SERVICE_TAG, label: serviceNameLabel(service) }
 }
 
 export function exitGuardAgentRow(

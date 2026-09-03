@@ -224,6 +224,26 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).not.toContain('failed')
   })
 
+  it('keeps what a broken command printed behind its row until the row is opened', async () => {
+    const broken = call({
+      name: 'bash',
+      input: { command: 'bun run typecheck' },
+      output: {
+        command: 'bun run typecheck',
+        stdout: 'vault-backend.spec.ts(90,66): error TS2769: No overload matches this call.',
+        exitCode: 2,
+      },
+    })
+    const run = runOf([broken])
+
+    const shut = await frameOf(run)
+    expect(shut).toContain('Typecheck')
+    expect(shut).not.toContain('TS2769')
+
+    const open = await frameOf(run, new Set([broken.callId]), TALL)
+    expect(open).toContain('TS2769')
+  })
+
   it('keeps a sentence whole when a later stage owns the exit code the clause does not', async () => {
     const passing = call({
       name: 'bash',
@@ -240,30 +260,34 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).not.toContain('failed')
   })
 
-  it('shows a refused call its reason unasked, the way a change shows its diff', async () => {
+  it('keeps a refused call to its line until the row is opened', async () => {
     const refused = call({
       name: 'write',
       input: { path: `${CWD}/outside.ts` },
       state: ECallState.Denied,
       note: 'the path is outside the workspace root',
     })
-    const frame = await frameOf(runOf([refused]))
+    const run = runOf([refused])
 
-    expect(frame).toContain('Refused write outside.ts')
-    expect(frame).toContain('outside the workspace root')
+    const shut = await frameOf(run)
+    expect(shut).toContain('Refused write outside.ts')
+    expect(shut).not.toContain('outside the workspace root')
+    expect(await frameOf(run, new Set([refused.callId]))).toContain('outside the workspace root')
   })
 
-  it('shows a call the tool could not complete the error the model was handed', async () => {
+  it('keeps a failed call to its line until the row is opened', async () => {
     const broken = call({
       name: 'read',
       input: { path: `${CWD}/gone.ts` },
       state: ECallState.Failed,
       note: 'no file at /repo/gone.ts',
     })
-    const frame = await frameOf(runOf([broken]))
+    const run = runOf([broken])
 
-    expect(frame).toContain('Failed read gone.ts')
-    expect(frame).toContain('no file at /repo/gone.ts')
+    const shut = await frameOf(run)
+    expect(shut).toContain('Failed read gone.ts')
+    expect(shut).not.toContain('no file at /repo/gone.ts')
+    expect(await frameOf(run, new Set([broken.callId]))).toContain('no file at /repo/gone.ts')
   })
 
   it('lists the calls once the sentence is opened, and not before', async () => {

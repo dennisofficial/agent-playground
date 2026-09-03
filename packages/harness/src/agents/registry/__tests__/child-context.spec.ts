@@ -8,6 +8,7 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
+import { createDeltaChannel } from '../../../channel/delta-channel'
 import { HookChain } from '../../../hooks/registry'
 import { buildHarness } from '../../../loop/build-harness'
 import { createTempDatabase } from '../../../loop/__tests__/temp-database'
@@ -191,6 +192,7 @@ async function openRealChild(): Promise<RealChild> {
         turn: parentTurn,
         tools: new InMemoryToolRegistry([]),
         hooks: new HookChain({}),
+        channel: createDeltaChannel(),
         drainNotices: async () => [],
         assemblyFor: () => assembly,
       }),

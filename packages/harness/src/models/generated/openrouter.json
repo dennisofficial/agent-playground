@@ -604,10 +604,10 @@
     "api": "openai-completions",
     "contextWindow": 163840,
     "imageTier": "standard",
-    "maxOutputTokens": 144900,
+    "maxOutputTokens": 32768,
     "cost": {
-      "inputPerMillion": 0.55,
-      "outputPerMillion": 1.65
+      "inputPerMillion": 0.25,
+      "outputPerMillion": 0.95
     }
   },
   {
@@ -696,8 +696,8 @@
     "imageTier": "standard",
     "maxOutputTokens": 384000,
     "cost": {
-      "inputPerMillion": 0.07322,
-      "outputPerMillion": 0.14644
+      "inputPerMillion": 0.08554,
+      "outputPerMillion": 0.17108
     },
     "effort": {
       "high": "high",
@@ -753,10 +753,10 @@
     "api": "openai-completions",
     "contextWindow": 1048576,
     "imageTier": "standard",
-    "maxOutputTokens": 393216,
+    "maxOutputTokens": 384000,
     "cost": {
-      "inputPerMillion": 1.6,
-      "outputPerMillion": 3.2
+      "inputPerMillion": 1.030776,
+      "outputPerMillion": 2.061552
     },
     "effort": {
       "high": "high",
@@ -1075,6 +1075,26 @@
       "modelId": "google/gemini-3.7-flash"
     },
     "label": "Gemini 3.7 Flash",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 0.75,
+      "outputPerMillion": 3.75
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "openrouter",
+      "modelId": "google/gemini-3.8-flash"
+    },
+    "label": "Gemini 3.8 Flash",
     "api": "openai-completions",
     "contextWindow": 1048576,
     "imageTier": "standard",
@@ -2118,10 +2138,10 @@
     "api": "openai-completions",
     "contextWindow": 262144,
     "imageTier": "standard",
-    "maxOutputTokens": 16384,
+    "maxOutputTokens": 32768,
     "cost": {
-      "inputPerMillion": 0.5,
-      "outputPerMillion": 2.2
+      "inputPerMillion": 0.625,
+      "outputPerMillion": 3.125
     },
     "effort": {
       "medium": "medium",
@@ -3922,7 +3942,7 @@
     "api": "openai-completions",
     "contextWindow": 1048576,
     "imageTier": "standard",
-    "maxOutputTokens": 262144,
+    "maxOutputTokens": 131072,
     "cost": {
       "inputPerMillion": 2,
       "outputPerMillion": 6
@@ -4592,10 +4612,10 @@
     "api": "openai-completions",
     "contextWindow": 1048576,
     "imageTier": "standard",
-    "maxOutputTokens": 262144,
+    "maxOutputTokens": 131072,
     "cost": {
-      "inputPerMillion": 1.19,
-      "outputPerMillion": 3.74
+      "inputPerMillion": 0.966,
+      "outputPerMillion": 3.036
     },
     "effort": {
       "high": "high",
@@ -4766,10 +4786,10 @@
     "api": "openai-completions",
     "contextWindow": 1310720,
     "imageTier": "standard",
-    "maxOutputTokens": 131072,
+    "maxOutputTokens": 393216,
     "cost": {
-      "inputPerMillion": 0.04998,
-      "outputPerMillion": 0.09996
+      "inputPerMillion": 0.05,
+      "outputPerMillion": 0.16
     },
     "effort": {
       "low": "low",
@@ -4906,16 +4926,36 @@
   {
     "ref": {
       "providerId": "openrouter",
+      "modelId": "~z-ai/glm-flash-latest"
+    },
+    "label": "GLM Flash Latest",
+    "api": "openai-completions",
+    "contextWindow": 1310720,
+    "imageTier": "standard",
+    "maxOutputTokens": 131072,
+    "cost": {
+      "inputPerMillion": 0.075,
+      "outputPerMillion": 0.25
+    },
+    "effort": {
+      "low": "low",
+      "high": "high",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "openrouter",
       "modelId": "~z-ai/glm-latest"
     },
     "label": "GLM Latest",
     "api": "openai-completions",
     "contextWindow": 1310720,
     "imageTier": "standard",
-    "maxOutputTokens": 943718,
+    "maxOutputTokens": 235929,
     "cost": {
-      "inputPerMillion": 1.17,
-      "outputPerMillion": 3.96
+      "inputPerMillion": 1.15,
+      "outputPerMillion": 3.5
     },
     "effort": {
       "low": "low",

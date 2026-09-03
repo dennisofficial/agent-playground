@@ -1,8 +1,7 @@
-import type { Event, SaidImage, ThreadId } from '@dltech/atlas-core'
+import type { SaidImage, ThreadId } from '@dltech/atlas-core'
 import { EKilledBy, type AgentSnapshot } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 
-import { deriveTranscript, type EThinkingVisibility, type TranscriptModel } from '../store'
 import { isSubagentRunning, subagentLabel } from '../store/subagent-row'
 import { EKeyGroup, EKeyLayer, useKeyBindings } from '../ui/keys'
 import type { AtlasApp } from './compose'
@@ -10,7 +9,8 @@ import type { AtlasApp } from './compose'
 export type AgentView = {
   viewing: ThreadId | null
   name: string | null
-  transcript: TranscriptModel | null
+  /** The roster's reading of the open child, which is what its transcript is mounted from. */
+  selected: AgentSnapshot | null
   handleSelect: (agentId: string) => void
   handleBack: () => void
   handleCycle: () => boolean
@@ -18,30 +18,26 @@ export type AgentView = {
   handleSay: (said: { text: string; images?: readonly SaidImage[] | undefined }) => Promise<string | null>
 }
 
-const NO_ROWS: readonly Event[] = Object.freeze([])
-
 /**
  * A child is an extension of the thread that spawned it, so viewing one moves the transcript alone.
  * The sidebar, the composer's anchor and the running turn all stay with the parent, which is what
  * keeps this from reading as a jump into another session.
+ *
+ * Which child is open, and nothing about what it says: the transcript is `SubagentTranscript`, built
+ * from the same `useThreadView` the conversation is built from.
  */
 export function useAgentView(args: {
   app: AtlasApp
   threadId: ThreadId
-  thinking: EThinkingVisibility
   onFocusComposer: () => void
   onProblem: (reason: string) => void
 }): AgentView {
-  const { app, threadId, thinking, onFocusComposer, onProblem } = args
+  const { app, threadId, onFocusComposer, onProblem } = args
   const agents = app.agents
 
   const [viewing, setViewing] = useState<ThreadId | null>(null)
-  const [rows, setRows] = useState<readonly Event[]>(NO_ROWS)
 
-  useEffect(() => {
-    setViewing(null)
-    setRows(NO_ROWS)
-  }, [threadId])
+  useEffect(() => setViewing(null), [threadId])
 
   const subscribe = useCallback((listener: () => void) => agents.onChange(listener), [agents])
   const read = useCallback(() => agents.listEverywhere(), [agents])
@@ -52,35 +48,6 @@ export function useAgentView(args: {
   const selected = useMemo(
     () => (viewing === null ? undefined : everywhere.find((one) => one.agentId === viewing)),
     [everywhere, viewing],
-  )
-
-  /**
-   * The roster settles on every draft a child appends, so its identity is the signal that there is
-   * more of the child's log to read. Its own rows, never the composed read: a child that inherited
-   * its parent's prefix would otherwise show the parent's transcript above its own.
-   */
-  useEffect(() => {
-    if (viewing === null) {
-      setRows(NO_ROWS)
-      return
-    }
-
-    let live = true
-    void app.log
-      .readOwn({ threadId: viewing })
-      .then((own) => {
-        if (live) setRows(own)
-      })
-      .catch(() => undefined)
-
-    return () => {
-      live = false
-    }
-  }, [app.log, everywhere, viewing])
-
-  const transcript = useMemo(
-    () => (viewing === null ? null : deriveTranscript({ events: rows, signals: [], thinking })),
-    [rows, thinking, viewing],
   )
 
   /**
@@ -178,13 +145,13 @@ export function useAgentView(args: {
     () => ({
       viewing,
       name: selected === undefined ? null : subagentLabel(selected),
-      transcript,
+      selected: selected ?? null,
       handleSelect,
       handleBack,
       handleCycle,
       handleStop,
       handleSay,
     }),
-    [handleBack, handleCycle, handleSay, handleSelect, handleStop, selected, transcript, viewing],
+    [handleBack, handleCycle, handleSay, handleSelect, handleStop, selected, viewing],
   )
 }

@@ -7,11 +7,13 @@ import {
   type ModelCost,
 } from '@dltech/atlas-core'
 
+export const INFERENCE_CATALOGUE_PROVIDER_ID = 'inference'
+
+export const MODELS_DEV_PROVIDER_IDS: readonly string[] = ['anthropic', 'openai', 'openrouter']
+
 export const CATALOGUE_PROVIDER_IDS: readonly string[] = [
-  'anthropic',
-  'openai',
-  'openrouter',
-  'inference',
+  ...MODELS_DEV_PROVIDER_IDS,
+  INFERENCE_CATALOGUE_PROVIDER_ID,
 ]
 
 /**
@@ -20,11 +22,13 @@ export const CATALOGUE_PROVIDER_IDS: readonly string[] = [
  */
 export const RELEASE_STAMP = /-(?:\d{8}|\d{4}-\d{2}-\d{2})$/
 
+export const OPENAI_COMPLETIONS_API = 'openai-completions'
+
 export const API_BY_NPM: Readonly<Record<string, string>> = {
   '@ai-sdk/anthropic': 'anthropic-messages',
   '@ai-sdk/openai': 'openai-responses',
-  '@ai-sdk/openai-compatible': 'openai-completions',
-  '@openrouter/ai-sdk-provider': 'openai-completions',
+  '@ai-sdk/openai-compatible': OPENAI_COMPLETIONS_API,
+  '@openrouter/ai-sdk-provider': OPENAI_COMPLETIONS_API,
 }
 
 export type GeneratedCard = {

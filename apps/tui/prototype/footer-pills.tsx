@@ -27,7 +27,6 @@ import { pullRequestItem } from '../src/plugins/github/surface'
 import { EChecksState, EPullRequestState, type PullRequestBadge } from '../src/plugins/github/pure'
 import { Footer } from '../src/ui/components/footer'
 import { Sidebar } from '../src/ui/components/sidebar'
-import { IDLE_TURN } from '../src/ui/components/transcript'
 import { chipItem, EFooterItemReach, type FooterItem } from '../src/ui/footer-item'
 import { enterStrip, moveStripSelection, type FooterStripState } from '../src/ui/footer-strip'
 import { registerGrammars } from '../src/ui/markdown/grammars/index'
@@ -256,8 +255,6 @@ function SidebarPage(): React.ReactNode {
       <Sidebar
         width={SIDEBAR_WIDTH}
         model={FED_SIDEBAR}
-        turn={IDLE_TURN}
-        now={NOW}
         root={process.cwd()}
         worktree={null}
         shells={SIDEBAR_SHELLS}

@@ -7,6 +7,7 @@ import type { EClassifierMode, ETriage } from '../policy/classifier/triage'
 import type { EJudgment, EVerdictFault } from '../policy/classifier/verdict'
 import type { EServiceStatus } from '../services/status'
 import type { EKilledBy, EShellStatus } from '../shells/status'
+import type { ETldrStatus } from '../tldr/status'
 import type { CallId, ThreadId } from './ids'
 
 export enum ECompactionAnchor {
@@ -169,6 +170,14 @@ export type EventBody =
       reason: string
     }
   | { type: 'permission-revoked'; grantId: string }
+  | {
+      type: 'tldr-written'
+      anchorSeq: number
+      throughSeq: number
+      text: string
+      modelId: string
+      status?: ETldrStatus | undefined
+    }
 
 export type EventDraft = EventBody
 

@@ -60,6 +60,7 @@ export type LocalCommandHandlers = {
   onRename: (argumentText: string) => Promise<Renaming>
   onReloadSkills: () => Promise<SkillsReloaded>
   onShowMcp: () => string
+  onRestart: (() => void) | null
 }
 
 const local = (command: Omit<LocalCommand, 'kind'>): LocalCommand => ({
@@ -156,11 +157,16 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
         return RAN
       },
     }),
-    immediate({
+    local({
       name: 'rewind',
       summary: 'go back to an earlier message, or summarise around it',
       group: ECommandGroup.Context,
-      open: handlers.onRewind,
+      timing: ECommandTiming.Settled,
+      echo: ECommandEcho.Silent,
+      run: () => {
+        handlers.onRewind()
+        return RAN
+      },
     }),
     local({
       name: 'resume',
@@ -212,6 +218,21 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
         return RAN
       },
     }),
+    ...(handlers.onRestart === null
+      ? []
+      : [
+          local({
+            name: 'restart',
+            summary: 'rebuild from source and restart, resuming this conversation',
+            group: ECommandGroup.Session,
+            timing: ECommandTiming.Settled,
+            echo: ECommandEcho.Silent,
+            run: () => {
+              handlers.onRestart?.()
+              return RAN
+            },
+          }),
+        ]),
     local({
       name: 'mcp',
       summary: 'inspect the MCP servers this workspace is configured with',

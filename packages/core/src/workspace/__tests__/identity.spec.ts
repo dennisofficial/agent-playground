@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { workspaceFrom } from '../identity'
+import { launchWorktreeOf, workspaceFrom } from '../identity'
 
 describe('workspaceFrom', () => {
   it('takes the toplevel as the workspace when git reports one', () => {
@@ -84,5 +84,21 @@ describe('workspaceFrom', () => {
         commonDir: '/Users/dev/atlas/.git/',
       }).repo,
     ).toBe('/Users/dev/atlas')
+  })
+})
+
+describe('launchWorktreeOf', () => {
+  it('names the worktree when the workspace is not the repo', () => {
+    expect(
+      launchWorktreeOf({ workspace: '/Users/dev/wt/feature', repo: '/Users/dev/atlas' }),
+    ).toBe('/Users/dev/wt/feature')
+  })
+
+  it('names nothing on the main checkout, where workspace and repo are one', () => {
+    expect(launchWorktreeOf({ workspace: '/Users/dev/atlas', repo: '/Users/dev/atlas' })).toBeNull()
+  })
+
+  it('names nothing outside git', () => {
+    expect(launchWorktreeOf({ workspace: '/Users/dev/Documents/work', repo: null })).toBeNull()
   })
 })

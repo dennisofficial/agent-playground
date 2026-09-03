@@ -13,6 +13,8 @@ import {
   type EThinkingVisibility,
 } from './thinking-fold'
 import {
+  EAuthor,
+  EEntryKind,
   EMPTY_TRANSCRIPT,
   toolsRanEntry,
   type StepFailure,
@@ -69,13 +71,22 @@ export function assembleTranscript(args: {
   live: readonly InFlightStep[]
   reveal?: RevealGate | null
   thinking?: EThinkingVisibility
+  pendingTldr?: { anchorSeq: number; text: string } | null | undefined
+  tldrStatus?: boolean | undefined
 }): TranscriptModel {
   const reveal = args.reveal ?? null
+  const pending = args.pendingTldr ?? null
   const entries = foldThoughts({
-    entries: toolsAboveThoughts([
-      ...args.durable,
-      ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
-    ]),
+    entries: withTldrStatus({
+      entries: withPendingTldr({
+        entries: toolsAboveThoughts([
+          ...args.durable,
+          ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
+        ]),
+        pending,
+      }),
+      enabled: args.tldrStatus ?? true,
+    }),
     visibility: args.thinking ?? SHIPPED_THINKING,
   })
   const streaming = args.live.some((step) => step.end === null)
@@ -94,11 +105,58 @@ export function deriveTranscript(args: {
   turns?: readonly TurnSpend[] | undefined
   reveal?: RevealGate | null
   thinking?: EThinkingVisibility
+  pendingTldr?: { anchorSeq: number; text: string } | null | undefined
+  tldrStatus?: boolean | undefined
 }): TranscriptModel {
   return assembleTranscript({
     durable: durableEntries({ events: args.events, turns: args.turns }),
     live: liveSteps({ steps: stepsOfSignals(args.signals), events: args.events }),
     ...(args.reveal === undefined ? {} : { reveal: args.reveal }),
     ...(args.thinking === undefined ? {} : { thinking: args.thinking }),
+    ...(args.pendingTldr === undefined ? {} : { pendingTldr: args.pendingTldr }),
+    ...(args.tldrStatus === undefined ? {} : { tldrStatus: args.tldrStatus }),
   })
+}
+
+function withTldrStatus(args: {
+  entries: readonly TranscriptEntry[]
+  enabled: boolean
+}): TranscriptEntry[] {
+  if (args.enabled) return [...args.entries]
+
+  return args.entries.map((entry) =>
+    entry.kind === EEntryKind.TldrWritten && entry.status !== undefined
+      ? { ...entry, status: undefined }
+      : entry,
+  )
+}
+
+const PENDING_TLDR_KEY = 'tldr-pending'
+
+function withPendingTldr(args: {
+  entries: readonly TranscriptEntry[]
+  pending: { anchorSeq: number; text: string } | null
+}): TranscriptEntry[] {
+  const { pending } = args
+  if (pending === null) return [...args.entries]
+
+  const entries = args.entries.filter(
+    (entry) => !(entry.kind === EEntryKind.TldrWritten && entry.anchorSeq === pending.anchorSeq),
+  )
+  const footer: TranscriptEntry = {
+    kind: EEntryKind.TldrWritten,
+    author: EAuthor.Model,
+    key: PENDING_TLDR_KEY,
+    text: pending.text,
+    anchorSeq: pending.anchorSeq,
+    throughSeq: 0,
+    streaming: true,
+  }
+
+  for (let index = entries.length - 1; index >= 0; index--) {
+    if (entries[index]?.kind === EEntryKind.TurnEnded) {
+      return [...entries.slice(0, index), footer, ...entries.slice(index)]
+    }
+  }
+  return [...entries, footer]
 }

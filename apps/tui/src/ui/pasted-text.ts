@@ -6,7 +6,14 @@ import { decodePasteBytes, stripAnsiSequences, type PasteEvent } from '@opentui/
  * listens for keypresses therefore never sees a pasted code at all.
  */
 export const pastedText = (event: PasteEvent): string =>
-  stripAnsiSequences(decodePasteBytes(event.bytes)).replace(/[\r\n]/g, '').trim()
+  pastedContent(event).replace(/[\r\n]/g, '').trim()
+
+/**
+ * The clipboard text with its line breaks still in it — the decision to tokenise a paste, and the
+ * content that pasting tokenises, both want the text as it actually arrived.
+ */
+export const pastedContent = (event: PasteEvent): string =>
+  stripAnsiSequences(decodePasteBytes(event.bytes))
 
 /**
  * The clipboard held a picture. A terminal asked to paste one has nothing to send — macOS makes the

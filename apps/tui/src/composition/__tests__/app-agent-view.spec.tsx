@@ -240,6 +240,11 @@ describe('viewing a sub-agent', () => {
     }
   }, 60_000)
 
+  /**
+   * A child publishes on the delta channel under its own thread id, exactly as the root thread
+   * does, so the transcript follows it the same way the conversation follows a turn — off the
+   * channel rather than off a re-read triggered by the roster settling.
+   */
   it('follows a working child as it appends, with no timer', async () => {
     const app = appWith()
     await seed(app)
@@ -255,7 +260,10 @@ describe('viewing a sub-agent', () => {
         runId: toRunId('run-child-2'),
         drafts: [{ type: 'assistant-said', parts: [{ type: 'text', text: CHILD_LATER }] }],
       })
-      act(() => app.agents.progressed({ agentId: CHILD }))
+      act(() => {
+        app.channel.publisherFor({ threadId: CHILD }).settleAppend({ events: [] })
+        app.agents.progressed({ agentId: CHILD })
+      })
       await setup.flush()
       await settle(250)
       await setup.flush()

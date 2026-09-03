@@ -6,8 +6,12 @@ export type ActiveConversation = {
   started: boolean
 }
 
-export function resumeHint(active: ActiveConversation | null): string | null {
+export function resumeHint(args: {
+  active: ActiveConversation | null
+  command: string
+}): string | null {
+  const active = args.active
   if (active === null || !active.started) return null
 
-  return `\nResume this conversation with:\n  atlas --resume "${threadHandle(active)}"\n`
+  return `\nResume this conversation with:\n  ${args.command} --resume "${threadHandle(active)}"\n`
 }

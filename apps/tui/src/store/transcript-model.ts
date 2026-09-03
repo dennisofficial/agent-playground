@@ -1,4 +1,4 @@
-import type { SaidImage } from '@dltech/atlas-core'
+import type { ETldrStatus, SaidImage } from '@dltech/atlas-core'
 
 import { runLabel } from './tools'
 import { settled, type ToolRun } from './tool-runs'
@@ -17,7 +17,9 @@ export enum EEntryKind {
   BackgroundShellEnded = 'background-shell-ended',
   BackgroundShellAwaitingInput = 'background-shell-awaiting-input',
   BackgroundShellMatched = 'background-shell-matched',
+  ServiceEnded = 'service-ended',
   AgentEnded = 'agent-ended',
+  TldrWritten = 'tldr-written',
   TurnEnded = 'turn-ended',
 }
 
@@ -108,6 +110,16 @@ export type BackgroundShellMatchedEntry = {
   output: string
 }
 
+export type ServiceEndedEntry = {
+  kind: EEntryKind.ServiceEnded
+  author: EAuthor.Model
+  key: string
+  text: string
+  serviceId: string
+  output: string
+  failed: boolean
+}
+
 export type AgentEndedEntry = {
   kind: EEntryKind.AgentEnded
   author: EAuthor.Model
@@ -116,6 +128,17 @@ export type AgentEndedEntry = {
   agentId: string
   report: string
   failed: boolean
+}
+
+export type TldrWrittenEntry = {
+  kind: EEntryKind.TldrWritten
+  author: EAuthor.Model
+  key: string
+  text: string
+  anchorSeq: number
+  throughSeq: number
+  status?: ETldrStatus | undefined
+  streaming?: boolean
 }
 
 export type TurnEndedEntry = {
@@ -138,7 +161,9 @@ export type TranscriptEntry =
   | BackgroundShellEndedEntry
   | BackgroundShellAwaitingInputEntry
   | BackgroundShellMatchedEntry
+  | ServiceEndedEntry
   | AgentEndedEntry
+  | TldrWrittenEntry
   | TurnEndedEntry
 
 export type StepFailure = { message: string | null }

@@ -10,16 +10,6 @@ const RESERVED = PANEL_INSET + PANEL_PAD + TRANSCRIPT_INSET
 
 const NARROWEST_BAND = 20
 
-export enum EUserMark {
-  Plain = 'plain',
-  MidTurn = 'mid-turn',
-}
-
-const MARK_TEXT: Record<EUserMark, string | null> = {
-  [EUserMark.Plain]: null,
-  [EUserMark.MidTurn]: `${glyph.queued} sent mid-turn`,
-}
-
 const TAKE_BACK = '↑ to edit'
 
 const skillLine = (skills: readonly string[]): string =>
@@ -31,14 +21,12 @@ const fileLine = (files: readonly string[]): string =>
 export function UserBlock(props: {
   said: readonly string[]
   width: number
-  mark?: EUserMark
   takeBack?: boolean
   skills?: readonly string[]
   files?: readonly string[]
   images?: readonly SaidImage[]
 }): React.ReactNode {
   const columns = Math.max(NARROWEST_BAND, props.width - RESERVED)
-  const mark = MARK_TEXT[props.mark ?? EUserMark.Plain]
   const skills = props.skills ?? []
   const files = props.files ?? []
   const images = props.images ?? []
@@ -49,13 +37,6 @@ export function UserBlock(props: {
         rail={theme.court.yours}
         fill={theme.userBg}
         width={props.width - TRANSCRIPT_INSET}
-        {...(mark === null
-          ? {}
-          : {
-              label: (
-                <text fg={theme.meta} bg={theme.userBg}>{` ${mark} `}</text>
-              ),
-            })}
         {...(props.takeBack === true
           ? {
               badge: (

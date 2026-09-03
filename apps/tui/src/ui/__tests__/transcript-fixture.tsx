@@ -210,6 +210,7 @@ export function transcript(args: {
   sends?: number
   pending?: readonly PendingRow[]
   background?: BackgroundWork
+  waitingSince?: number
   onRetry?: () => void
 }): React.ReactNode {
   return (
@@ -223,6 +224,7 @@ export function transcript(args: {
       {...(args.sends === undefined ? {} : { sends: args.sends })}
       {...(args.pending ? { pending: args.pending } : {})}
       {...(args.background ? { background: args.background } : {})}
+      {...(args.waitingSince === undefined ? {} : { waitingSince: args.waitingSince })}
       {...(args.onRetry ? { onRetry: args.onRetry } : {})}
     />
   )

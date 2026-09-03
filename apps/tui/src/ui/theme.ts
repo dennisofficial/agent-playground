@@ -41,7 +41,13 @@ export function formatClockTime(iso: string): string {
   return `${shown}:${minutes}${hours < MERIDIEM_PIVOT ? 'am' : 'pm'}`
 }
 
+const THOUSAND = 1_000
+const MILLION = 1_000_000
+const BILLION = 1_000_000_000
+
 export function formatTokens(tokens: number): string {
-  if (tokens < 1000) return String(tokens)
-  return `${(tokens / 1000).toFixed(1)}k`
+  if (tokens < THOUSAND) return String(tokens)
+  if (tokens < MILLION) return `${(tokens / THOUSAND).toFixed(1)}k`
+  if (tokens < BILLION) return `${(tokens / MILLION).toFixed(2)}m`
+  return `${(tokens / BILLION).toFixed(2)}b`
 }

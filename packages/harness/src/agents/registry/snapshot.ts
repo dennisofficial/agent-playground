@@ -16,6 +16,13 @@ export type AgentSnapshot = {
   toolCalls: number
   lastTool: string | undefined
   startedAt: string
+  /**
+   * When the step the child is taking right now began, or absent when it is taking none. Distinct
+   * from `startedAt`, which is when the child was spawned and does not move when it is steered: a
+   * working indicator has to read the step, and a reader who opens the child mid-step gets the same
+   * answer as one who was already watching, because this is held outside the view.
+   */
+  steppingSince?: string | undefined
   endedAt: string | undefined
   deliveredAt?: string | undefined
   context?: ChildContext | undefined

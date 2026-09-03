@@ -50,6 +50,7 @@ export class ChildSteps {
     child.killedBy = undefined
     child.endedAt = undefined
     child.deliveredAt = undefined
+    child.steppingSince = this.clock.now()
     this.roster.changed()
 
     const settled = this.stepped({
@@ -88,6 +89,7 @@ export class ChildSteps {
   private finish({ child, status }: { child: ChildState; status: EAgentStatus }): void {
     child.status = status
     child.endedAt = this.clock.now()
+    child.steppingSince = undefined
     this.roster.changed()
 
     this.notices.queue({

@@ -279,4 +279,25 @@ describe('a fresh conversation started from inside the app', () => {
       await teardown(setup)
     }
   }, 60_000)
+
+  it('also starts on ctrl+n, without typing /new', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await setup.mockInput.typeText('something said before')
+      setup.mockInput.pressEnter()
+      await settle(2_000)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('something said before')
+
+      setup.mockInput.pressKey('n', { ctrl: true })
+      await landed(setup)
+
+      expect(setup.captureCharFrame()).not.toContain('something said before')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
 })

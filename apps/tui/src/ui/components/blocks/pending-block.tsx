@@ -4,7 +4,7 @@ import { EPendingKind, type PendingRow } from '../../../store'
 import { glyph, theme, TRANSCRIPT_INSET } from '../../theme'
 import { UserBlock } from './user-block'
 
-type NoticeKind = EPendingKind.BackgroundShell | EPendingKind.Agent
+type NoticeKind = EPendingKind.BackgroundShell | EPendingKind.Agent | EPendingKind.Service
 
 type PendingRun =
   | { kind: EPendingKind.Operator; id: string; said: readonly string[]; takeBack: boolean }

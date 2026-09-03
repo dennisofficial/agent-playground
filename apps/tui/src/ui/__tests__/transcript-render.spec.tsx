@@ -201,7 +201,7 @@ describe('what the transcript actually says', () => {
     expect(rows.slice(read, edited).filter((row) => row.includes(glyph.block))).toHaveLength(1)
   })
 
-  it('marks a message sent mid-turn where it landed, rather than hiding it or moving it', async () => {
+  it('keeps a message sent mid-turn where it landed, rather than hiding it or moving it', async () => {
     const events = clocked([
       { draft: said('Reading the pieces that already exist.'), at: AT },
       { draft: called({ n: 1, name: 'read', input: { path: 'a.ts' } }), at: AT },
@@ -212,17 +212,9 @@ describe('what the transcript actually says', () => {
     const rows = (await frameOf(transcript({ model, width: 100 }), 100)).split('\n')
 
     const group = rows.findIndex((row) => row.includes('Read a.ts'))
-    const marker = rows.findIndex((row) => row.includes('sent mid-turn'))
     const said1 = rows.findIndex((row) => row.includes('check the tests too'))
 
-    expect(marker).toBeGreaterThan(group)
-    expect(said1).toBeGreaterThan(marker)
-    expect(rows[marker]).toContain(glyph.queued)
-  })
-
-  it('leaves an ordinary message unmarked', async () => {
-    const frame = await frameOf(transcript({ model: SETTLED, width: 80 }), 80)
-    expect(frame).not.toContain('sent mid-turn')
+    expect(said1).toBeGreaterThan(group)
   })
 
   it('stands a queued message under the working line, where the transcript has not got it yet', async () => {
@@ -458,11 +450,44 @@ describe('the pieces around the transcript mount', () => {
 
   it('times the wait itself, which starts at nothing the moment the turn settles', async () => {
     const frame = await frameOf(
-      transcript({ model: SETTLED, width: 80, background: { agents: 0, shells: 1 } }),
+      transcript({
+        model: SETTLED,
+        width: 80,
+        background: { agents: 0, shells: 1 },
+        waitingSince: Date.now(),
+      }),
       80,
     )
 
     expect(frame).toContain('1 shell to finish · 0s')
+  })
+
+  /**
+   * The regression this guards is a fresh mount: opening a sub-agent unmounts the transcript, so a
+   * wait measured where it is drawn would come back reading zero however long it had really been.
+   */
+  it('reads the wait from the origin it is handed, not from when it was mounted', async () => {
+    const frame = await frameOf(
+      transcript({
+        model: SETTLED,
+        width: 80,
+        background: { agents: 0, shells: 1 },
+        waitingSince: Date.now() - 90_000,
+      }),
+      80,
+    )
+
+    expect(frame).toContain('1 shell to finish · 1m 30s')
+  })
+
+  it('says what it is waiting on with no origin to time it against', async () => {
+    const frame = await frameOf(
+      transcript({ model: SETTLED, width: 80, background: { agents: 0, shells: 1 } }),
+      80,
+    )
+
+    expect(frame).toContain('1 shell to finish')
+    expect(frame).not.toContain('finish · ')
   })
 
   it('takes no room once the background is empty', async () => {

@@ -9,6 +9,7 @@ import {
 } from '@dltech/atlas-core'
 
 import type { SteerMessage } from '../child-state'
+import { createDeltaChannel } from '../../../channel/delta-channel'
 import { HookChain } from '../../../hooks/registry'
 import { buildHarness, type AtlasHarness } from '../../../loop/build-harness'
 import { createTempDatabase, type TempDatabase } from '../../../loop/__tests__/temp-database'
@@ -89,6 +90,7 @@ async function childTurn(args: {
       turn: parent,
       tools: new InMemoryToolRegistry([]),
       hooks: new HookChain({}),
+      channel: createDeltaChannel(),
       drainNotices: async () => notices.splice(0),
       assemblyFor: () => assembly,
     },

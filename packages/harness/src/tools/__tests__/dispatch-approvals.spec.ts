@@ -65,6 +65,6 @@ describe('an Ask reaching a dispatcher no operator is watching', () => {
     const reason = draft?.type === 'tool-denied' ? draft.reason : ''
 
     expect(reason).toContain('another session is holding')
-    expect(reason).toContain('no operator is attached')
+    expect(reason).toContain('No operator is attached')
   })
 })

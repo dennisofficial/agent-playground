@@ -2,29 +2,26 @@ import {
   isResumable,
   resumeDrafts,
   rowsOwnedBy,
-  type Event,
   type EventDraft,
   type EventLogPort,
-  type ModelUsage,
   type ThreadId,
 } from '@dltech/atlas-core'
 import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
-import { FRAME_MS, type ConversationStore } from '../store'
 import { unansweredApproval, type ApprovalQuestion } from '../ui/approval-model'
 import { useApproval, type ApprovalControl } from './use-approval'
+import { MID_TURN } from './commands/dispatch'
 import type { AtlasApp } from './compose'
 import { discardInterrupted, EDiscard } from './resume-turn'
 import { EUndo, undoTurn } from './undo-turn'
+import type { ThreadView } from './use-thread-view'
 import {
   IDLE_PROGRESS,
   stoppageOf,
-  turnAdvanced,
   turnInterrupting,
   turnSettled,
   turnStarted,
-  type TurnProgress,
 } from './turn-progress'
 
 const UNEXPLAINED = 'The turn stopped for a reason it did not name.'
@@ -62,7 +59,6 @@ const commitGate = (): CommitGate => {
 export type TurnDriver = {
   working: boolean
   approval: ApprovalControl
-  progress: TurnProgress
   drive: (drafts: readonly EventDraft[]) => Promise<void>
   handleInterrupt: () => void
   handleRetry: () => void
@@ -73,52 +69,31 @@ export type TurnDriver = {
   settle: () => void
 }
 
+/**
+ * What it takes to run a turn on the thread on screen. The clock it runs against belongs to the
+ * view, not to this: a turn nobody drove from here still has to read as one, so `stamp` is how a
+ * keystroke reports what the channel cannot say — that a turn began before its first signal, that
+ * an interrupt is pending, that a run has settled.
+ */
 export function useTurnDriver(args: {
   app: AtlasApp
   threadId: ThreadId
   started: RefObject<boolean>
-  store: ConversationStore
-  events: readonly Event[]
-  refresh: () => Promise<void>
+  view: ThreadView
   readClock: () => number
   used: RefObject<number>
   compactIfFull: (used: number) => Promise<void>
   cancelCompaction: () => boolean
   onUndone: (text: string) => void
-  onUsage: (usage: ModelUsage) => void
   setFailure: (reason: string | null) => void
   forgetUsage: () => void
 }): TurnDriver {
-  const { app, threadId, started, store, events, refresh, readClock, used, compactIfFull } = args
+  const { app, threadId, started, view, readClock, used, compactIfFull } = args
   const { cancelCompaction, onUndone, setFailure, forgetUsage } = args
+  const { store, events, refresh, stamp } = view
 
-  const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS)
   const [working, setWorking] = useState(false)
   const abort = useRef<AbortController | null>(null)
-  const characters = useRef(0)
-  const latest = useRef<TurnProgress>(IDLE_PROGRESS)
-  const clockFrame = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-
-  const publishProgress = useCallback((next: TurnProgress) => {
-    latest.current = next
-    if (clockFrame.current !== undefined) {
-      clearTimeout(clockFrame.current)
-      clockFrame.current = undefined
-    }
-    setProgress(next)
-  }, [])
-
-  const flushClock = useCallback(() => {
-    clockFrame.current = undefined
-    setProgress(latest.current)
-  }, [])
-
-  useEffect(
-    () => () => {
-      if (clockFrame.current !== undefined) clearTimeout(clockFrame.current)
-    },
-    [],
-  )
   const driveLatest = useRef<(drafts: readonly EventDraft[]) => Promise<void>>(async () => undefined)
 
   const handleAnswered = useCallback((drafts: readonly EventDraft[]) => {
@@ -154,38 +129,6 @@ export function useTurnDriver(args: {
     [app.ids, app.log, app.threads, app.workspace, started, threadId],
   )
 
-  useEffect(
-    () =>
-      app.channel.subscribe({
-        threadId,
-        listener: (signal) => {
-          const next = turnAdvanced({
-            progress: { characters: characters.current, clock: latest.current.clock },
-            signal,
-            now: readClock(),
-          })
-          characters.current = next.characters
-
-          if (next.clock === latest.current.clock) {
-            // No visible change.
-          } else if (signal.type === 'chunk') {
-            latest.current = next
-            if (clockFrame.current === undefined) {
-              clockFrame.current = setTimeout(flushClock, FRAME_MS)
-            }
-          } else {
-            publishProgress(next)
-          }
-          if (signal.type === 'chunk' && signal.chunk.type === 'finish') {
-            const usage = signal.chunk.usage
-            if (usage !== undefined) args.onUsage(usage)
-          }
-          if (signal.type === 'step-ended' || signal.type === 'events-appended') void refresh()
-        },
-      }),
-    [app, threadId, refresh, readClock, flushClock, publishProgress],
-  )
-
   const undo = useCallback(async () => {
     const undone = await undoTurn({ log: app.log, threads: app.threads, threadId })
 
@@ -208,9 +151,7 @@ export function useTurnDriver(args: {
       setWorking(true)
       setFailure(null)
       store.supersedeFailure()
-      const started = turnStarted({ now: readClock() })
-      characters.current = started.characters
-      publishProgress(started)
+      stamp(() => turnStarted({ now: readClock() }))
 
       void (async () => {
         try {
@@ -230,12 +171,7 @@ export function useTurnDriver(args: {
           gate.settle()
           abort.current = null
           setWorking(false)
-          const settledTurn = turnSettled({
-            progress: { characters: characters.current, clock: latest.current.clock },
-            now: readClock(),
-          })
-          characters.current = settledTurn.characters
-          publishProgress(settledTurn)
+          stamp((current) => turnSettled({ progress: current, now: readClock() }))
           await refresh().catch(() => undefined)
           await compactIfFull(used.current).catch(() => undefined)
         }
@@ -248,7 +184,6 @@ export function useTurnDriver(args: {
       commit,
       compactIfFull,
       openApproval,
-      publishProgress,
       readClock,
       refresh,
       setFailure,
@@ -300,16 +235,28 @@ export function useTurnDriver(args: {
 
   const rewindTo = useCallback(
     async (toSeq: number) => {
-      const rewound = await rewindThread({ log: app.log, threads: app.threads, threadId, toSeq })
-
-      if (!rewound.ok) {
-        setFailure(rewound.reason)
+      if (abort.current !== null) {
+        setFailure(MID_TURN('rewind'))
         return
       }
-      forgetUsage()
-      await refresh()
+
+      cancelCompaction()
+      setWorking(true)
+      try {
+        const rewound = await rewindThread({ log: app.log, threads: app.threads, threadId, toSeq })
+
+        if (!rewound.ok) {
+          setFailure(rewound.reason)
+          return
+        }
+        store.resetSteps()
+        forgetUsage()
+        await refresh()
+      } finally {
+        setWorking(false)
+      }
     },
-    [app.log, app.threads, forgetUsage, refresh, setFailure, threadId],
+    [app.log, app.threads, cancelCompaction, forgetUsage, refresh, setFailure, store, threadId],
   )
 
   /**
@@ -322,21 +269,17 @@ export function useTurnDriver(args: {
     const controller = abort.current
     if (controller === null) return
 
-    publishProgress(turnInterrupting(latest.current))
+    stamp(turnInterrupting)
     controller.abort()
   }, [cancelCompaction])
 
   const handleRewindTo = useCallback((toSeq: number) => void rewindTo(toSeq), [rewindTo])
 
-  const settle = useCallback(() => {
-    characters.current = IDLE_PROGRESS.characters
-    publishProgress(IDLE_PROGRESS)
-  }, [publishProgress])
+  const settle = useCallback(() => stamp(() => IDLE_PROGRESS), [stamp])
 
   return {
     working,
     approval,
-    progress,
     drive,
     handleInterrupt,
     handleRetry,

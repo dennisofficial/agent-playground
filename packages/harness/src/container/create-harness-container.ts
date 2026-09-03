@@ -27,6 +27,7 @@ import { resolveHookChain } from '../hooks/resolve-hooks'
 import { AiSdkModelPort } from '../model/ai-sdk-model-port'
 import { createRawTape } from '../model/raw-tape'
 import { registerFileState } from '../files'
+import { registerServices } from '../services/register-services'
 import { registerShells } from '../shells/register-shells'
 import { registerSkills } from '../skills/register-skills'
 import { ThreadStorePort, PrismaThreadStore, PrismaEventLog, RandomIds, SystemClock } from '../store'
@@ -161,6 +162,7 @@ export function createHarnessContainer(): DependencyContainer {
 
   registerFileState({ container: harness })
   registerShells({ container: harness })
+  registerServices({ container: harness })
   registerSkills({ container: harness })
   registerAgents({ container: harness })
   registerBuiltinTools({ container: harness })

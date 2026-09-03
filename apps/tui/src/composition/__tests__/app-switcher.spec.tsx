@@ -79,7 +79,7 @@ async function openSettingsWith(setup: Mounted): Promise<void> {
 }
 
 async function downTo(args: { setup: Mounted; needle: string }): Promise<void> {
-  for (let step = 0; step < 20; step += 1) {
+  for (let step = 0; step < 30; step += 1) {
     const row = args.setup
       .captureCharFrame()
       .split('\n')

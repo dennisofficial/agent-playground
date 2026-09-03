@@ -16,6 +16,7 @@ import {
   environmentFor,
   EPromptAgent,
   DEFAULT_WORKTREE_DIRECTORY,
+  EServiceStatus,
   ESettingId,
   EWebSearchBackend,
   backendOf,
@@ -32,6 +33,7 @@ import {
   promptModelOf,
   rangeValueOf,
   textValueOf,
+  toggleValueOf,
   toThreadId,
   type ThreadId,
   type EventDraft,
@@ -45,6 +47,8 @@ import {
   AiSdkModelPort,
   AnthropicAdapter,
   cardsForProvider,
+  InferenceAdapter,
+  INFERENCE_PROVIDER_ID,
   OpenAiAdapter,
   OPENAI_PROVIDER_ID,
   OpenRouterAdapter,
@@ -93,9 +97,12 @@ import {
   PrismaClientToken,
   PromptRegistry,
   PublishingTurnRunner,
+  TldrTurnRunner,
+  withDeltaPublishing,
   registerBuiltinPromptFragments,
   registerDisposable,
   registerMcp,
+  ServiceRegistryPort,
   ShellRegistryPort,
   SkillRegistryPort,
   summaryFor,
@@ -125,7 +132,7 @@ import {
 import { createPendingQueue, type PendingQueue } from '../store'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
-import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, type AtlasConfig } from './config'
+import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, modelPinned } from './model-preference'
 import { faultInjected } from './fault-injection'
 import { mcpBootNotice } from './mcp-report'
@@ -133,6 +140,7 @@ import { selectableModel, type ModelChoice } from './model-selection'
 import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
 import { assemblePlugins } from '../plugins/assemble'
 import { ENoticeTone, notify } from '../ui/notice-store'
+import { tldrFeed } from '../ui/tldr-feed-store'
 import type { ContributedProjection } from '../plugins/projection'
 import type { ContributedSurface } from '../plugins/surface'
 import { instructionPlanOf } from './instruction-plan'
@@ -183,6 +191,7 @@ export type AtlasApp = {
   pending: PendingQueue
   shells: ShellRegistryPort
   agents: AgentRegistryPort
+  services: ServiceRegistryPort
   model: ModelChoice
   modelPinned: boolean
   models: ModelCatalogue
@@ -343,6 +352,7 @@ export async function composeAtlas(args: {
       new AnthropicAdapter({ credentials, cards: cardsForProvider(ANTHROPIC_PROVIDER_ID) }),
       new OpenAiAdapter({ credentials, cards: cardsForProvider(OPENAI_PROVIDER_ID) }),
       new OpenRouterAdapter({ credentials, cards: cardsForProvider(OPENROUTER_PROVIDER_ID) }),
+      new InferenceAdapter({ credentials, cards: cardsForProvider(INFERENCE_PROVIDER_ID) }),
     ],
     accounts: await accountStore.list(),
   })
@@ -438,6 +448,7 @@ export async function composeAtlas(args: {
     )
   const shells = container.resolve(portToken(ShellRegistryPort))
   const agents = container.resolve(portToken(AgentRegistryPort))
+  const services = container.resolve(portToken(ServiceRegistryPort))
 
   const channel = createDeltaChannel()
   const pending = createPendingQueue()
@@ -446,6 +457,7 @@ export async function composeAtlas(args: {
 
   const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
   const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
+  const tldrModel = createAnthropicOauthModel({ credentials, modelId: TLDR_MODEL_ID })
 
   const summarise: Summariser = ({ events, fromSeq, throughSeq, signal }) =>
     summaryFor({
@@ -478,9 +490,9 @@ export async function composeAtlas(args: {
    * that started the shell, which is not necessarily the one on screen when the session ended.
    */
   const recordTeardownEndings = async (): Promise<void> => {
-    await Promise.all([shells.closeAll(), agents.closeAll()])
+    await Promise.all([shells.closeAll(), agents.closeAll(), services.closeAll()])
 
-    for (const source of [shells, agents]) {
+    for (const source of [shells, agents, services]) {
       for (const threadId of source.threadsAwaitingNotice()) {
         const drafts = source.drainNotifications({ threadId })
         if (drafts.length === 0) continue
@@ -512,6 +524,17 @@ export async function composeAtlas(args: {
         intent: agent.intent,
       }))
 
+  const runningServices = () =>
+    services
+      .list()
+      .filter((service) => service.status === EServiceStatus.Running)
+      .map((service) => ({
+        serviceId: service.serviceId,
+        command: service.command,
+        description: service.description,
+        logPath: service.logPath,
+      }))
+
   const drainNotices = async ({
     threadId,
   }: {
@@ -519,6 +542,7 @@ export async function composeAtlas(args: {
   }): Promise<readonly EventDraft[]> => [
     ...shells.drainNotifications({ threadId }),
     ...agents.drainNotifications({ threadId }),
+    ...services.drainNotifications({ threadId }),
   ]
 
   const turn: TurnDeps = {
@@ -530,6 +554,7 @@ export async function composeAtlas(args: {
       launchDirectory: config.cwd,
       runningShells,
       runningAgents,
+      runningServices,
     }),
     launchDirectory: config.cwd,
     tools,
@@ -575,6 +600,7 @@ export async function composeAtlas(args: {
       turn,
       tools: container.resolve(portToken(ToolRegistry)),
       hooks: container.resolve(HookChainToken),
+      channel,
       drainNotices,
       modelFor,
       assemblyFor: ({ agentType }) =>
@@ -591,6 +617,7 @@ export async function composeAtlas(args: {
             }),
           launchDirectory: config.cwd,
           runningShells,
+          runningServices,
         }),
     }),
   })
@@ -624,6 +651,7 @@ export async function composeAtlas(args: {
     pending,
     shells,
     agents,
+    services,
     mcp: () => mcp.servers(),
     /**
      * Drafts append only to a thread the store already knows: a conversation nobody has spoken in
@@ -645,6 +673,20 @@ export async function composeAtlas(args: {
       await recordTeardownEndings().catch(() => undefined)
       await disposeAll({ container })
     },
-    runner: new PublishingTurnRunner({ channel, deps: turn }),
+    runner: (() => {
+      const publishing = new PublishingTurnRunner({ channel, deps: turn })
+      if (!toggleValueOf({ resolution: settled, id: ESettingId.TldrFooter })) return publishing
+
+      return new TldrTurnRunner({
+        inner: publishing,
+        log: withDeltaPublishing({ log, channel }),
+        ids,
+        model: tldrModel,
+        modelId: TLDR_MODEL_ID,
+        feed: tldrFeed,
+        onMishap: () =>
+          notify({ tone: ENoticeTone.Warn, text: 'Could not write the tl;dr footer for that turn.' }),
+      })
+    })(),
   }
 }

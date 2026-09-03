@@ -21,7 +21,7 @@
     "test": "bun scripts/test-shards.ts",
     "test:serial": "bun test",
     "grammars:update": "bun scripts/update-grammars.ts",
-    "build": "bun run --filter @dltech/atlas-harness db:ensure && bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun scripts/generate-plugins.ts && bun build --compile --external class-validator --external class-transformer --external @nestjs/microservices --external @nestjs/websockets --external @nestjs/websockets/socket-module --external @nestjs/platform-express src/main.tsx --outfile bin/atlas",
+    "build": "bun run --filter @dltech/atlas-harness db:ensure && bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun scripts/generate-plugins.ts && bun build --compile src/main.tsx --outfile bin/atlas",
     "skills:generate": "bun scripts/generate-skills.ts",
     "plugins:generate": "bun scripts/generate-plugins.ts"
   },
@@ -39,6 +39,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19"
+    "@types/react": "^19",
+    "ai": "^7.0.77"
   }
 }

@@ -1,6 +1,13 @@
+import { atlasBinDirectory } from '../store/paths'
+
 export const SIGKILL_GRACE_MS = 5_000
 
 const READ_GRACE_MS = 1_000
+
+const withAtlasBinOnPath = (): Record<string, string | undefined> => ({
+  ...process.env,
+  PATH: `${atlasBinDirectory()}:${process.env.PATH ?? ''}`,
+})
 
 export type Shell = Bun.Subprocess<'ignore', 'pipe', 'pipe'>
 
@@ -30,6 +37,7 @@ export function startShell(args: { command: string; cwd: string }): StartedShell
         stdout: 'pipe',
         stderr: 'pipe',
         detached: true,
+        env: withAtlasBinOnPath(),
       }),
     }
   } catch (error) {
@@ -37,17 +45,19 @@ export function startShell(args: { command: string; cwd: string }): StartedShell
   }
 }
 
+export type Signalable = { pid: number; kill(signal: 'SIGTERM' | 'SIGKILL'): unknown }
+
 /**
  * setsid(2) makes the shell a process group leader, so a negative pid signals the whole group.
  * Signalling only the shell would strand every process it forked: those are reparented to init the
  * moment it dies, which puts them out of reach of any later kill.
  */
-export function signalGroup(args: { shell: Shell; signal: 'SIGTERM' | 'SIGKILL' }): void {
+export function signalGroup(args: { child: Signalable; signal: 'SIGTERM' | 'SIGKILL' }): void {
   try {
-    process.kill(-args.shell.pid, args.signal)
+    process.kill(-args.child.pid, args.signal)
   } catch {
     try {
-      args.shell.kill(args.signal)
+      args.child.kill(args.signal)
     } catch {
       return
     }
@@ -60,8 +70,8 @@ export function terminatorFor(shell: Shell): () => void {
   return () => {
     if (fired) return
     fired = true
-    signalGroup({ shell, signal: 'SIGTERM' })
-    setTimeout(() => signalGroup({ shell, signal: 'SIGKILL' }), SIGKILL_GRACE_MS).unref()
+    signalGroup({ child: shell, signal: 'SIGTERM' })
+    setTimeout(() => signalGroup({ child: shell, signal: 'SIGKILL' }), SIGKILL_GRACE_MS).unref()
   }
 }
 

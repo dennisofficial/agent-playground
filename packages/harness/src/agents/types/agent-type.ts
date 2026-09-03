@@ -21,6 +21,13 @@ export const WORKTREE_TOOL_NAMES: readonly string[] = [
   'worktree_list',
 ]
 
+/**
+ * A child may look at the session's services (service_list, and the logs are plain files) but may
+ * not start or stop one: a service's ending routes to the thread that started it, and a finished
+ * child's thread has nothing left to deliver it — the death would never reach anyone.
+ */
+export const SERVICE_CONTROL_TOOL_NAMES: readonly string[] = ['service_start', 'service_stop']
+
 const ALL_TOOLS = '*'
 const NAME_PATTERN = /^[a-z][a-z0-9-]*$/
 

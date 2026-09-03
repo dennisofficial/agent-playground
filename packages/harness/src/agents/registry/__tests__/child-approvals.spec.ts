@@ -12,6 +12,7 @@ import {
   type ToolDefinition,
 } from '@dltech/atlas-core'
 
+import { createDeltaChannel } from '../../../channel/delta-channel'
 import { HookChain, type RegisteredHook } from '../../../hooks/registry'
 import { buildHarness, type AtlasHarness } from '../../../loop/build-harness'
 import { createTempDatabase, type TempDatabase } from '../../../loop/__tests__/temp-database'
@@ -76,6 +77,7 @@ async function childAsked(): Promise<{ harness: AtlasHarness; threadId: ThreadId
       },
       tools: new InMemoryToolRegistry([readTool]),
       hooks: new HookChain({ beforeTool: [asking] }),
+      channel: createDeltaChannel(),
       assemblyFor: () => assembly,
       drainNotices: async () => [],
     },
@@ -107,6 +109,6 @@ describe('a sub-agent whose call a hook wants a human to answer', () => {
       (event) => event.type === 'tool-denied',
     )
 
-    expect(denied?.type === 'tool-denied' ? denied.reason : '').toContain('no operator is attached')
+    expect(denied?.type === 'tool-denied' ? denied.reason : '').toContain('No operator is attached')
   })
 })

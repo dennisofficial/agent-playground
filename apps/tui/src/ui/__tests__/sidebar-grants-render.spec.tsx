@@ -6,7 +6,6 @@ import React, { act } from 'react'
 import { IDLE_SIDEBAR, type SidebarModel } from '../../store/sidebar-model'
 import { Sidebar } from '../components/sidebar'
 import { GRANTS_HEADING, REVOKE_NOTE } from '../components/sidebar/grants'
-import { IDLE_TURN } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
 import { SIDEBAR_WIDTH } from '../theme'
 
@@ -35,8 +34,6 @@ async function mounted(args: { model: SidebarModel; onRevoke?: (grantId: string)
       <Sidebar
         width={SIDEBAR_WIDTH}
         model={args.model}
-        turn={IDLE_TURN}
-        now={42_000}
         root={CWD}
         worktree={null}
         {...(args.onRevoke === undefined ? {} : { onRevokeGrant: args.onRevoke })}

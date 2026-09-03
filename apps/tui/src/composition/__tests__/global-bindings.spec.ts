@@ -13,6 +13,7 @@ const handlers = (over: Partial<GlobalHandlers>): GlobalHandlers => ({
   onEnterFooterStrip: () => false,
   onInterrupt: noop,
   onOpenSwitcher: noop,
+  onNewConversation: noop,
   onAttachImage: () => false,
   onOpenShells: noop,
   onCycleAgents: noop,
@@ -85,6 +86,14 @@ describe('the keys the app itself owns', () => {
     expect(pressHandled({ press: press({ name: 'return' }), bindings })).toBe(true)
     expect(pressHandled({ press: press({ name: 'return', shift: true }), bindings })).toBe(false)
     expect(sent).toBe(1)
+  })
+
+  it('starts a fresh conversation on ctrl+n', () => {
+    let started = 0
+    const bindings = placedFrom({ onNewConversation: () => void (started += 1) })
+
+    expect(pressHandled({ press: press({ name: 'n', ctrl: true }), bindings })).toBe(true)
+    expect(started).toBe(1)
   })
 
   it('walks to the next sub-agent on ctrl+g', () => {

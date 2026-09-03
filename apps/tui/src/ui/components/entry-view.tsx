@@ -6,9 +6,10 @@ import { AssistantBlock } from './blocks/assistant-block'
 import { CompactedBlock } from './blocks/compacted-block'
 import { NoticeBlock } from './blocks/notice-block'
 import { ThinkingBlock } from './blocks/thinking-block'
+import { TldrBlock } from './blocks/tldr-block'
 import { ToolRunBlock } from './blocks/tool-run-block'
 import { TurnEndedBlock } from './blocks/turn-ended-block'
-import { EUserMark, UserBlock } from './blocks/user-block'
+import { UserBlock } from './blocks/user-block'
 
 const SHELL_OUTPUT_HINT = '↵ output'
 
@@ -47,7 +48,6 @@ function DerivedEntryView(props: {
         <UserBlock
           said={entry.said}
           width={props.width}
-          mark={entry.steer ? EUserMark.MidTurn : EUserMark.Plain}
           skills={entry.skills}
           files={entry.files}
         images={entry.images}
@@ -143,6 +143,20 @@ function DerivedEntryView(props: {
         />
       )
 
+    case EEntryKind.ServiceEnded:
+      return (
+        <NoticeBlock
+          text={entry.text}
+          body={entry.output}
+          failed={entry.failed}
+          width={props.width}
+          openHint={SHELL_OUTPUT_HINT}
+          silentNote={PRINTED_NOTHING}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
     case EEntryKind.AgentEnded:
       return (
         <NoticeBlock
@@ -154,6 +168,16 @@ function DerivedEntryView(props: {
           silentNote={REPORTED_NOTHING}
           expanded={props.expanded ?? false}
           {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
+    case EEntryKind.TldrWritten:
+      return (
+        <TldrBlock
+          text={entry.text}
+          width={props.width}
+          {...(entry.status === undefined ? {} : { status: entry.status })}
+          {...(entry.streaming === undefined ? {} : { streaming: entry.streaming })}
         />
       )
 

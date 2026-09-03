@@ -9,6 +9,7 @@ export enum EAuthProvider {
   Anthropic = 'anthropic',
   OpenAI = 'openai',
   OpenRouter = 'openrouter',
+  Inference = 'inference',
 }
 
 export enum EAccountStatus {

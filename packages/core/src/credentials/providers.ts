@@ -40,6 +40,14 @@ export const PROVIDER_SPECS: readonly ProviderSpec[] = [
     apiKeyVariable: 'OPENROUTER_API_KEY',
     reachable: true,
   },
+  {
+    provider: EAuthProvider.Inference,
+    label: 'Inference.net',
+    kinds: [EAuthKind.ApiKey],
+    logins: [ELoginFlow.ApiKey],
+    apiKeyVariable: 'INFERENCE_API_KEY',
+    reachable: true,
+  },
 ]
 
 export const providerSpec = (provider: EAuthProvider): ProviderSpec => {

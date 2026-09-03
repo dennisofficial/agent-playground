@@ -8,6 +8,7 @@ export type GlobalHandlers = {
   onEnterFooterStrip: () => boolean
   onInterrupt: () => void
   onOpenSwitcher: () => void
+  onNewConversation: () => void
   onAttachImage: () => boolean
   onToggleSidebar: (() => void) | null
   onOpenShells: () => void
@@ -70,6 +71,13 @@ export function globalBindings(handlers: GlobalHandlers): readonly KeyBinding[] 
       describe: 'write the picture on the clipboard into the draft — ⌘V pastes only text',
       group: EKeyGroup.Composer,
       run: handlers.onAttachImage,
+    }),
+    global({
+      chord: 'ctrl+n',
+      hint: 'new conversation',
+      describe: 'start a fresh conversation — same as /new',
+      group: EKeyGroup.Session,
+      run: handlers.onNewConversation,
     }),
     global({
       chord: 'ctrl+p',

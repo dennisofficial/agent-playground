@@ -34,7 +34,7 @@ export function commandSpecs(args: {
  * `/resume` swap the thread out from under it. Naming the shared consequence keeps one message
  * honest for all three.
  */
-const MID_TURN = (name: string): string =>
+export const MID_TURN = (name: string): string =>
   `/${name} would change what this turn is reading, so it has to wait for the turn to finish`
 
 export async function dispatchSubmission(args: {
@@ -43,6 +43,7 @@ export async function dispatchSubmission(args: {
   skills: readonly LoadedSkill[]
   working?: boolean | undefined
   loadFile?: FileLoader | undefined
+  highlightedFiles?: ReadonlySet<string> | undefined
 }): Promise<Dispatch> {
   const submission = resolveSubmission({
     text: args.text,
@@ -86,7 +87,10 @@ export async function dispatchSubmission(args: {
   })
 
   const load = args.loadFile
-  const fileDrafts = load === undefined ? [] : await mentionedFileDrafts({ text: args.text, load })
+  const fileDrafts =
+    load === undefined
+      ? []
+      : await mentionedFileDrafts({ text: args.text, load, highlighted: args.highlightedFiles })
 
   return { type: EDispatch.Send, text: args.text, drafts: [...skillDrafts, ...fileDrafts] }
 }

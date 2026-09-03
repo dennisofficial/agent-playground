@@ -8,6 +8,7 @@ import {
   WorkspaceRoot,
 } from '../container/tokens'
 import { FileWriteGuardPort } from '../files/write-guard'
+import { ServiceRegistryPort } from '../services/service-registry'
 import { ShellRegistryPort } from '../shells/shell-registry'
 import { SkillRegistryPort } from '../skills/port'
 import { CompositeToolRegistry } from './composite-registry'
@@ -25,6 +26,9 @@ import { GlobTool } from './builtin/glob'
 import { GrepTool } from './builtin/grep'
 import { McpEditTool } from './builtin/mcp-edit'
 import { ReadTool } from './builtin/read'
+import { ServiceListTool } from './builtin/service-list'
+import { ServiceStartTool } from './builtin/service-start'
+import { ServiceStopTool } from './builtin/service-stop'
 import { ShellKillTool } from './builtin/shell-kill'
 import { ShellListTool } from './builtin/shell-list'
 import { ShellOutputTool } from './builtin/shell-output'
@@ -39,6 +43,8 @@ import { InMemoryToolRegistry, ToolRegistry } from './registry'
 
 export function registerBuiltinTools({ container }: { container: DependencyContainer }): void {
   const shellRegistry = (resolver: DependencyContainer) => resolver.resolve(portToken(ShellRegistryPort))
+  const serviceRegistry = (resolver: DependencyContainer) =>
+    resolver.resolve(portToken(ServiceRegistryPort))
   const agentRegistry = (resolver: DependencyContainer) =>
     resolver.resolve(AgentRegistrySourceToken)
 
@@ -62,6 +68,15 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
   })
   container.register(portToken(ToolDefinition), {
     useFactory: (resolver) => new ShellKillTool(shellRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ServiceStartTool(serviceRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ServiceStopTool(serviceRegistry(resolver)),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) => new ServiceListTool(serviceRegistry(resolver)),
   })
   container.register(portToken(ToolDefinition), { useClass: TaskWriteTool })
   container.register(portToken(ToolDefinition), {

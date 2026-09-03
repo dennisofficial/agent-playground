@@ -44,7 +44,7 @@ describe('two messages sent one after the other', () => {
     ])
   })
 
-  it('leaves one sent mid-turn on its own, since only it carries the mark', () => {
+  it('keeps one sent mid-turn apart from the messages around it', () => {
     const events = log([
       called({ n: 1, name: 'read' }),
       { type: 'user-said', text: 'check the tests too' },

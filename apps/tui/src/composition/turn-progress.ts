@@ -117,6 +117,47 @@ export function turnAdvanced(args: {
   return { characters, clock: { ...clock, outputTokens, reasoning, retry } }
 }
 
+/**
+ * A turn advanced by a signal, opening the clock if nothing had opened it yet.
+ *
+ * The distinction is who started the turn. A turn this session drove is stamped at the keystroke,
+ * so its clock is already running by the time the first signal lands and this changes nothing. A
+ * turn somebody else drove — a sub-agent's, stepped by the supervisor — has no keystroke to stamp
+ * against, and `step-started` is the earliest honest reading of when it began.
+ */
+export function turnObserved(args: {
+  progress: TurnProgress
+  signal: ChannelSignal
+  now: number
+}): TurnProgress {
+  const opened =
+    args.signal.type === 'step-started' && args.progress.clock.startedAt === null
+      ? turnStarted({ now: args.now })
+      : args.progress
+
+  return turnAdvanced({ progress: opened, signal: args.signal, now: args.now })
+}
+
+/**
+ * A child's clock, whose elapsed is the step's rather than the fold's.
+ *
+ * The supervisor stamps `steppingSince` when it hands a child a step, so the reading is held outside
+ * the view and survives being closed and reopened — a clock kept in the component would restart from
+ * whenever the operator happened to walk in, and a child between two steps would show none at all.
+ */
+export function turnOfChild(args: {
+  observed: TurnClock
+  running: boolean
+  steppingSince: string | null
+}): TurnClock {
+  if (!args.running) return IDLE_TURN
+
+  const parsed = args.steppingSince === null ? Number.NaN : Date.parse(args.steppingSince)
+  const startedAt = Number.isNaN(parsed) ? args.observed.startedAt : parsed
+
+  return startedAt === args.observed.startedAt ? args.observed : { ...args.observed, startedAt }
+}
+
 export function turnSettled(args: { progress: TurnProgress; now: number }): TurnProgress {
   const { startedAt, outputTokens } = args.progress.clock
   if (startedAt === null) return IDLE_PROGRESS

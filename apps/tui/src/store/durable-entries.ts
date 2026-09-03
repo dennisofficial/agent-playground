@@ -1,8 +1,9 @@
-import { EContextSlot, quotedShellCommand, type AssistantPart, type CallId, type Event, type EventId, type EventOfType, type SaidImage } from '@dltech/atlas-core'
+import { EContextSlot, latestTldrPerAnchor, quotedShellCommand, type AssistantPart, type CallId, type Event, type EventId, type EventOfType, type SaidImage } from '@dltech/atlas-core'
 
 
 import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
 import { modelEntries } from './model-entries'
+import { serviceEndedLine, serviceEndingFailed } from './service-ended-line'
 import { shellAwaitingInputLine, shellEndedLine, shellEndingFailed } from './shell-ended-line'
 import { toolRuns, type ToolRun } from './tool-runs'
 import type { TurnSpend } from '@dltech/atlas-harness'
@@ -133,6 +134,7 @@ export function durableEntries(args: {
   const steers = saidWhileToolsWereOutstanding(events)
   const loaded = contextLoadedWith(events)
   const turns = turnsBySeq({ events, turns: args.turns ?? [] })
+  const footers = new Map(latestTldrPerAnchor(events).map((footer) => [footer.throughSeq, footer]))
 
   const entriesOfEvent = (event: Event): TranscriptEntry[] => {
     if (event.type === 'user-said') {
@@ -198,6 +200,20 @@ export function durableEntries(args: {
       ]
     }
 
+    if (event.type === 'service-ended') {
+      return [
+        {
+          kind: EEntryKind.ServiceEnded,
+          author: EAuthor.Model,
+          key: event.id,
+          text: serviceEndedLine(event),
+          serviceId: event.serviceId,
+          output: event.tail,
+          failed: serviceEndingFailed(event),
+        },
+      ]
+    }
+
     if (event.type === 'agent-ended') {
       return [
         {
@@ -230,8 +246,24 @@ export function durableEntries(args: {
   return inOneBreath(
     events.flatMap((event): TranscriptEntry[] => {
       const entries = entriesOfEvent(event)
+      const footer = footers.get(event.seq)
+      const withFooter =
+        footer === undefined
+          ? entries
+          : [
+              ...entries,
+              {
+                kind: EEntryKind.TldrWritten as const,
+                author: EAuthor.Model as const,
+                key: footer.id,
+                text: footer.text,
+                anchorSeq: footer.anchorSeq,
+                throughSeq: footer.throughSeq,
+                status: footer.status,
+              },
+            ]
       const turn = turns.get(event.seq)
-      return turn === undefined ? entries : [...entries, turnEndedEntry(turn)]
+      return turn === undefined ? withFooter : [...withFooter, turnEndedEntry(turn)]
     }),
   )
 }

@@ -44,7 +44,7 @@ describe('generated catalogue', () => {
   it('loads every generated row as a card', () => {
     expect(cards.length).toBe(GENERATED_MANIFEST.modelCount)
     expect(catalogue.size).toBe(GENERATED_MANIFEST.modelCount)
-    expect(GENERATED_MANIFEST.source).toBe('models.dev')
+    expect(GENERATED_MANIFEST.source).toBe('models.dev + api.inference.net')
     expect(GENERATED_MANIFEST.providerCount).toBe(CATALOGUE_PROVIDER_IDS.length)
   })
 

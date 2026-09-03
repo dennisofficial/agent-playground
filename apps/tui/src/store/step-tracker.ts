@@ -18,6 +18,7 @@ export type StepTracker = {
   tailRun(events: readonly Event[]): TailRun | null
   pruneSuperseded(events: readonly Event[]): boolean
   dropFailedTail(events: readonly Event[]): boolean
+  reset(): void
 }
 
 export function createStepTracker(): StepTracker {
@@ -68,7 +69,7 @@ export function createStepTracker(): StepTracker {
     },
 
     tailRun(events) {
-      const step = liveSteps({ steps: ordered, events }).at(-1)
+      const step = liveNow(events).at(-1)
       if (step === undefined || step.end !== null) return null
 
       const block = step.blocks.at(-1)
@@ -96,6 +97,12 @@ export function createStepTracker(): StepTracker {
 
       forget(tail.stepId)
       return true
+    },
+
+    reset() {
+      byId.clear()
+      ordered = []
+      settled = null
     },
   }
 }

@@ -55,6 +55,7 @@ export function BootScreen(props: {
   progress: BootProgress
   cwd: string
   onAbandon: () => void
+  onRestart?: () => void
 }): React.ReactNode {
   const { width, height } = useTerminalDimensions()
   const step = useSyncExternalStore(props.progress.subscribe, props.progress.step)
@@ -82,6 +83,7 @@ export function BootScreen(props: {
           opened={ready.opened}
           credentialNotice={ready.credentialNotice}
           covered={startup.covered}
+          {...(props.onRestart === undefined ? {} : { onRestart: props.onRestart })}
         />
       )}
       {startup.covered ? (

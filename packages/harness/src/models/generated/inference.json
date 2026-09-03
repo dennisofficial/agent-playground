@@ -2,121 +2,868 @@
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "google/gemma-3"
+      "modelId": "deepseek-v3.2"
     },
-    "label": "Google Gemma 3",
+    "label": "deepseek-v3.2",
     "api": "openai-completions",
-    "contextWindow": 125000,
+    "contextWindow": 163840,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 8192,
     "cost": {
-      "inputPerMillion": 0.15,
-      "outputPerMillion": 0.3
+      "inputPerMillion": 0.7,
+      "outputPerMillion": 2
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "meta/llama-3.1-8b-instruct"
+      "modelId": "deepseek-v4-flash"
     },
-    "label": "Llama 3.1 8B Instruct",
+    "label": "deepseek-v4-flash",
     "api": "openai-completions",
-    "contextWindow": 16000,
+    "contextWindow": 163840,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 8192,
     "cost": {
-      "inputPerMillion": 0.025,
-      "outputPerMillion": 0.025
+      "inputPerMillion": 0.23,
+      "outputPerMillion": 0.62
+    },
+    "effort": {
+      "low": "low",
+      "high": "high",
+      "max": "max"
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "meta/llama-3.2-11b-vision-instruct"
+      "modelId": "deepseek-v4-flash-0731"
     },
-    "label": "Llama 3.2 11B Vision Instruct",
+    "label": "deepseek-v4-flash-0731",
     "api": "openai-completions",
-    "contextWindow": 16000,
+    "contextWindow": 256000,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 384000,
     "cost": {
-      "inputPerMillion": 0.055,
-      "outputPerMillion": 0.055
+      "inputPerMillion": 0.53,
+      "outputPerMillion": 1.58
+    },
+    "effort": {
+      "low": "low",
+      "high": "high",
+      "max": "max"
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "meta/llama-3.2-1b-instruct"
+      "modelId": "deepseek-v4-pro"
     },
-    "label": "Llama 3.2 1B Instruct",
+    "label": "deepseek-v4-pro",
     "api": "openai-completions",
-    "contextWindow": 16000,
+    "contextWindow": 1048576,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 384000,
     "cost": {
-      "inputPerMillion": 0.01,
-      "outputPerMillion": 0.01
+      "inputPerMillion": 2.1,
+      "outputPerMillion": 4.2
+    },
+    "effort": {
+      "low": "low",
+      "high": "high",
+      "max": "max"
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "meta/llama-3.2-3b-instruct"
+      "modelId": "deepseek-v4-pro-0813"
     },
-    "label": "Llama 3.2 3B Instruct",
+    "label": "deepseek-v4-pro-0813",
     "api": "openai-completions",
-    "contextWindow": 16000,
+    "contextWindow": 1048576,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 131072,
     "cost": {
-      "inputPerMillion": 0.02,
-      "outputPerMillion": 0.02
+      "inputPerMillion": 1.32,
+      "outputPerMillion": 3.96
+    },
+    "effort": {
+      "low": "low",
+      "high": "high",
+      "max": "max"
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "mistral/mistral-nemo-12b-instruct"
+      "modelId": "gemini-2.5-flash"
     },
-    "label": "Mistral Nemo 12B Instruct",
+    "label": "gemini-2.5-flash",
     "api": "openai-completions",
-    "contextWindow": 16000,
+    "contextWindow": 1048576,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 65536,
     "cost": {
-      "inputPerMillion": 0.038,
+      "inputPerMillion": 0.3,
+      "outputPerMillion": 2.5
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-2.5-flash-lite"
+    },
+    "label": "gemini-2.5-flash-lite",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 0.1,
+      "outputPerMillion": 0.4
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-2.5-pro"
+    },
+    "label": "gemini-2.5-pro",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 1.25,
+      "outputPerMillion": 10
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3-flash-preview"
+    },
+    "label": "gemini-3-flash-preview",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 0.5,
+      "outputPerMillion": 3
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3.1-flash-lite"
+    },
+    "label": "gemini-3.1-flash-lite",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 0.25,
+      "outputPerMillion": 1.5
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3.1-pro-preview"
+    },
+    "label": "gemini-3.1-pro-preview",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 2,
+      "outputPerMillion": 12
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3.5-flash"
+    },
+    "label": "gemini-3.5-flash",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 1.5,
+      "outputPerMillion": 9
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3.5-flash-lite"
+    },
+    "label": "gemini-3.5-flash-lite",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 0.3,
+      "outputPerMillion": 2.5
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3.6-flash"
+    },
+    "label": "gemini-3.6-flash",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 1.5,
+      "outputPerMillion": 7.5
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemini-3.7-flash"
+    },
+    "label": "gemini-3.7-flash",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 1.5,
+      "outputPerMillion": 7.5
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemma-3-27b-it"
+    },
+    "label": "gemma-3-27b-it",
+    "api": "openai-completions",
+    "contextWindow": 131072,
+    "imageTier": "standard",
+    "maxOutputTokens": 8192,
+    "cost": {
+      "inputPerMillion": 0.09,
+      "outputPerMillion": 0.25
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gemma-3-4b-it"
+    },
+    "label": "gemma-3-4b-it",
+    "api": "openai-completions",
+    "contextWindow": 131072,
+    "imageTier": "standard",
+    "maxOutputTokens": 8192,
+    "cost": {
+      "inputPerMillion": 0.05,
       "outputPerMillion": 0.1
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "osmosis/osmosis-structure-0.6b"
+      "modelId": "glm-5"
     },
-    "label": "Osmosis Structure 0.6B",
+    "label": "glm-5",
     "api": "openai-completions",
-    "contextWindow": 4000,
+    "contextWindow": 200000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 0.95,
+      "outputPerMillion": 2.55
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "glm-5.2"
+    },
+    "label": "glm-5.2",
+    "api": "openai-completions",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 1.3,
+      "outputPerMillion": 4.4
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "glm-5.2-fast"
+    },
+    "label": "glm-5.2-fast",
+    "api": "openai-completions",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 2.6,
+      "outputPerMillion": 8.8
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "glm-5.3"
+    },
+    "label": "glm-5.3",
+    "api": "openai-completions",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 131072,
+    "cost": {
+      "inputPerMillion": 2.1,
+      "outputPerMillion": 6.6
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "glm-5.3-flash"
+    },
+    "label": "glm-5.3-flash",
+    "api": "openai-completions",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 131072,
+    "cost": {
+      "inputPerMillion": 0.54,
+      "outputPerMillion": 1.8
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "high": "high",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-4.1"
+    },
+    "label": "gpt-4.1",
+    "api": "openai-completions",
+    "contextWindow": 1047576,
+    "imageTier": "standard",
+    "maxOutputTokens": 32768,
+    "cost": {
+      "inputPerMillion": 2,
+      "outputPerMillion": 8
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-4.1-mini"
+    },
+    "label": "gpt-4.1-mini",
+    "api": "openai-completions",
+    "contextWindow": 1047576,
+    "imageTier": "standard",
+    "maxOutputTokens": 32768,
+    "cost": {
+      "inputPerMillion": 0.4,
+      "outputPerMillion": 1.6
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-4.1-nano"
+    },
+    "label": "gpt-4.1-nano",
+    "api": "openai-completions",
+    "contextWindow": 1047576,
+    "imageTier": "standard",
+    "maxOutputTokens": 32768,
+    "cost": {
+      "inputPerMillion": 0.1,
+      "outputPerMillion": 0.4
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-4o"
+    },
+    "label": "gpt-4o",
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "imageTier": "standard",
+    "maxOutputTokens": 16384,
+    "cost": {
+      "inputPerMillion": 2.5,
+      "outputPerMillion": 10
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-4o-mini"
+    },
+    "label": "gpt-4o-mini",
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "imageTier": "standard",
+    "maxOutputTokens": 16384,
+    "cost": {
+      "inputPerMillion": 0.15,
+      "outputPerMillion": 0.6
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5-mini"
+    },
+    "label": "gpt-5-mini",
+    "api": "openai-completions",
+    "contextWindow": 400000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 0.25,
+      "outputPerMillion": 2
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5-nano"
+    },
+    "label": "gpt-5-nano",
+    "api": "openai-completions",
+    "contextWindow": 400000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 0.05,
+      "outputPerMillion": 0.4
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5.4"
+    },
+    "label": "gpt-5.4",
+    "api": "openai-completions",
+    "contextWindow": 1050000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 2.5,
+      "outputPerMillion": 15
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5.5"
+    },
+    "label": "gpt-5.5",
+    "api": "openai-completions",
+    "contextWindow": 1050000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 30
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5.6-luna"
+    },
+    "label": "gpt-5.6-luna",
+    "api": "openai-completions",
+    "contextWindow": 1050000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 0.2,
+      "outputPerMillion": 1.2
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5.6-sol"
+    },
+    "label": "gpt-5.6-sol",
+    "api": "openai-completions",
+    "contextWindow": 1050000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 5,
+      "outputPerMillion": 30
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "gpt-5.6-terra"
+    },
+    "label": "gpt-5.6-terra",
+    "api": "openai-completions",
+    "contextWindow": 1050000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 2,
+      "outputPerMillion": 12
+    },
+    "effort": {
+      "off": "none",
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "grok-4.5"
+    },
+    "label": "grok-4.5",
+    "api": "openai-completions",
+    "contextWindow": 500000,
+    "imageTier": "standard",
+    "maxOutputTokens": 500000,
+    "cost": {
+      "inputPerMillion": 2,
+      "outputPerMillion": 6
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "grok-4.6"
+    },
+    "label": "grok-4.6",
+    "api": "openai-completions",
+    "contextWindow": 500000,
+    "imageTier": "standard",
+    "maxOutputTokens": 500000,
+    "cost": {
+      "inputPerMillion": 2,
+      "outputPerMillion": 6
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "inference-net/schematron-v2-small"
+    },
+    "label": "inference-net/schematron-v2-small",
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "imageTier": "standard",
+    "maxOutputTokens": 4096,
+    "cost": {
+      "inputPerMillion": 0.05,
+      "outputPerMillion": 0.25
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "inference-net/schematron-v2-turbo"
+    },
+    "label": "inference-net/schematron-v2-turbo",
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "imageTier": "standard",
+    "maxOutputTokens": 8192,
+    "cost": {
+      "inputPerMillion": 0.03,
+      "outputPerMillion": 0.15
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "kimi-k2.5"
+    },
+    "label": "kimi-k2.5",
+    "api": "openai-completions",
+    "contextWindow": 262144,
+    "imageTier": "standard",
+    "maxOutputTokens": 65536,
+    "cost": {
+      "inputPerMillion": 0.8,
+      "outputPerMillion": 3.95
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "kimi-k2.6"
+    },
+    "label": "kimi-k2.6",
+    "api": "openai-completions",
+    "contextWindow": 262144,
+    "imageTier": "standard",
+    "maxOutputTokens": 262144,
+    "cost": {
+      "inputPerMillion": 1.25,
+      "outputPerMillion": 5.3
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "kimi-k3"
+    },
+    "label": "kimi-k3",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 1048576,
+    "cost": {
+      "inputPerMillion": 3.95,
+      "outputPerMillion": 19.8
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "kimi-k3-fast"
+    },
+    "label": "kimi-k3-fast",
+    "api": "openai-completions",
+    "contextWindow": 1048576,
+    "imageTier": "standard",
+    "maxOutputTokens": 1048576,
+    "cost": {
+      "inputPerMillion": 4.5,
+      "outputPerMillion": 22.5
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "llama-3.2-1b-instruct"
+    },
+    "label": "llama-3.2-1b-instruct",
+    "api": "openai-completions",
+    "contextWindow": 128000,
     "imageTier": "standard",
     "maxOutputTokens": 2048,
     "cost": {
-      "inputPerMillion": 0.1,
+      "inputPerMillion": 0.027,
+      "outputPerMillion": 0.201
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "llama-3.2-3b-instruct"
+    },
+    "label": "llama-3.2-3b-instruct",
+    "api": "openai-completions",
+    "contextWindow": 128000,
+    "imageTier": "standard",
+    "maxOutputTokens": 2048,
+    "cost": {
+      "inputPerMillion": 0.05,
+      "outputPerMillion": 0.33
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "llama-3.3-70b-instruct"
+    },
+    "label": "llama-3.3-70b-instruct",
+    "api": "openai-completions",
+    "contextWindow": 131072,
+    "imageTier": "standard",
+    "maxOutputTokens": 16384,
+    "cost": {
+      "inputPerMillion": 0.13,
+      "outputPerMillion": 0.4
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "nemotron-3-super"
+    },
+    "label": "nemotron-3-super",
+    "api": "openai-completions",
+    "contextWindow": 262144,
+    "imageTier": "standard",
+    "maxOutputTokens": 262144,
+    "cost": {
+      "inputPerMillion": 0.102,
+      "outputPerMillion": 0.48
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "qwen3-14b"
+    },
+    "label": "qwen3-14b",
+    "api": "openai-completions",
+    "contextWindow": 40960,
+    "imageTier": "standard",
+    "maxOutputTokens": 40960,
+    "cost": {
+      "inputPerMillion": 0.2275,
+      "outputPerMillion": 0.91
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "qwen3-30b-a3b"
+    },
+    "label": "qwen3-30b-a3b",
+    "api": "openai-completions",
+    "contextWindow": 40960,
+    "imageTier": "standard",
+    "maxOutputTokens": 40960,
+    "cost": {
+      "inputPerMillion": 0.12,
       "outputPerMillion": 0.5
     }
   },
   {
     "ref": {
       "providerId": "inference",
-      "modelId": "qwen/qwen-2.5-7b-vision-instruct"
+      "modelId": "qwen3-8b"
     },
-    "label": "Qwen 2.5 7B Vision Instruct",
+    "label": "qwen3-8b",
     "api": "openai-completions",
-    "contextWindow": 125000,
+    "contextWindow": 40960,
     "imageTier": "standard",
-    "maxOutputTokens": 4096,
+    "maxOutputTokens": 40960,
     "cost": {
-      "inputPerMillion": 0.2,
-      "outputPerMillion": 0.2
+      "inputPerMillion": 0.117,
+      "outputPerMillion": 0.455
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "qwen3-max-thinking"
+    },
+    "label": "qwen3-max-thinking",
+    "api": "openai-completions",
+    "contextWindow": 262144,
+    "imageTier": "standard",
+    "maxOutputTokens": 32768,
+    "cost": {
+      "inputPerMillion": 0.78,
+      "outputPerMillion": 3.9
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
+      "modelId": "qwen3.7-plus"
+    },
+    "label": "qwen3.7-plus",
+    "api": "openai-completions",
+    "contextWindow": 1000000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 0.4,
+      "outputPerMillion": 1.6
     }
   }
 ]

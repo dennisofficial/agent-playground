@@ -55,6 +55,18 @@ describe('the conversation store', () => {
     expect(textOf(store)).toEqual(['hello', 'hi'])
   })
 
+  it('drops every in-flight step on resetSteps, so a rewind leaves nothing half-drawn', () => {
+    channel
+      .publisherFor({ threadId: fixtureThreadId })
+      .onChunk({ type: 'text-delta', id: 'b1', text: 'half said' })
+
+    expect(textOf(store)).toEqual(['half said'])
+
+    store.resetSteps()
+
+    expect(store.getSnapshot().entries).toEqual([])
+  })
+
   it('shows the reply exactly once across a real commit handoff', () => {
     const question = log([{ type: 'user-said', text: 'hello' }])
     const durable: Event[] = log([

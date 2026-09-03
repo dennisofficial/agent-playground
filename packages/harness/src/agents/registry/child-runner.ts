@@ -8,17 +8,31 @@ import {
 } from '@dltech/atlas-core'
 
 import type { SteerMessage } from './child-state'
+import type { DeltaChannel } from '../../channel/delta-channel'
+import { PublishingTurnRunner } from '../../channel/publishing-turn-runner'
 import type { HookChain } from '../../hooks/registry'
-import { LoopTurnRunner, type TurnDeps } from '../../loop/run-turn'
+import type { TurnDeps } from '../../loop/run-turn'
 import type { TurnRunner } from '../../loop/turn-runner.port'
 import { EApprovalRouting, HookedToolDispatcher } from '../../tools/dispatch'
 import { filteredToolRegistry, type ToolRegistry } from '../../tools/registry'
-import { AGENT_TOOL_NAMES, WORKTREE_TOOL_NAMES, toolRegistryFor, type AgentType } from '../types'
+import {
+  AGENT_TOOL_NAMES,
+  SERVICE_CONTROL_TOOL_NAMES,
+  WORKTREE_TOOL_NAMES,
+  toolRegistryFor,
+  type AgentType,
+} from '../types'
 
 export type ChildRunnerDeps = {
   turn: Omit<TurnDeps, 'drainPending'>
   tools: ToolRegistry
   hooks: HookChain
+  /**
+   * The same channel the root thread publishes on. A child publishes under its own `threadId`, so a
+   * reader subscribed to the child sees its steps stream and nobody subscribed to the parent sees
+   * anything — which is the delegate's-work-is-counted-never-quoted rule holding at the transport.
+   */
+  channel: DeltaChannel
   assemblyFor: (args: { agentType: AgentType }) => AssemblyPipeline
   drainNotices: (args: { threadId: ThreadId }) => Promise<readonly EventDraft[]>
   modelFor?: ((args: { agentType: AgentType }) => ModelPort) | undefined
@@ -32,7 +46,10 @@ export type ChildRunnerDeps = {
 export type ChildRunnerDepsSource = () => ChildRunnerDeps
 
 const withoutSessionShapingTools = (registry: ToolRegistry): ToolRegistry =>
-  filteredToolRegistry({ registry, deny: [...AGENT_TOOL_NAMES, ...WORKTREE_TOOL_NAMES] })
+  filteredToolRegistry({
+    registry,
+    deny: [...AGENT_TOOL_NAMES, ...WORKTREE_TOOL_NAMES, ...SERVICE_CONTROL_TOOL_NAMES],
+  })
 
 function observingLog({
   log,
@@ -94,18 +111,21 @@ export function buildChildRunner({
   const registry = withoutSessionShapingTools(toolRegistryFor({ registry: deps.tools, agentType }))
   const { turn } = deps
 
-  return new LoopTurnRunner({
-    ...turn,
-    log: observingLog({ log: turn.log, threadId, observe }),
-    onContext: observeContext,
-    model: deps.modelFor === undefined ? turn.model : deps.modelFor({ agentType }),
-    tools: () => registry.declarations(),
-    dispatch: new HookedToolDispatcher({
-      registry,
-      hooks: deps.hooks,
-      approvals: EApprovalRouting.None,
-    }),
-    assembly: deps.assemblyFor({ agentType }),
-    drainPending: async (args) => [...steerDrafts(steering()), ...(await deps.drainNotices(args))],
+  return new PublishingTurnRunner({
+    channel: deps.channel,
+    deps: {
+      ...turn,
+      log: observingLog({ log: turn.log, threadId, observe }),
+      onContext: observeContext,
+      model: deps.modelFor === undefined ? turn.model : deps.modelFor({ agentType }),
+      tools: () => registry.declarations(),
+      dispatch: new HookedToolDispatcher({
+        registry,
+        hooks: deps.hooks,
+        approvals: EApprovalRouting.None,
+      }),
+      assembly: deps.assemblyFor({ agentType }),
+      drainPending: async (args) => [...steerDrafts(steering()), ...(await deps.drainNotices(args))],
+    },
   })
 }

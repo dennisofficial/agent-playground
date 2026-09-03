@@ -69,9 +69,14 @@ describe('syncEnvironmentAccounts', () => {
   })
 
   it('knows every provider that reads a key from the environment', async () => {
-    await sync({ OPENROUTER_API_KEY: 'or-key', OPENAI_API_KEY: 'oa-key' })
+    await sync({
+      OPENROUTER_API_KEY: 'or-key',
+      OPENAI_API_KEY: 'oa-key',
+      INFERENCE_API_KEY: 'in-key',
+    })
 
     expect((await vault.store.list()).map((account) => account.provider).sort()).toEqual([
+      EAuthProvider.Inference,
       EAuthProvider.OpenAI,
       EAuthProvider.OpenRouter,
     ])

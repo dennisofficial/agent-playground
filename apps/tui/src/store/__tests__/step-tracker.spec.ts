@@ -123,4 +123,55 @@ describe('the step tracker', () => {
     expect(tracker.live([])).toEqual([])
     expect(tracker.dropFailedTail([])).toBe(false)
   })
+
+  it('stays superseded when the event that replaced it was deleted from the window', () => {
+    const [deleted, surviving] = log([
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'gone' }] },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'here' }] },
+    ])
+    if (deleted === undefined || surviving === undefined) throw new Error('fixture lost a reply')
+
+    const tracker = tracked([
+      started(stepOne),
+      textDelta({ stepId: stepOne, blockId: 'b1', text: 'gone' }),
+      ended({ stepId: stepOne, end: EStepEnd.Completed, supersededBy: refTo(deleted) }),
+    ])
+
+    expect(tracker.live([surviving])).toEqual([])
+    expect(tracker.pruneSuperseded([surviving])).toBe(true)
+  })
+
+  it('stays live while the event replacing it has yet to land', () => {
+    const [landed, pending] = log([
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'earlier' }] },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'just written' }] },
+    ])
+    if (landed === undefined || pending === undefined) throw new Error('fixture lost a reply')
+
+    const tracker = tracked([
+      started(stepOne),
+      textDelta({ stepId: stepOne, blockId: 'b1', text: 'just written' }),
+      ended({ stepId: stepOne, end: EStepEnd.Completed, supersededBy: refTo(pending) }),
+    ])
+
+    expect(tracker.live([landed])).toHaveLength(1)
+  })
+
+  it('forgets every step on reset, the way a rewind needs', () => {
+    const tracker = tracked([
+      started(stepOne),
+      textDelta({ stepId: stepOne, blockId: 'b1', text: 'partial' }),
+    ])
+
+    expect(tracker.live([])).toHaveLength(1)
+
+    tracker.reset()
+
+    expect(tracker.live([])).toEqual([])
+    expect(tracker.tailRun([])).toBeNull()
+
+    tracker.absorb(started(stepTwo))
+    tracker.absorb(textDelta({ stepId: stepTwo, blockId: 'b2', text: 'after' }))
+    expect(tracker.live([]).map((step) => step.stepId)).toEqual([stepTwo])
+  })
 })

@@ -13,8 +13,6 @@ const WIDTHS = [60, 80, 100, 200] as const
 
 const SEAM = 1
 
-const HUNK_HEADING = 1
-
 const DIGITS = numberDigits({ lines: HUNK.lines })
 
 const COLUMNS = inlineColumns({ width: contentColumns(90), digits: DIGITS })
@@ -26,12 +24,12 @@ const CODE_AT = SIGN_AT + COLUMNS.sign + COLUMNS.signGap
 const at = (width: number) => shown({ node: <InlineDiff file={FILE} width={width} />, width })
 
 describe('InlineDiff', () => {
-  it('spends one row per line and one on each hunk heading, at every width', async () => {
+  it('spends one row per line and none on a hunk heading, at every width', async () => {
     for (const width of WIDTHS) {
       const { rows } = await at(width)
       const header = rowOf(rows, 'auth.service.ts')
       const tail = rows.findIndex((row) => row.startsWith(RAIL_TAIL))
-      expect(tail - header - 1).toBe(SEAM + HUNK_HEADING + HUNK.lines.length)
+      expect(tail - header - 1).toBe(SEAM + HUNK.lines.length)
     }
   }, 60_000)
 
@@ -147,6 +145,6 @@ describe('InlineDiff', () => {
     expect(header).toContain('src/auth/auth.service.ts')
     expect(header).toContain('+34')
     expect(header).toContain('−7')
-    expect(rows[rowOf(rows, '@@')]).toContain('@@ -118,12 +118,14 @@ AuthService.validateUser')
+    expect(rows.some((row) => row.includes('@@'))).toBe(false)
   }, 30_000)
 })

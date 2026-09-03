@@ -1,4 +1,5 @@
 import { bootAtlas } from './composition/boot'
+import { launchCommand } from './composition/launch-command'
 
 export const APP_PACKAGE_NAME = '@dltech/atlas'
 
@@ -10,7 +11,12 @@ const report = (error: unknown): void => {
 }
 
 if (import.meta.main) {
-  bootAtlas({ argv: process.argv.slice(2), env: process.env, cwd: process.cwd() })
+  bootAtlas({
+    argv: process.argv.slice(2),
+    env: process.env,
+    cwd: process.cwd(),
+    command: launchCommand({ execPath: process.execPath, entry: process.argv[1] }),
+  })
     .then((exitCode) => {
       if (exitCode !== 0) process.exitCode = exitCode
     })

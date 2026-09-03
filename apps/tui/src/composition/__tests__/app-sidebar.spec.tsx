@@ -1,3 +1,5 @@
+import { homedir } from 'node:os'
+
 import { parseColor, type CapturedFrame, type Renderable } from '@opentui/core'
 import { ESettingId, toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
@@ -98,6 +100,33 @@ describe('the sidebar', () => {
 
       const frame = setup.captureCharFrame()
       expect(frame).toContain(SIDEBAR_MARK)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('names the repository with the launch worktree beneath it when opened inside one', async () => {
+    const repo = `${homedir()}/Developer/comp-v3`
+    const worktree = `${repo}/.claude/worktrees/portal-auth-url`
+    const app: FakeApp = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }),
+      cwd: worktree,
+      workspace: { workspace: worktree, repo },
+    })
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: 140,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      const rows = setup.captureCharFrame().split('\n')
+      const mark = rows.findIndex((row) => row.includes(SIDEBAR_MARK))
+      expect(rows[mark - 2]).toContain('~/Developer/comp-v3')
+      expect(rows[mark - 1]).toContain('.claude/worktrees/portal-auth-url')
     } finally {
       await teardown(setup)
     }

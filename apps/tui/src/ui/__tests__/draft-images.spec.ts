@@ -1,15 +1,9 @@
-import { EImageDelivery, imageTag } from '@dltech/atlas-core'
+import { EImageDelivery } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import type { ClipboardImage } from '../clipboard-image'
-import {
-  attachImage,
-  keptImages,
-  noDraftImages,
-  restoredImages,
-  submissionOf,
-  type DraftImage,
-} from '../draft-images'
+import type { LiveToken } from '../composer-tokens'
+import { restoredImages, submissionOf } from '../draft-images'
 
 const shot = (over: Partial<ClipboardImage> = {}): ClipboardImage => ({
   path: '/tmp/atlas/shot.png',
@@ -22,52 +16,24 @@ const shot = (over: Partial<ClipboardImage> = {}): ClipboardImage => ({
   ...over,
 })
 
-const attached = (...images: readonly ClipboardImage[]): readonly DraftImage[] =>
-  images.reduce<readonly DraftImage[]>(
-    (held, image) => attachImage({ images: held, image }),
-    noDraftImages,
-  )
-
-const tagsFor = (images: readonly DraftImage[]): string =>
-  images.map((image) => imageTag(image.ordinal)).join(' ')
-
-describe('the pictures riding along with a draft', () => {
-  it('numbers a new one past the highest already there, not past the count', () => {
-    const two = attached(shot(), shot())
-    const again = attachImage({ images: [two[0] as DraftImage], image: shot() })
-
-    expect(again.map((image) => image.ordinal)).toEqual([1, 2])
-  })
-
-  it('keeps only the ones the draft still names', () => {
-    const three = attached(shot({ path: '/a.png' }), shot({ path: '/b.png' }), shot({ path: '/c.png' }))
-    const kept = keptImages({ images: three, text: 'look at [Image #1] and [Image #3]' })
-
-    expect(kept.map((image) => image.path)).toEqual(['/a.png', '/c.png'])
-  })
-
-  it('takes them in the order the prose reads them, not the order they were pasted', () => {
-    const two = attached(shot({ path: '/a.png' }), shot({ path: '/b.png' }))
-    const kept = keptImages({ images: two, text: '[Image #2] before [Image #1]' })
-
-    expect(kept.map((image) => image.path)).toEqual(['/b.png', '/a.png'])
-  })
-
-  it('drops every picture when the draft names none of them', () => {
-    expect(keptImages({ images: attached(shot()), text: 'never mind' })).toEqual([])
-  })
-
-  it('ignores a tag naming a picture that was never attached', () => {
-    expect(keptImages({ images: noDraftImages, text: '[Image #7]' })).toEqual([])
-  })
+const imageToken = (args: {
+  ordinal: number
+  image: ClipboardImage
+  start?: number
+  end?: number
+}): LiveToken => ({
+  id: args.ordinal,
+  start: args.start ?? 0,
+  end: args.end ?? 0,
+  ordinal: args.ordinal,
+  slot: { kind: 'image', ordinal: args.ordinal, settled: true, image: args.image },
 })
 
 describe('what the draft becomes on send', () => {
   it('carries an inline picture as bytes and leaves its tag naming it', () => {
-    const images = attached(shot())
     const sending = submissionOf({
-      text: `${tagsFor(images)} why is this broken`,
-      images,
+      text: '[Image #1] why is this broken',
+      tokens: [imageToken({ ordinal: 1, image: shot() })],
       load: () => 'AAAA',
     })
 
@@ -84,10 +50,18 @@ describe('what the draft becomes on send', () => {
   })
 
   it('swaps a path-only picture for its path where the tag stood', () => {
-    const images = attached(shot({ delivery: EImageDelivery.PathOnly }))
+    const text = 'look at [Image #1] closely'
+    const start = text.indexOf('[Image #1]')
     const sending = submissionOf({
-      text: `look at ${tagsFor(images)} closely`,
-      images,
+      text,
+      tokens: [
+        imageToken({
+          ordinal: 1,
+          start,
+          end: start + '[Image #1]'.length,
+          image: shot({ delivery: EImageDelivery.PathOnly }),
+        }),
+      ],
       load: () => 'AAAA',
     })
 
@@ -96,33 +70,49 @@ describe('what the draft becomes on send', () => {
   })
 
   it('falls back to the path when the bytes have gone missing since the paste', () => {
-    const images = attached(shot())
-    const sending = submissionOf({ text: tagsFor(images), images, load: () => null })
+    const text = '[Image #1]'
+    const sending = submissionOf({
+      text,
+      tokens: [imageToken({ ordinal: 1, start: 0, end: text.length, image: shot() })],
+      load: () => null,
+    })
 
     expect(sending.images).toEqual([])
     expect(sending.text).toContain('[image /tmp/atlas/shot.png')
   })
 
-  it('sends nothing but the words when the operator backspaced the tag away', () => {
+  it('sends a pasted block back as its own text, labels gone from the message', () => {
+    const text = 'see [Pasted text #2 +3 lines] here'
+    const start = text.indexOf('[Pasted')
+    const tokens: LiveToken[] = [
+      {
+        id: 2,
+        start,
+        end: start + '[Pasted text #2 +3 lines]'.length,
+        ordinal: 0,
+        slot: {
+          kind: 'pasted',
+          label: '[Pasted text #2 +3 lines]',
+          content: 'one\ntwo\nthree',
+        },
+      },
+    ]
+
+    const sending = submissionOf({ text, tokens, load: () => 'AAAA' })
+
+    expect(sending.text).toBe('see one\ntwo\nthree here')
+    expect(sending.images).toEqual([])
+  })
+
+  it('untouched when the draft has no tokens', () => {
     const sending = submissionOf({
       text: 'never mind the screenshot',
-      images: attached(shot()),
+      tokens: [],
       load: () => 'AAAA',
     })
 
     expect(sending.images).toEqual([])
     expect(sending.text).toBe('never mind the screenshot')
-  })
-
-  it('sends the pictures in the order the prose reads them', () => {
-    const images = attached(shot({ path: '/a.png' }), shot({ path: '/b.png' }))
-    const sending = submissionOf({
-      text: 'compare [Image #2] against [Image #1]',
-      images,
-      load: (path) => path,
-    })
-
-    expect(sending.images.map((image) => image.data)).toEqual(['/b.png', '/a.png'])
   })
 })
 
@@ -139,6 +129,21 @@ describe('a queued message taken back into the draft', () => {
     expect(restored.map((image) => image.ordinal)).toEqual([2, 4])
   })
 
+  it('sends the pictures in the order the prose reads them', () => {
+    const text = 'compare [Image #4] against [Image #2]'
+    const fourth = text.indexOf('#4')
+    const second = text.indexOf('#2')
+    const tokens: LiveToken[] = [
+      imageToken({ ordinal: 4, start: text.indexOf('[Image #4]'), end: text.indexOf('[Image #4]') + 11, image: shot({ path: '/a.png' }) }),
+      imageToken({ ordinal: 2, start: text.indexOf('[Image #2]'), end: text.indexOf('[Image #2]') + 11, image: shot({ path: '/b.png' }) }),
+    ]
+
+    const sending = submissionOf({ text, tokens, load: (path) => path })
+
+    expect(sending.images.map((image) => image.data)).toEqual(['/b.png', '/a.png'])
+    expect(fourth).not.toBe(second)
+  })
+
   it('survives a take-back and sends the same pictures again', () => {
     const text = 'compare [Image #2] against [Image #4]'
     const restored = restoredImages({
@@ -149,7 +154,11 @@ describe('a queued message taken back into the draft', () => {
       ],
     })
 
-    const sending = submissionOf({ text, images: restored, load: (path) => path })
+    const sending = submissionOf({
+      text,
+      tokens: restored.map((image) => imageToken({ ordinal: image.ordinal, image })),
+      load: (path) => path,
+    })
 
     expect(sending.images.map((image) => image.data)).toEqual(['/a.png', '/b.png'])
   })

@@ -55,6 +55,7 @@ export type SettingsControl = {
   autoCompactAtPercent: number
   paceReveal: boolean
   thinking: EThinkingVisibility
+  tldrStatus: boolean
   footerMeters: EFooterMeters
   usageWarn: Record<EUsageWindow, number>
   modelFavourites: readonly string[]
@@ -240,6 +241,7 @@ export function useSettings(args: {
         fallback: SHIPPED_THINKING,
       }),
     ),
+    tldrStatus: toggleValueOf({ resolution: held.resolution, id: ESettingId.TldrStatus }),
     modelFavourites: parseFavourites(
       textValueOf({ resolution: held.resolution, id: ESettingId.ModelFavourites }),
     ),

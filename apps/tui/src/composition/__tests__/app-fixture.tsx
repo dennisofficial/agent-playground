@@ -108,6 +108,8 @@ export async function open(args: {
   }
 }
 
+const POLL_MS = 10
+
 export async function until(args: {
   holds: () => Promise<boolean>
   within: number
@@ -115,6 +117,7 @@ export async function until(args: {
   const deadline = Date.now() + args.within
   while (Date.now() < deadline) {
     if (await args.holds()) return true
+    await new Promise((ready) => setTimeout(ready, POLL_MS))
   }
   return false
 }

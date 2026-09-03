@@ -6,7 +6,6 @@ import React from 'react'
 import { IDLE_SIDEBAR } from '../../store/sidebar-model'
 import { Shells } from '../components/shells'
 import { Sidebar } from '../components/sidebar'
-import { IDLE_TURN } from '../components/transcript'
 import { teardown } from '../markdown/__tests__/harness'
 import { SIDEBAR_WIDTH } from '../theme'
 
@@ -57,8 +56,6 @@ const sidebarRows = (shells: readonly ShellSnapshot[]): Promise<string[]> =>
     <Sidebar
       width={SIDEBAR_WIDTH}
       model={IDLE_SIDEBAR}
-      turn={IDLE_TURN}
-      now={42_000}
       root={CWD}
       worktree={null}
       shells={shells}

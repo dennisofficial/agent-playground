@@ -1,4 +1,4 @@
-import type { KeyBinding } from '@opentui/core'
+import type { KeyBinding, KeyEvent } from '@opentui/core'
 import React, { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
 import { composerEdge, EComposerEdge } from '../composer-edge-store'
@@ -45,16 +45,11 @@ const railColour = (tone: EComposerTone, accent: string): string =>
  * `name:ctrl:shift:meta:super` key, so a default binding on the bare key does not answer a modified
  * one: unbound, `shift+⏎` falls through to the printable path where `\r` is dropped. `meta+⏎` is
  * remapped off its default `submit` because the page owns submit, on a plain `⏎`.
- *
- * `super+backspace` is macOS's rub-out-the-line, and ⌘ reaches a terminal application only under
- * the kitty keyboard protocol, which reports it as `super`. A terminal that does not speak it sends
- * a bare `\x7f` and gets the ordinary backspace.
  */
 const ATLAS_BINDINGS: KeyBinding[] = [
   { name: 'return', shift: true, action: 'newline' },
   { name: 'return', ctrl: true, action: 'newline' },
   { name: 'return', meta: true, action: 'newline' },
-  { name: 'backspace', super: true, action: 'delete-to-line-start' },
 ]
 
 const CHROME_COLUMNS = PANEL_INSET + PANEL_PAD
@@ -212,6 +207,37 @@ export function Composer(props: {
     }
   }, [drafted, editor, highlightKey])
 
+  /**
+   * `super+backspace` is macOS's rub-out-the-line; ⌘ reaches a terminal application only under the
+   * kitty keyboard protocol, which reports it as `super`, so a terminal that does not speak it
+   * sends a bare `\x7f` and this never fires. OpenTUI's `delete-to-line-start` answers the key
+   * against the logical line, which under `wrapMode="word"` is the whole paragraph, so the key is
+   * handled here against the visual row instead: a selection goes whole, otherwise the row up to
+   * the cursor, and at a row's start the one character before it.
+   */
+  const handleKeyDown = useCallback(
+    (event: KeyEvent) => {
+      if (event.name !== 'backspace' || event.super !== true) return
+      const target = editor.current
+      if (!target) return
+      event.preventDefault()
+      if (target.hasSelection()) {
+        target.deleteSelection()
+        return
+      }
+      const end = target.cursorOffset
+      target.gotoVisualLineHome()
+      const start = target.cursorOffset
+      if (start < end) {
+        target.setSelection(start, end)
+        target.deleteSelection()
+        return
+      }
+      if (end > 0) target.deleteCharBackward()
+    },
+    [editor],
+  )
+
   const handleCursorMoved = props.onCursorMoved
 
   const handleCursorChange = useCallback(() => {
@@ -246,6 +272,7 @@ export function Composer(props: {
       textColor={theme.userFg}
       cursorColor={theme.caretBg}
       keyBindings={ATLAS_BINDINGS}
+      onKeyDown={handleKeyDown}
       {...(props.placeholder === undefined ? {} : { placeholder: props.placeholder })}
       placeholderColor={theme.hint}
       onContentChange={handleChange}
