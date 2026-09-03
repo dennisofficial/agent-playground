@@ -1,0 +1,159 @@
+apps/tui/src/composition/use-conversation.ts
+  s_b115466350302e::t_5962c59407bdb3 113
+apps/tui/bin/atlas-dev
+  s_2ee334b9d0aff9::t_7e24fd8ccb4833 39
+apps/tui/src/composition/app.tsx
+  s_12fa27c8f7ad2f::t_e1f326e528a6c9 654-658
+  s_0124412df34243::t_d763e9fdff3fdf 617,619-622,624,626-630,632-635
+  s_0124412df34243::t_9ffc2267b48ba8 902
+apps/tui/src/ui/__tests__/draft-images.spec.ts
+  s_0124412df34243::t_287c37771f96b7 109-111,114-115
+apps/tui/src/ui/draft-images.ts
+  s_3e6ccc6231323a::t_32ad1ac59f9cdd 50
+apps/tui/src/composition/commands/__tests__/dispatch.spec.ts
+  s_d3cfb63b7ee15c::t_70fc58b2dd8fc4 377
+apps/tui/src/store/conversation-store.ts
+  s_b391e026d4f658::t_c5996ecfcf2352 262
+  s_b607c1381c1e9b::t_316a9c84975367 146-147
+apps/tui/src/ui/__tests__/sidebar-render.spec.tsx
+  s_69bd1f40697a50::t_685e5eb23bd8f2 594
+  s_641ad0b6026810::t_659a33b999cc9a 57-59
+  s_8ae1fa940f8094::t_57d2db96c77f16 451
+  s_85c48373ea61a3::t_5d222cda39ffb5 202-218,581-584
+  s_76e4c2895f6d97::t_10cf05a0f32aff 601
+packages/harness/src/models/generated/inference.json
+  s_42c8bbcb2a2439::t_401690f0eb994c 12-23,27-43,47-63,67-83,87-103,107-283
+  s_42c8bbcb2a2439::t_d13dd50249fa4f 25,45,65,85,105
+apps/tui/src/store/__tests__/sidebar-model.spec.ts
+  s_641ad0b6026810::t_56fbc00897891c 278-279,284,286,289-303
+  s_8ae1fa940f8094::t_55161daade812e 357-377
+  s_37569aa4b69462::t_eee9695d5554e4 218-221,223-224,226-229,231-234,236-239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "10e32f2272df4c90b1d280709d7bcdc5d5afb5ee",
+  "prompts": {},
+  "sessions": {
+    "s_0124412df34243": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8499c0a1-769b-4e95-99f0-c26f886794a7",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_12fa27c8f7ad2f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "78c7bd9a-cc30-4ce9-b550-bdab1f372699",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_2ee334b9d0aff9": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1d3cde86-230c-45c2-b31b-701e60787293",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_37569aa4b69462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d09552e0-3201-480f-8869-4be07520639c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_3e6ccc6231323a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f83d7ad6-02f6-407b-8198-9bca3ab32ff1",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_42c8bbcb2a2439": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1f7728a2-9abe-4af0-a646-30ccb395c98a",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_641ad0b6026810": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a6bf8a1-cb11-4c03-b318-187d147fc697",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_69bd1f40697a50": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0f2e45b1-4f86-44b4-ba07-c8092a81f968",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_76e4c2895f6d97": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81a864ca-fa61-4cf9-b296-60d7c11e0426",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_8ae1fa940f8094": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9dc5a36e-99b9-48f8-8101-518bdaac5b16",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b115466350302e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ad671c75-b5fa-471d-b9d6-9d4df32249f6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b391e026d4f658": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "760b684a-4408-425b-98b3-04fe839261f6",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_b607c1381c1e9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81fce787-b7b5-4f80-98ae-993ea81b151f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    },
+    "s_d3cfb63b7ee15c": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "cf3a5937-331f-4bf1-b81e-6216ce956844",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
