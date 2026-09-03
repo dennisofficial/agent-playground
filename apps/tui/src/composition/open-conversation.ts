@@ -1,4 +1,5 @@
 import {
+  projectOf,
   toThreadId,
   type IdPort,
   type ThreadId,
@@ -56,15 +57,18 @@ type Opening = {
   open: OpenRequest
 }
 
-const unknownThread = (args: { threadId: string; workspace: string }): string =>
-  `no conversation "${args.threadId}" has been opened in ${args.workspace}`
+const unknownThread = (args: { threadId: string; project: string }): string =>
+  `no conversation "${args.threadId}" has been opened in ${args.project}`
 
 /**
  * A thread with no workspace of its own predates the attribution and belongs to whoever asks for it
- * by id; one attributed elsewhere stays where it is.
+ * by id; one attributed elsewhere in this project (the main checkout or any of its worktrees) is
+ * resumable from anywhere in it. One attributed to another project stays where it is.
  */
-const reachableFrom = (args: { thread: ThreadSummary; workspace: string }): boolean =>
-  args.thread.workspace === null || args.thread.workspace === args.workspace
+const reachableFrom = (args: { thread: ThreadSummary; project: string }): boolean =>
+  args.thread.workspace === null ||
+  args.thread.workspace === args.project ||
+  args.thread.repo === args.project
 
 const namedBy = (args: { thread: ThreadSummary; handle: string }): boolean => {
   const { title } = args.thread
@@ -76,9 +80,10 @@ const namedBy = (args: { thread: ThreadSummary; handle: string }): boolean => {
 
 async function resumed(args: Opening & { handle: string }): Promise<ThreadSummary | undefined> {
   const { handle, threads, workspace } = args
+  const project = projectOf(workspace)
 
   const byId = await threads.find({ threadId: toThreadId(handle) })
-  if (byId !== undefined && reachableFrom({ thread: byId, workspace: workspace.workspace })) {
+  if (byId !== undefined && reachableFrom({ thread: byId, project })) {
     if (byId.workspace === null) {
       await threads.adopt({
         threadId: byId.id,
@@ -90,7 +95,7 @@ async function resumed(args: Opening & { handle: string }): Promise<ThreadSummar
     return byId
   }
 
-  const listed = await threads.list({ workspace: workspace.workspace })
+  const listed = await threads.list({ project })
   return listed.find((thread) => namedBy({ thread, handle }))
 }
 
@@ -98,18 +103,19 @@ type Found = ThreadSummary | { unstarted: true } | { reason: string }
 
 async function threadFor(args: Opening): Promise<Found> {
   const { threads, workspace } = args
+  const project = projectOf(workspace)
   const unstarted = { unstarted: true } as const
 
   if (args.open.mode === EOpenMode.New) return unstarted
 
   if (args.open.mode === EOpenMode.Continue) {
-    return (await threads.mostRecent({ workspace: workspace.workspace })) ?? unstarted
+    return (await threads.mostRecent({ project })) ?? unstarted
   }
 
   const { threadId } = args.open
   const found = await resumed({ ...args, handle: threadId })
   if (found === undefined) {
-    return { reason: unknownThread({ threadId, workspace: workspace.workspace }) }
+    return { reason: unknownThread({ threadId, project }) }
   }
 
   return found

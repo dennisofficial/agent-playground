@@ -49,9 +49,9 @@ export abstract class ThreadStorePort {
   ): Promise<{ thread: ThreadSummary; events: Event[] }>
   abstract find(args: { threadId: ThreadId }): Promise<ThreadSummary | undefined>
   abstract spawned(args: { threadId: ThreadId }): Promise<readonly ThreadSummary[]>
-  abstract mostRecent(args: { workspace: string }): Promise<ThreadSummary | undefined>
+  abstract mostRecent(args: { project: string }): Promise<ThreadSummary | undefined>
   abstract list(args: {
-    workspace: string
+    project: string
     limit?: number | undefined
   }): Promise<readonly ThreadSummary[]>
   abstract rename(args: { threadId: ThreadId; title: string }): Promise<void>
@@ -102,6 +102,10 @@ type ThreadRow = {
   modelRef: string | null
   modelEffort: string | null
 }
+
+const inProject = (project: string): Prisma.ThreadWhereInput => ({
+  OR: [{ repo: project }, { workspace: project }],
+})
 
 export class PrismaThreadStore implements ThreadStorePort {
   constructor(
@@ -155,23 +159,23 @@ export class PrismaThreadStore implements ThreadStorePort {
     return rows.map(toThreadSummary)
   }
 
-  async mostRecent({ workspace }: { workspace: string }): Promise<ThreadSummary | undefined> {
+  async mostRecent({ project }: { project: string }): Promise<ThreadSummary | undefined> {
     const row = await this.prisma.thread.findFirst({
-      where: { workspace },
+      where: inProject(project),
       orderBy: { updatedAt: 'desc' },
     })
     return row === null ? undefined : toThreadSummary(row)
   }
 
   async list({
-    workspace,
+    project,
     limit = THREAD_LISTING_LIMIT,
   }: {
-    workspace: string
+    project: string
     limit?: number | undefined
   }): Promise<readonly ThreadSummary[]> {
     const rows = await this.prisma.thread.findMany({
-      where: { workspace },
+      where: inProject(project),
       orderBy: { updatedAt: 'desc' },
       take: limit,
     })

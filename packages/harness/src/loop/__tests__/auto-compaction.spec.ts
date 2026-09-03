@@ -109,7 +109,7 @@ describe('a step whose prompt would overflow the window', () => {
         })
 
         named = threadId
-        latestWhenAsked = (await harness.threads.mostRecent({ workspace: '/work' }))?.id
+        latestWhenAsked = (await harness.threads.mostRecent({ project: '/work' }))?.id
         return false
       },
     })

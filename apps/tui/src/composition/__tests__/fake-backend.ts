@@ -50,6 +50,7 @@ export function fakeThreadStore(
     existing?: readonly ThreadId[]
     log?: FakeEventLog
     workspace?: string | null
+    repo?: string | null
     titles?: Readonly<Record<string, string>>
   } = {},
 ): FakeThreadStore {
@@ -60,7 +61,7 @@ export function fakeThreadStore(
     createdAt: AT,
     updatedAt: AT,
     workspace: workspaceOf,
-    repo: null,
+    repo: args.repo ?? null,
     ...(args.titles?.[id] === undefined ? {} : { title: args.titles[id] }),
   }))
 
@@ -188,12 +189,14 @@ export function fakeThreadStore(
       return rows.filter((row) => row.agent?.spawnedBy === threadId)
     },
 
-    async mostRecent({ workspace }) {
-      return rows.filter((row) => row.workspace === workspace).at(-1)
+    async mostRecent({ project }) {
+      return rows.filter((row) => row.workspace === project || row.repo === project).at(-1)
     },
 
-    async list({ workspace, limit }) {
-      const scoped = rows.filter((row) => row.workspace === workspace).reverse()
+    async list({ project, limit }) {
+      const scoped = rows
+        .filter((row) => row.workspace === project || row.repo === project)
+        .reverse()
       return limit === undefined ? scoped : scoped.slice(0, limit)
     },
 

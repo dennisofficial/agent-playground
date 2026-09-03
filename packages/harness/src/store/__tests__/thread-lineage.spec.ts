@@ -55,7 +55,7 @@ describe('a thread that a sub-agent runs in', () => {
       type: 'reviewer',
     })
     expect(
-      (await threads.list({ workspace: '/here' })).find((row) => row.id === child.id)?.agent,
+      (await threads.list({ project: '/here' })).find((row) => row.id === child.id)?.agent,
     ).toEqual({ spawnedBy: spawner.id, type: 'reviewer' })
   })
 

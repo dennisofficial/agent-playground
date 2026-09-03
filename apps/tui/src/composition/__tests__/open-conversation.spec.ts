@@ -29,6 +29,7 @@ import { fakeThreadStore, fakeEventLog, fakeIds, fakeLedger, FAKE_WORKSPACE } fr
 const YESTERDAY = toThreadId('yesterday')
 
 const HERE: WorkspaceIdentity = { workspace: FAKE_WORKSPACE, repo: null }
+const WORKTREE: WorkspaceIdentity = { workspace: '/repo/.claude/worktrees/feature', repo: '/repo' }
 
 const spent: TurnSpend = {
   threadId: YESTERDAY,
@@ -228,6 +229,53 @@ describe('which conversation the app opens on', () => {
     expect(outcome.ok === false && outcome.reason).toContain('never-was')
   })
 
+  it('resumes a conversation opened in another worktree of the same project', async () => {
+    const threads = fakeThreadStore({ existing: [YESTERDAY], workspace: '/repo', repo: '/repo' })
+
+    const outcome = await openConversation({
+      threads,
+      log: fakeEventLog([said('from the checkout')]),
+      ledger: fakeLedger(),
+      agents: fakeAgentRegistry(),
+      ids: fakeIds(),
+      workspace: WORKTREE,
+      open: { mode: EOpenMode.Resume, threadId: YESTERDAY },
+    })
+
+    expect(opened(outcome).threadId).toBe(YESTERDAY)
+    expect(threads.created).toBe(0)
+  })
+
+  it('continues the most recent conversation of the project from inside a worktree', async () => {
+    const threads = fakeThreadStore({ existing: [YESTERDAY], workspace: '/repo', repo: '/repo' })
+
+    const outcome = await openConversation({
+      threads,
+      log: fakeEventLog([said('carry this on')]),
+      ledger: fakeLedger(),
+      agents: fakeAgentRegistry(),
+      ids: fakeIds(),
+      workspace: WORKTREE,
+      open: { mode: EOpenMode.Continue },
+    })
+
+    expect(opened(outcome).threadId).toBe(YESTERDAY)
+  })
+
+  it('refuses an id from another project even when reached from a worktree', async () => {
+    const outcome = await openConversation({
+      threads: fakeThreadStore({ existing: [YESTERDAY], workspace: '/other', repo: '/other' }),
+      log: fakeEventLog(),
+      ledger: fakeLedger(),
+      agents: fakeAgentRegistry(),
+      ids: fakeIds(),
+      workspace: WORKTREE,
+      open: { mode: EOpenMode.Resume, threadId: YESTERDAY },
+    })
+
+    expect(outcome.ok).toBe(false)
+  })
+
   it('refuses an id belonging to another workspace, however real it is', async () => {
     const outcome = await openConversation({
       threads: fakeThreadStore({ existing: [YESTERDAY], workspace: '/elsewhere' }),
@@ -309,7 +357,7 @@ describe('which conversation the app opens on', () => {
       open: { mode: EOpenMode.Resume, threadId: YESTERDAY },
     })
 
-    expect(await threads.mostRecent({ workspace: FAKE_WORKSPACE })).toMatchObject({
+    expect(await threads.mostRecent({ project: FAKE_WORKSPACE })).toMatchObject({
       id: YESTERDAY,
     })
   })

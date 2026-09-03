@@ -69,11 +69,11 @@ describe('forkConversation', () => {
 
   it('creates no thread when the guard refuses', async () => {
     const threadId = await openThread([said('clean the build'), called])
-    const before = await fixture.threads.list({ workspace: '/work' })
+    const before = await fixture.threads.list({ project: '/work' })
 
     await forkAt({ threadId, seq: 2, mode: EForkMode.Copy })
 
-    expect(await fixture.threads.list({ workspace: '/work' })).toEqual(before)
+    expect(await fixture.threads.list({ project: '/work' })).toEqual(before)
   })
 
   it('copies the inherited prefix into a copy fork and leaves the parent whole', async () => {

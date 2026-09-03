@@ -31,6 +31,10 @@ export function launchWorktreeOf(identity: WorkspaceIdentity): string | null {
   return identity.workspace
 }
 
+export function projectOf(identity: WorkspaceIdentity): string {
+  return identity.repo ?? identity.workspace
+}
+
 export function workspaceFrom(args: {
   cwd: string
   toplevel?: string | undefined

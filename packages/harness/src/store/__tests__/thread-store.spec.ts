@@ -46,7 +46,7 @@ describe('PrismaThreadStore', () => {
   it('has no most recent thread before anything is written', async () => {
     const { threads } = await openFixture()
 
-    expect(await threads.mostRecent({ workspace: '/work' })).toBeUndefined()
+    expect(await threads.mostRecent({ project: '/work' })).toBeUndefined()
   })
 
   it('answers most recent with a query rather than a scan of events', async () => {
@@ -56,7 +56,7 @@ describe('PrismaThreadStore', () => {
     const newer = await threads.create({ title: 'newer', workspace: '/work' })
     await log.append({ threadId: older.id, runId, drafts: [said('touched last')] })
 
-    const recent = await threads.mostRecent({ workspace: '/work' })
+    const recent = await threads.mostRecent({ project: '/work' })
     expect(recent?.id).toBe(older.id)
     expect(recent?.head).toBe(1)
     expect(newer.id).not.toBe(older.id)
@@ -90,7 +90,7 @@ describe('PrismaThreadStore', () => {
     await log.append({ threadId, runId, drafts: [said('hello')] })
 
     expect((await threads.find({ threadId }))?.workspace).toBeNull()
-    expect(await threads.list({ workspace: '/work' })).toEqual([])
+    expect(await threads.list({ project: '/work' })).toEqual([])
   })
 
   it('renames a thread without disturbing its head', async () => {
@@ -251,7 +251,7 @@ describe('PrismaThreadStore.rewind', () => {
   })
 })
 
-describe('threads scoped to a workspace', () => {
+describe('threads scoped to a project', () => {
   it('records the workspace and the repo it was opened in', async () => {
     const { threads } = await openFixture()
 
@@ -268,14 +268,14 @@ describe('threads scoped to a workspace', () => {
     const here = await threads.create({ title: 'this repo', workspace: '/here' })
     await log.append({ threadId: elsewhere.id, runId, drafts: [said('touched last')] })
 
-    expect((await threads.mostRecent({ workspace: '/here' }))?.id).toBe(here.id)
+    expect((await threads.mostRecent({ project: '/here' }))?.id).toBe(here.id)
   })
 
   it('has no most recent thread in a workspace nothing has been opened in', async () => {
     const { threads } = await openFixture()
     await threads.create({ workspace: '/other' })
 
-    expect(await threads.mostRecent({ workspace: '/here' })).toBeUndefined()
+    expect(await threads.mostRecent({ project: '/here' })).toBeUndefined()
   })
 
   it('adopts a thread that carried no workspace, so it lists where it was reopened', async () => {
@@ -285,7 +285,7 @@ describe('threads scoped to a workspace', () => {
 
     await threads.adopt({ threadId, workspace: '/here', repo: '/repo' })
 
-    expect((await threads.list({ workspace: '/here' })).map((row) => row.id)).toEqual([threadId])
+    expect((await threads.list({ project: '/here' })).map((row) => row.id)).toEqual([threadId])
     expect((await threads.find({ threadId }))?.repo).toBe('/repo')
   })
 
@@ -295,7 +295,7 @@ describe('threads scoped to a workspace', () => {
     await threads.create({ title: 'theirs', workspace: '/other' })
     await threads.create({ title: 'mine', workspace: '/here' })
 
-    expect((await threads.list({ workspace: '/here' })).map((row) => row.title)).toEqual(['mine'])
+    expect((await threads.list({ project: '/here' })).map((row) => row.title)).toEqual(['mine'])
   })
 
   it('lists the most recently touched thread first', async () => {
@@ -305,7 +305,7 @@ describe('threads scoped to a workspace', () => {
     await threads.create({ title: 'newer', workspace: '/here' })
     await log.append({ threadId: older.id, runId, drafts: [said('touched last')] })
 
-    expect((await threads.list({ workspace: '/here' })).map((row) => row.title)).toEqual([
+    expect((await threads.list({ project: '/here' })).map((row) => row.title)).toEqual([
       'older',
       'newer',
     ])
@@ -317,18 +317,59 @@ describe('threads scoped to a workspace', () => {
       await threads.create({ title, workspace: '/here' })
     }
 
-    expect(await threads.list({ workspace: '/here', limit: 2 })).toHaveLength(2)
+    expect(await threads.list({ project: '/here', limit: 2 })).toHaveLength(2)
   })
 
-  it('keeps two worktrees of one repo apart while naming the same repo', async () => {
+  it('lists the threads of every worktree of a project', async () => {
     const { threads } = await openFixture()
 
     await threads.create({ title: 'on main', workspace: '/repo', repo: '/repo' })
     await threads.create({ title: 'on feature', workspace: '/wt/feature', repo: '/repo' })
 
-    const feature = await threads.list({ workspace: '/wt/feature' })
-    expect(feature.map((row) => row.title)).toEqual(['on feature'])
-    expect(feature[0]?.repo).toBe('/repo')
+    expect((await threads.list({ project: '/repo' })).map((row) => row.title)).toEqual([
+      'on feature',
+      'on main',
+    ])
+  })
+
+  it('answers most recent across the worktrees of a project', async () => {
+    const { threads, log } = await openFixture()
+
+    const feature = await threads.create({ workspace: '/wt/feature', repo: '/repo' })
+    const main = await threads.create({ workspace: '/repo', repo: '/repo' })
+    await log.append({ threadId: feature.id, runId, drafts: [said('touched last')] })
+
+    expect((await threads.mostRecent({ project: '/repo' }))?.id).toBe(feature.id)
+    expect((await threads.mostRecent({ project: '/wt/feature' }))?.id).toBe(feature.id)
+    expect(main.id).not.toBe(feature.id)
+  })
+
+  it('keeps the threads of another project out, however shared the naming', async () => {
+    const { threads } = await openFixture()
+
+    await threads.create({ title: 'theirs', workspace: '/other', repo: '/other' })
+    await threads.create({ title: 'mine', workspace: '/wt/feature', repo: '/repo' })
+
+    expect((await threads.list({ project: '/repo' })).map((row) => row.title)).toEqual(['mine'])
+  })
+
+  it('still lists a main-checkout thread that predates repo attribution', async () => {
+    const { threads } = await openFixture()
+
+    await threads.create({ title: 'legacy', workspace: '/repo', repo: null })
+
+    expect((await threads.list({ project: '/repo' })).map((row) => row.title)).toEqual(['legacy'])
+  })
+
+  it('cannot place a worktree thread that predates repo attribution', async () => {
+    const { threads } = await openFixture()
+
+    await threads.create({ title: 'legacy worktree', workspace: '/wt/old', repo: null })
+
+    expect(await threads.list({ project: '/repo' })).toEqual([])
+    expect((await threads.list({ project: '/wt/old' })).map((row) => row.title)).toEqual([
+      'legacy worktree',
+    ])
   })
 
   it('hands a fork the workspace its source was opened in', async () => {
@@ -340,6 +381,6 @@ describe('threads scoped to a workspace', () => {
 
     expect(forked.workspace).toBe('/here')
     expect(forked.repo).toBe('/repo')
-    expect((await threads.list({ workspace: '/here' })).map((row) => row.id)).toContain(forked.id)
+    expect((await threads.list({ project: '/here' })).map((row) => row.id)).toContain(forked.id)
   })
 })

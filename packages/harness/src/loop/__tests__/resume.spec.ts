@@ -37,7 +37,7 @@ describe('a conversation that outlives the process that started it', () => {
     await first.release()
 
     const second = await attach([{ text: 'because the token expired' }])
-    const recovered = await second.harness.threads.mostRecent({ workspace: '/work' })
+    const recovered = await second.harness.threads.mostRecent({ project: '/work' })
     if (recovered === undefined) throw new Error('the database remembered no thread')
 
     const outcome = await second.harness.runner.say({ threadId: recovered.id, text: 'why?' })

@@ -1,6 +1,8 @@
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useMemo, useRef, useState } from 'react'
 
+import { projectOf } from '@dltech/atlas-core'
+
 import {
   backspace,
   failedToList,
@@ -49,7 +51,7 @@ export function useThreads(args: {
     put(loadingThreads({ now: Date.now() }))
 
     void app.threads
-      .list({ workspace: app.workspace.workspace })
+      .list({ project: projectOf(app.workspace) })
       .then((threads) => {
         const current = held.current
         if (current === null) return

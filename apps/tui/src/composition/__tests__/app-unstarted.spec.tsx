@@ -74,7 +74,7 @@ describe('a conversation nobody has spoken in', () => {
       await mounted.frame()
 
       expect(mounted.app.threads.created).toBe(0)
-      expect(await mounted.app.threads.list({ workspace: FAKE_WORKSPACE })).toEqual([])
+      expect(await mounted.app.threads.list({ project: FAKE_WORKSPACE })).toEqual([])
     } finally {
       await mounted.done()
     }

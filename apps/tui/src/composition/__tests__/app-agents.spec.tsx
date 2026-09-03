@@ -92,7 +92,7 @@ async function seedChildThread(app: FakeApp): Promise<void> {
     repo: null,
     agent: { spawnedBy: THREAD, type: 'explore' },
   })
-  const made = (await app.threads.list({ workspace: FAKE_CONFIG.cwd })).at(0)
+  const made = (await app.threads.list({ project: FAKE_CONFIG.cwd })).at(0)
   if (made === undefined) throw new Error('the child thread was not created')
 
   await app.threads.rename({ threadId: made.id, title: CHILD_INTENT })
