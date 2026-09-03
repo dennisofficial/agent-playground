@@ -56,6 +56,28 @@ describe('the clock the working line reads', () => {
     expect(progress.clock.outputTokens).toBe(20)
   })
 
+  it('keeps the clock identity when a chunk changes nothing the clock shows', () => {
+    const before = absorbing([chunk({ type: 'text-delta', id: 't', text: 'abc' })])
+
+    const withinOneToken = turnAdvanced({
+      progress: before,
+      signal: chunk({ type: 'text-delta', id: 't', text: 'd' }),
+      now: 0,
+    })
+
+    expect(withinOneToken.clock).toBe(before.clock)
+    expect(withinOneToken.characters).toBe(4)
+
+    const crossingOneToken = turnAdvanced({
+      progress: withinOneToken,
+      signal: chunk({ type: 'text-delta', id: 't', text: 'efgh' }),
+      now: 0,
+    })
+
+    expect(crossingOneToken.clock).not.toBe(before.clock)
+    expect(crossingOneToken.clock.outputTokens).toBe(2)
+  })
+
   it('counts the arguments of a tool call, so a long write does not read as a stall', () => {
     const progress = absorbing([
       chunk({ type: 'tool-input-start', callId: toCallId('call-1'), name: 'write_file' }),

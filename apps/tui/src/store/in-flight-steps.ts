@@ -17,7 +17,7 @@ export const runKey = (args: { stepId: StepId; kind: EBlockKind; id: string }): 
 
 type ArrivingCall = LiveToolCall & { arriving: string | null }
 
-type ArrivingStep = Omit<InFlightStep, 'calls'> & { calls: ArrivingCall[] }
+export type ArrivingStep = Omit<InFlightStep, 'calls'> & { calls: ArrivingCall[] }
 
 export type InFlightStep = {
   stepId: StepId
@@ -28,7 +28,7 @@ export type InFlightStep = {
   errorMessage: string | null
 }
 
-const emptyStep = (stepId: StepId): ArrivingStep => ({
+export const emptyStep = (stepId: StepId): ArrivingStep => ({
   stepId,
   blocks: [],
   calls: [],
@@ -61,7 +61,7 @@ function openedCall(args: { step: ArrivingStep; callId: CallId; name: string }):
   return opened
 }
 
-function absorbChunk(args: { step: ArrivingStep; chunk: Chunk }) {
+export function absorbChunk(args: { step: ArrivingStep; chunk: Chunk }) {
   const { step, chunk } = args
 
   switch (chunk.type) {
@@ -109,7 +109,7 @@ const settledCall = (call: ArrivingCall): LiveToolCall => ({
   precededByBlocks: call.precededByBlocks,
 })
 
-const settledStep = (step: ArrivingStep): InFlightStep => ({
+export const settledStep = (step: ArrivingStep): InFlightStep => ({
   ...step,
   calls: step.calls.map(settledCall),
 })
