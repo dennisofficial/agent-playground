@@ -24,8 +24,12 @@ export const KIND_MARK: Readonly<Record<ECommandKind, string>> = {
   [ECommandKind.Skill]: 'skill',
 }
 
-const labelOf = (spec: CommandSpec): string =>
-  spec.argumentHint === undefined ? `/${spec.name}` : `/${spec.name} ${spec.argumentHint}`
+const labelOf = (spec: CommandSpec): string => {
+  const aliases =
+    spec.aliases === undefined || spec.aliases.length === 0 ? '' : ` (${spec.aliases.join(', ')})`
+  const hint = spec.argumentHint === undefined ? '' : ` ${spec.argumentHint}`
+  return `/${spec.name}${aliases}${hint}`
+}
 
 const labelColumn = (specs: readonly CommandSpec[]): number =>
   specs.reduce((cells, spec) => Math.max(cells, cellsOf(labelOf(spec))), 0) + GAP_CELLS

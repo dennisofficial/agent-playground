@@ -54,6 +54,24 @@ describe('the command menu', () => {
     expect(frame).toContain('[all]')
   })
 
+  it('shows the aliases a command answers to', async () => {
+    const specs: readonly CommandSpec[] = [
+      {
+        name: 'new',
+        aliases: ['clear'],
+        kind: ECommandKind.Local,
+        summary: 'start a fresh conversation',
+        group: ECommandGroup.Session,
+      },
+    ]
+    const state = openCommandMenu({ text: '/', specs })
+    if (state === null) throw new Error('expected the menu to open')
+
+    const frame = await frameOf(<CommandMenu state={state} width={WIDTH} />, WIDTH)
+
+    expect(frame).toContain('/new (clear)')
+  })
+
   it('marks the selected row', async () => {
     const frame = await frameOf(<CommandMenu state={stateOf('/')} width={WIDTH} />, WIDTH)
     const selected = frame.split('\n').filter((row) => row.includes(glyph.selected))
