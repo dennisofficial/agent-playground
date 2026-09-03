@@ -10,6 +10,7 @@ export type OutputBuffer = {
   since(offset: number): OutputDelta
   totalCharacters(): number
   tail(limit: number): string
+  release(): void
 }
 
 export function createOutputBuffer({ retain }: { retain: number }): OutputBuffer {
@@ -44,5 +45,10 @@ export function createOutputBuffer({ retain }: { retain: number }): OutputBuffer
     },
 
     tail: (limit) => (limit >= retained.length ? retained : retained.slice(-limit)),
+
+    release: () => {
+      dropped += retained.length
+      retained = ''
+    },
   }
 }
