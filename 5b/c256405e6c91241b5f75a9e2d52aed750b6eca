@@ -1,0 +1,19 @@
+apps/tui/src/store/conversation-store.ts
+  s_b607c1381c1e9b::t_316a9c84975367 146-147
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5bc256405e6c91241b5f75a9e2d52aed750b6eca",
+  "prompts": {},
+  "sessions": {
+    "s_b607c1381c1e9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "81fce787-b7b5-4f80-98ae-993ea81b151f",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
