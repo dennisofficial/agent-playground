@@ -1,0 +1,29 @@
+packages/core/src/policy/classifier/command/vocabulary.ts
+  s_85c48373ea61a3::t_7c1aeedae8c1d1 80-81
+packages/core/src/policy/classifier/__tests__/probes.spec.ts
+  s_85c48373ea61a3::t_e33d9dddc9f072 80,83,89-95
+packages/core/src/policy/classifier/command/__tests__/read-command.spec.ts
+  s_85c48373ea61a3::t_4a6266c18258ec 217,222-225
+packages/core/src/policy/classifier/command/verbs/git-tree.ts
+  s_85c48373ea61a3::t_12a371df75571b 23,100-105,108-110
+packages/core/src/policy/classifier/command/verbs/__tests__/git.spec.ts
+  s_85c48373ea61a3::t_1097df6d35f223 26,31-36
+packages/core/src/policy/classifier/command/read-command.ts
+  s_85c48373ea61a3::t_7c1aeedae8c1d1 19,142
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "115b2dea877e223ac6f7ff26040c9227338a4326",
+  "prompts": {},
+  "sessions": {
+    "s_85c48373ea61a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fff29a29-fa28-41ef-89ba-4206949fba1c",
+        "model": "claude-opus-5"
+      },
+      "human_author": "Dennis Lysenko <dennislysenko@hotmail.com>"
+    }
+  }
+}
