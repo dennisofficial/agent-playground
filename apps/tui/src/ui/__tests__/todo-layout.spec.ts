@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { ESidebarTaskState, type SidebarTask } from '../../store/sidebar-model'
-import { ETodoRow, todoRows, TODO_MARK_CELLS } from '../todo-layout'
+import { ETodoRow, foldTodo, todoRows, TODO_MARK_CELLS } from '../todo-layout'
 
 const CELLS = 20
 
@@ -97,5 +97,76 @@ describe('the rows a checklist lays out', () => {
 
   it('lays out nothing for no tasks', () => {
     expect(rows([])).toEqual([])
+  })
+})
+
+describe('the fold that tucks finished tasks away', () => {
+  const doneTask = (id: string) =>
+    taskOf({ id, label: `Done ${id}`, state: ESidebarTaskState.Done })
+
+  const fold = (tasks: readonly SidebarTask[], expanded = false) =>
+    foldTodo({ tasks, expanded })
+
+  it('shows everything in plain order while too little is done to earn the toggle', () => {
+    const tasks = [doneTask('1'), doneTask('2'), doneTask('3'), taskOf({ id: '4' })]
+
+    expect(fold(tasks)).toEqual({ shown: tasks, hidden: 0 })
+  })
+
+  it('hides the older completed tasks once enough pile up, pinning the last two', () => {
+    const tasks = [
+      doneTask('1'),
+      doneTask('2'),
+      doneTask('3'),
+      doneTask('4'),
+      doneTask('5'),
+      taskOf({ id: '6' }),
+    ]
+
+    const folded = fold(tasks)
+
+    expect(folded.hidden).toBe(3)
+    expect(folded.shown.map((task) => task.id)).toEqual(['4', '5', '6'])
+  })
+
+  it('keeps the running and pending tasks visible no matter how much is done', () => {
+    const tasks = [
+      doneTask('1'),
+      doneTask('2'),
+      doneTask('3'),
+      doneTask('4'),
+      taskOf({ id: '5', state: ESidebarTaskState.Running }),
+      taskOf({ id: '6' }),
+    ]
+
+    const folded = fold(tasks)
+
+    expect(folded.hidden).toBe(2)
+    expect(folded.shown.map((task) => task.id)).toEqual(['3', '4', '5', '6'])
+  })
+
+  it('brings the hidden tasks back above the pinned tail when expanded', () => {
+    const tasks = [
+      doneTask('1'),
+      doneTask('2'),
+      doneTask('3'),
+      doneTask('4'),
+      doneTask('5'),
+      taskOf({ id: '6' }),
+    ]
+
+    const folded = fold(tasks, true)
+
+    expect(folded.hidden).toBe(3)
+    expect(folded.shown.map((task) => task.id)).toEqual(['1', '2', '3', '4', '5', '6'])
+  })
+
+  it('folds a fully finished list the same way', () => {
+    const tasks = [doneTask('1'), doneTask('2'), doneTask('3'), doneTask('4')]
+
+    const folded = fold(tasks)
+
+    expect(folded.hidden).toBe(2)
+    expect(folded.shown.map((task) => task.id)).toEqual(['3', '4'])
   })
 })
