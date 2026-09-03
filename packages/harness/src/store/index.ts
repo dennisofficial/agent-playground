@@ -17,7 +17,13 @@ export { ForkChainTooDeep, readComposedRows, readOwnRows } from './compose-threa
 export { ForkSeqOutOfRange, ForkSourceMissing, forkThread, type ForkedThreadRow } from './fork'
 export { forkConversation, type ForkResult } from './guarded-fork'
 export { DatabaseFromNewerAtlasError, openAtlasDatabase, type AtlasDatabase } from './database'
-export { decodeEventRows, EUnreadableReason, type DecodedLog, type UnreadableRow } from './decode-events'
+export {
+  decodeEventRows,
+  EUnreadableReason,
+  EventDecodeCache,
+  type DecodedLog,
+  type UnreadableRow,
+} from './decode-events'
 export { appendWithin, PrismaEventLog, type AppendArgs } from './event-log'
 export { RandomIds } from './ids'
 export { rewindThread, type RewindResult } from './rewind'

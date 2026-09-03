@@ -14,7 +14,7 @@ import type { Prisma, PrismaClient } from '../../prisma/generated/client'
 import { PrismaClientToken } from '../container/tokens'
 import { contextIdentityOf, planAppend, type ContextIdentity } from './append-plan'
 import { readComposedRows, readOwnRows } from './compose-thread'
-import { decodeEventRows, type DecodedLog } from './decode-events'
+import { decodeEventRows, EventDecodeCache, type DecodedLog } from './decode-events'
 import { toEventRow } from './event-row'
 import { retryOnWriteConflict } from './retry'
 
@@ -27,6 +27,8 @@ export type AppendArgs = {
 }
 
 export class PrismaEventLog implements EventLogPort {
+  private readonly decodeCache = new EventDecodeCache()
+
   constructor(
      private readonly prisma: PrismaClient,
     private readonly clock: ClockPort,
@@ -44,11 +46,13 @@ export class PrismaEventLog implements EventLogPort {
   }
 
   async readDecoded({ threadId, upTo }: { threadId: ThreadId; upTo?: number }): Promise<DecodedLog> {
-    return decodeEventRows(await readComposedRows({ prisma: this.prisma, threadId, upTo }))
+    const rows = await readComposedRows({ prisma: this.prisma, threadId, upTo })
+    return decodeEventRows({ rows, cache: this.decodeCache })
   }
 
   async readOwn({ threadId, upTo }: { threadId: ThreadId; upTo?: number }): Promise<Event[]> {
-    return decodeEventRows(await readOwnRows({ prisma: this.prisma, threadId, upTo })).events
+    const rows = await readOwnRows({ prisma: this.prisma, threadId, upTo })
+    return decodeEventRows({ rows, cache: this.decodeCache }).events
   }
 
   async head({ threadId }: { threadId: ThreadId }): Promise<number> {
@@ -61,7 +65,7 @@ export class PrismaEventLog implements EventLogPort {
 
   private appendOnce(args: AppendArgs): Promise<Event[]> {
     return this.prisma.$transaction((tx) =>
-      appendWithin({ tx, clock: this.clock, ids: this.ids, args }),
+      appendWithin({ tx, clock: this.clock, ids: this.ids, args, decodeCache: this.decodeCache }),
     )
   }
 }
@@ -71,16 +75,23 @@ export async function appendWithin({
   clock,
   ids,
   args,
+  decodeCache,
 }: {
   tx: Prisma.TransactionClient
   clock: ClockPort
   ids: IdPort
   args: AppendArgs
+  decodeCache?: EventDecodeCache | undefined
 }): Promise<Event[]> {
   const at = clock.now()
   await claimThread({ tx, threadId: args.threadId, at })
 
-  const reusable = await loadReusableContext({ tx, threadId: args.threadId, drafts: args.drafts })
+  const reusable = await loadReusableContext({
+    tx,
+    threadId: args.threadId,
+    drafts: args.drafts,
+    decodeCache,
+  })
   const plan = planAppend({ drafts: args.drafts, reusable })
   if (plan.fresh.length === 0) return plan.resolve([])
 
@@ -149,10 +160,12 @@ async function loadReusableContext({
   tx,
   threadId,
   drafts,
+  decodeCache,
 }: {
   tx: Prisma.TransactionClient
   threadId: ThreadId
   drafts: readonly EventDraft[]
+  decodeCache?: EventDecodeCache | undefined
 }): Promise<ReadonlyMap<ContextIdentity, Event>> {
   const wanted = new Set<ContextIdentity>()
   for (const draft of drafts) {
@@ -163,7 +176,7 @@ async function loadReusableContext({
 
   const rows = await readComposedRows({ prisma: tx, threadId, type: 'context-loaded' })
   const reusable = new Map<ContextIdentity, Event>()
-  for (const event of decodeEventRows(rows).events) {
+  for (const event of decodeEventRows({ rows, cache: decodeCache }).events) {
     const identity = contextIdentityOf(event)
     if (identity !== undefined && wanted.has(identity)) reusable.set(identity, event)
   }
