@@ -269,6 +269,21 @@ export function useConversation(args: {
     onFailure: setFailure,
   })
 
+  /**
+   * The visible conversation's directory is a plugin fact the turn hooks learn too late: a resumed
+   * thread can sit in a worktree for hours before its first turn. Mounting and every adopt announce
+   * it instead, so a surface that follows the session is right before anyone speaks.
+   */
+  useEffect(() => {
+    void app.threadOpened({
+      threadId: opened.threadId,
+      projectDirectory: projectDirectoryOf({
+        events: opened.events,
+        launchDirectory: app.config.cwd,
+      }),
+    })
+  }, [app, opened])
+
   const readEvents = useCallback((): readonly Event[] => events, [events])
 
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])

@@ -361,6 +361,7 @@ type AfterTool     = (args: { call: ToolCall; result: ToolOutcome; signal: Abort
 type AfterShell    = (args: { threadId: string; shell: EndedShell }) => Promise<HookOutcome>  // fired by the shell registry
 type OnChunk       = (c: Chunk) => Promise<Chunk | null>
 type AfterTurn     = (args: { threadId: string }) => Promise<HookOutcome>
+type OnThreadOpen  = (args: { threadId: string; projectDirectory: string }) => Promise<HookOutcome>  // fired by the app
 
 type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEffect }
 ```
@@ -395,8 +396,15 @@ type ToolCall = { callId: string; name: string; input: unknown; effect: EToolEff
   consumer a `harness` type. The chain reaches the registry as a thunk
   (`HookChainSourceToken`) — hooks resolve tools, tools resolve the registry — the same cycle break
   `ChildRunnerDepsToken` makes for the agent supervisor.
+- **`OnThreadOpen` is the second phase no turn drives.** Opening a conversation runs no turn, so a
+  resumed thread that sits in a worktree would otherwise leave `BeforeTurn`-fed facts — the session's
+  working directory above all — stale until somebody speaks. The app fires it when a thread becomes
+  the visible conversation (boot resume, `/resume`, a fresh conversation), carrying the directory the
+  opened log implies. Its drafts append to that thread's log by the caller, never to a thread the
+  store does not know yet: a conversation nobody has spoken in is opened by its first turn, and a
+  hook's draft must not open it early.
 - **Every phase is throw-isolated and time-bounded, at the chain rather than at the call site.**
-  `HookChain` funnels all eight, so one budget lives in one place. A hook that throws, outlives
+  `HookChain` funnels all nine, so one budget lives in one place. A hook that throws, outlives
   `HOOK_BUDGET_MS`, or returns `undefined` is reported through `onMishap` and degrades by phase kind:
   a collect phase contributes no drafts, a transform phase passes its value through unchanged, and
   `BeforeTool` keeps its existing fail-closed `Deny` carrying the reason. `AfterShell` keeps a

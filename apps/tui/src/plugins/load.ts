@@ -10,6 +10,7 @@ import {
   EHookPhase,
   type HookOrder,
   OnChunkHook,
+  OnThreadOpenHook,
   PromptFragment,
   ToolDefinition,
   resolveShadowing,
@@ -61,6 +62,7 @@ const PHASE_TOKENS: Readonly<Record<EHookPhase, PortConstructor<RegisteredHookLi
   [EHookPhase.AfterShell]: AfterShellHook,
   [EHookPhase.OnChunk]: OnChunkHook,
   [EHookPhase.AfterTurn]: AfterTurnHook,
+  [EHookPhase.OnThreadOpen]: OnThreadOpenHook,
 }
 
 export const pluginLabel = (identity: PluginIdentity): string =>

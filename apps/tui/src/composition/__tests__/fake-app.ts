@@ -476,6 +476,7 @@ export type FakeApp = AtlasApp & {
   readonly turnsDriven: number
   readonly titled: readonly string[]
   readonly openedUrls: readonly string[]
+  readonly openedDirectories: readonly string[]
 }
 
 export function fakeApp(args: {
@@ -514,6 +515,7 @@ export function fakeApp(args: {
   let marked: ActiveConversation | null = null
   const titled: string[] = []
   const openedUrls: string[] = []
+  const openedDirectories: string[] = []
 
   return {
     skills: skillRegistry.all(),
@@ -522,12 +524,16 @@ export function fakeApp(args: {
     pluginProjections: [],
     pluginSurfaces: [],
     mcp: () => [],
+    threadOpened: async ({ projectDirectory }) => {
+      openedDirectories.push(projectDirectory)
+    },
     files: new FileBrowser({ root: args.workspaceRoot ?? FAKE_CONFIG.cwd }),
     accounts: fakeAccounts(),
     openUrl: (url: string) => {
       openedUrls.push(url)
     },
     openedUrls,
+    openedDirectories,
     usage: createAccountUsageService({
       usage: new (class extends AccountUsagePort {
         async read(): Promise<AccountUsage | null> {

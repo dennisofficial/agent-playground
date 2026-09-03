@@ -52,6 +52,18 @@ export default class GithubPlugin extends NativePlugin {
           run: facts.afterTurn,
         },
         {
+          phase: EHookPhase.OnThreadOpen,
+          name: 'thread-opened',
+          order: OBSERVE,
+          run: facts.threadOpened,
+        },
+        {
+          phase: EHookPhase.AfterTool,
+          name: 'follow-worktree',
+          order: OBSERVE,
+          run: facts.followWorktree,
+        },
+        {
           phase: EHookPhase.AfterTool,
           name: afterTool.name,
           order: afterTool.order,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EFenceState, segmentMarkdown, steadySegments } from '../segment'
+import { EFenceState, growingSegments, segmentMarkdown, steadySegments } from '../segment'
 
 describe('segmentMarkdown', () => {
   it('hands prose across verbatim, never reflowed or re-rendered', () => {
@@ -157,5 +157,92 @@ describe('steadySegments', () => {
   it('recognises a tilde fence and a closer longer than its opener', () => {
     expect(shapeOf('~~~ts\nconst a = 1\nconst b')).toEqual(['fence(ts):const a = 1'])
     expect(shapeOf('```ts\nconst a = 1\n`````')).toEqual(['fence(ts):const a = 1'])
+  })
+})
+
+describe('growingSegments', () => {
+  const grown = (source: string) => growingSegments({ source })
+
+  it('keeps settled segment identity while only the tail grows', () => {
+    const prefix = '# Heading\n\n```ts\nconst a = 1\n```\n\n'
+    const first = grown(`${prefix}tail begins`)
+    const second = grown(`${prefix}tail begins and keeps going`)
+
+    expect(second[0]).toBe(first[0])
+    expect(second[1]).toBe(first[1])
+  })
+
+  it('reuses the same settled objects across a whole boundary crossing', () => {
+    const prefix = '# Heading\n\n```ts\nconst a = 1\n```\n\n'
+    const before = grown(`${prefix}second paragraph\n\nthird`)
+    const after = grown(`${prefix}second paragraph\n\nthird grows`)
+
+    expect(after[0]).toBe(before[0])
+    expect(after[1]).toBe(before[1])
+  })
+
+  it('coalesces prose across the seam into the one segment a batch lex yields', () => {
+    expect(grown('- one\n\n- two\n\n- three')).toEqual(segmentMarkdown('- one\n\n- two\n\n- three'))
+  })
+
+  it('matches the batch lex at every step of a growing message', () => {
+    const message = [
+      '# Plan',
+      '',
+      'Opening prose with `inline code` and a [link](https://example.com).',
+      '',
+      '- one',
+      '',
+      '- two',
+      '',
+      '```ts',
+      'const a = 1;',
+      '',
+      'const b = 2;',
+      '```',
+      '',
+      '> quoted',
+      '>',
+      '> ```ts',
+      '> nested',
+      '> ```',
+      '',
+      '| a | b |',
+      '| --- | --- |',
+      '| 1 | 2 |',
+      '',
+      '~~~py',
+      'print("hi")',
+      '~~~',
+      '',
+      '    indented code',
+      '',
+      'Closing words.',
+    ].join('\n')
+
+    for (let end = 0; end <= message.length; end += 1) {
+      const slice = message.slice(0, end)
+      expect(grown(slice)).toEqual(segmentMarkdown(slice))
+    }
+  })
+
+  it('matches the batch lex for a fence that streams blank lines of its own', () => {
+    const message = 'Before.\n\n```ts\nconst a = 1;\n\n\nconst b = 2;\n\n```\n\nAfter.'
+    for (let end = 0; end <= message.length; end += 1) {
+      const slice = message.slice(0, end)
+      expect(grown(slice)).toEqual(segmentMarkdown(slice))
+    }
+  })
+
+  it('keeps every character of the source across the segments it returns', () => {
+    const source = '# h\n\n```ts\ncode\n```\n\n| a |\n| - |\n| 1 |\n\ntrail\n'
+    const text = grown(source)
+      .map((segment) => {
+        if (segment.kind === 'prose') return segment.text
+        if (segment.kind === 'fence') return segment.raw
+        return segment.markdown
+      })
+      .join('')
+    expect(text).toBe(source)
   })
 })
