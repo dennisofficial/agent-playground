@@ -86,6 +86,29 @@ describe('the step tracker', () => {
     expect(tracker.live(events).map((step) => step.stepId)).toEqual([stepTwo])
   })
 
+  it('parses a dictated input once per arrival, not once per snapshot', () => {
+    const tracker = tracked([
+      started(stepOne),
+      toolInputStart({ stepId: stepOne, callId: 'call-1', name: 'write_file' }),
+      toolInputDelta({ stepId: stepOne, callId: 'call-1', text: '{"path":"a","content":"one' }),
+    ])
+
+    const first = tracker.live([]).at(0)?.calls.at(0)
+    const second = tracker.live([]).at(0)?.calls.at(0)
+    expect(first).toBeDefined()
+    expect(second?.input).toBe(first?.input)
+
+    tracker.absorb(textDelta({ stepId: stepOne, blockId: 'b1', text: 'unrelated' }))
+    expect(tracker.live([]).at(0)?.calls.at(0)?.input).toBe(first?.input)
+
+    tracker.absorb(
+      toolInputDelta({ stepId: stepOne, callId: 'call-1', text: ' and two' }),
+    )
+    const grown = tracker.live([]).at(0)?.calls.at(0)
+    expect(grown?.input).toEqual({ path: 'a', content: 'one and two' })
+    expect(grown?.input).not.toBe(first?.input)
+  })
+
   it('keeps a trailing failed step until it is dropped on purpose', () => {
     const tracker = tracked([
       started(stepOne),

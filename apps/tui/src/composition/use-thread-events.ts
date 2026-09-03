@@ -1,5 +1,5 @@
 import type { Event, ThreadId } from '@dltech/atlas-core'
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 
 import { trailingSaid, type ConversationStore } from '../store'
 import type { AtlasApp } from './compose'
@@ -25,15 +25,34 @@ export function useThreadEvents(args: {
   const { app, threadId, store } = args
   const [events, setEvents] = useState<readonly Event[]>(args.initial)
   const pending = app.pending
+  const inFlight = useRef<Promise<void> | null>(null)
+  const staleDuring = useRef(false)
 
   const refresh = useCallback(async () => {
-    const [read, spent] = await Promise.all([
-      app.log.read({ threadId }),
-      readThreadSpend({ ledger: app.ledger, threadId }),
-    ])
-    store.setEvents({ events: read, turns: spent.turns })
-    setEvents(read)
-    pending.settleTaken({ landed: trailingSaid(read) })
+    if (inFlight.current !== null) {
+      staleDuring.current = true
+      return inFlight.current
+    }
+
+    const run = (async () => {
+      do {
+        staleDuring.current = false
+        const [read, spent] = await Promise.all([
+          app.log.read({ threadId }),
+          readThreadSpend({ ledger: app.ledger, threadId }),
+        ])
+        store.setEvents({ events: read, turns: spent.turns })
+        setEvents(read)
+        pending.settleTaken({ landed: trailingSaid(read) })
+      } while (staleDuring.current)
+    })()
+
+    inFlight.current = run
+    try {
+      await run
+    } finally {
+      inFlight.current = null
+    }
   }, [app.ledger, app.log, pending, store, threadId])
 
   return { events, setEvents, refresh }

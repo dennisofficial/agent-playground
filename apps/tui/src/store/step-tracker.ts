@@ -68,7 +68,7 @@ export function createStepTracker(): StepTracker {
     },
 
     tailRun(events) {
-      const step = liveNow(events).at(-1)
+      const step = liveSteps({ steps: ordered, events }).at(-1)
       if (step === undefined || step.end !== null) return null
 
       const block = step.blocks.at(-1)

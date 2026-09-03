@@ -278,6 +278,25 @@ describe('attaching mid-step', () => {
     )
     expect(deltas.join('')).toBe('auth and the router')
   })
+
+  it('replays only what was in flight at subscribe time, even if a chunk lands mid-replay', () => {
+    const channel = createDeltaChannel()
+    const publisher = channel.publisherFor({ threadId })
+    publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
+
+    const seen: string[] = []
+    channel.subscribe({
+      threadId,
+      listener: (signal) => {
+        if (signal.type !== 'chunk' || signal.chunk.type !== 'text-delta') return
+        seen.push(signal.chunk.text)
+        if (seen.length === 1) publisher.onChunk({ type: 'text-delta', id: 't1', text: ' and the router' })
+      },
+    })
+
+    expect(seen).toEqual(['auth'])
+    expect(channel.snapshot({ threadId })).toHaveLength(3)
+  })
 })
 
 describe('unsubscribing', () => {
@@ -329,5 +348,31 @@ describe('the snapshot of the step in flight', () => {
     publisher.onChunk({ type: 'text-delta', id: 't1', text: ' and the router' })
     expect(channel.snapshot({ threadId })).not.toBe(first)
     expect(first).toHaveLength(2)
+  })
+
+  it('cannot be mutated into the channel, which keeps its own copy', () => {
+    const channel = createDeltaChannel()
+    const publisher = channel.publisherFor({ threadId })
+    publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
+
+    const held = channel.snapshot({ threadId })
+    expect(Object.isFrozen(held)).toBe(true)
+
+    const late = recorder()
+    channel.subscribe({ threadId, listener: late.listener })
+    expect(late.seen).toEqual([...held])
+  })
+
+  it('replays into a subscriber from the same stable copy a snapshot would hand out', () => {
+    const channel = createDeltaChannel()
+    const publisher = channel.publisherFor({ threadId })
+    publisher.onChunk({ type: 'text-delta', id: 't1', text: 'auth' })
+
+    const held = channel.snapshot({ threadId })
+    const replayed: unknown[] = []
+    channel.subscribe({ threadId, listener: (signal) => void replayed.push(signal) })
+
+    expect(replayed).toEqual([...held])
+    expect(channel.snapshot({ threadId })).toBe(held)
   })
 })

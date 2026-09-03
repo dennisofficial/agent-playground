@@ -15,7 +15,10 @@ export type StepBlock = { id: string; kind: EBlockKind; text: string }
 export const runKey = (args: { stepId: StepId; kind: EBlockKind; id: string }): string =>
   `${args.stepId}:${args.kind}:${args.id}`
 
-type ArrivingCall = LiveToolCall & { arriving: string | null }
+type ArrivingCall = LiveToolCall & {
+  arriving: string | null
+  parsed?: { source: string; input: unknown }
+}
 
 export type ArrivingStep = Omit<InFlightStep, 'calls'> & { calls: ArrivingCall[] }
 
@@ -102,10 +105,21 @@ export function absorbChunk(args: { step: ArrivingStep; chunk: Chunk }) {
   }
 }
 
+const parsedInputOf = (call: ArrivingCall): unknown => {
+  const arriving = call.arriving
+  if (arriving === null) return call.input
+
+  if (call.parsed !== undefined && call.parsed.source === arriving) return call.parsed.input
+
+  const input = readPartialJson(arriving)
+  call.parsed = { source: arriving, input }
+  return input
+}
+
 const settledCall = (call: ArrivingCall): LiveToolCall => ({
   callId: call.callId,
   name: call.name,
-  input: call.arriving === null ? call.input : readPartialJson(call.arriving),
+  input: parsedInputOf(call),
   precededByBlocks: call.precededByBlocks,
 })
 
@@ -115,7 +129,7 @@ export const settledStep = (step: ArrivingStep): InFlightStep => ({
 })
 
 function isSuperseded(args: {
-  step: InFlightStep
+  step: Pick<InFlightStep, 'end' | 'supersededBy'>
   events: readonly Event[]
   isTrailing: boolean
 }): boolean {

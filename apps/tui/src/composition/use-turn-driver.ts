@@ -11,7 +11,7 @@ import {
 import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
-import type { ConversationStore } from '../store'
+import { FRAME_MS, type ConversationStore } from '../store'
 import { unansweredApproval, type ApprovalQuestion } from '../ui/approval-model'
 import { useApproval, type ApprovalControl } from './use-approval'
 import type { AtlasApp } from './compose'
@@ -96,6 +96,29 @@ export function useTurnDriver(args: {
   const [working, setWorking] = useState(false)
   const abort = useRef<AbortController | null>(null)
   const characters = useRef(0)
+  const latest = useRef<TurnProgress>(IDLE_PROGRESS)
+  const clockFrame = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+
+  const publishProgress = useCallback((next: TurnProgress) => {
+    latest.current = next
+    if (clockFrame.current !== undefined) {
+      clearTimeout(clockFrame.current)
+      clockFrame.current = undefined
+    }
+    setProgress(next)
+  }, [])
+
+  const flushClock = useCallback(() => {
+    clockFrame.current = undefined
+    setProgress(latest.current)
+  }, [])
+
+  useEffect(
+    () => () => {
+      if (clockFrame.current !== undefined) clearTimeout(clockFrame.current)
+    },
+    [],
+  )
   const driveLatest = useRef<(drafts: readonly EventDraft[]) => Promise<void>>(async () => undefined)
 
   const handleAnswered = useCallback((drafts: readonly EventDraft[]) => {
@@ -136,15 +159,23 @@ export function useTurnDriver(args: {
       app.channel.subscribe({
         threadId,
         listener: (signal) => {
-          setProgress((current) => {
-            const next = turnAdvanced({
-              progress: { characters: characters.current, clock: current.clock },
-              signal,
-              now: readClock(),
-            })
-            characters.current = next.characters
-            return next.clock === current.clock ? current : next
+          const next = turnAdvanced({
+            progress: { characters: characters.current, clock: latest.current.clock },
+            signal,
+            now: readClock(),
           })
+          characters.current = next.characters
+
+          if (next.clock === latest.current.clock) {
+            // No visible change.
+          } else if (signal.type === 'chunk') {
+            latest.current = next
+            if (clockFrame.current === undefined) {
+              clockFrame.current = setTimeout(flushClock, FRAME_MS)
+            }
+          } else {
+            publishProgress(next)
+          }
           if (signal.type === 'chunk' && signal.chunk.type === 'finish') {
             const usage = signal.chunk.usage
             if (usage !== undefined) args.onUsage(usage)
@@ -152,7 +183,7 @@ export function useTurnDriver(args: {
           if (signal.type === 'step-ended' || signal.type === 'events-appended') void refresh()
         },
       }),
-    [app, threadId, refresh, readClock],
+    [app, threadId, refresh, readClock, flushClock, publishProgress],
   )
 
   const undo = useCallback(async () => {
@@ -179,7 +210,7 @@ export function useTurnDriver(args: {
       store.supersedeFailure()
       const started = turnStarted({ now: readClock() })
       characters.current = started.characters
-      setProgress(started)
+      publishProgress(started)
 
       void (async () => {
         try {
@@ -199,14 +230,12 @@ export function useTurnDriver(args: {
           gate.settle()
           abort.current = null
           setWorking(false)
-          setProgress((current) => {
-            const settledTurn = turnSettled({
-              progress: { characters: characters.current, clock: current.clock },
-              now: readClock(),
-            })
-            characters.current = settledTurn.characters
-            return settledTurn
+          const settledTurn = turnSettled({
+            progress: { characters: characters.current, clock: latest.current.clock },
+            now: readClock(),
           })
+          characters.current = settledTurn.characters
+          publishProgress(settledTurn)
           await refresh().catch(() => undefined)
           await compactIfFull(used.current).catch(() => undefined)
         }
@@ -219,6 +248,7 @@ export function useTurnDriver(args: {
       commit,
       compactIfFull,
       openApproval,
+      publishProgress,
       readClock,
       refresh,
       setFailure,
@@ -292,7 +322,7 @@ export function useTurnDriver(args: {
     const controller = abort.current
     if (controller === null) return
 
-    setProgress(turnInterrupting)
+    publishProgress(turnInterrupting(latest.current))
     controller.abort()
   }, [cancelCompaction])
 
@@ -300,8 +330,8 @@ export function useTurnDriver(args: {
 
   const settle = useCallback(() => {
     characters.current = IDLE_PROGRESS.characters
-    setProgress(IDLE_PROGRESS)
-  }, [])
+    publishProgress(IDLE_PROGRESS)
+  }, [publishProgress])
 
   return {
     working,

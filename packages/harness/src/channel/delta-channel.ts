@@ -29,7 +29,8 @@ export type DeltaChannel = {
 
 type ThreadState = {
   listeners: Set<ChannelListener>
-  inFlight: readonly StepSignal[]
+  inFlight: StepSignal[]
+  replay: readonly StepSignal[] | undefined
   stepId: StepId | undefined
   stepsStarted: number
 }
@@ -57,7 +58,8 @@ export function createDeltaChannel(): DeltaChannel {
 
     const created: ThreadState = {
       listeners: new Set(),
-      inFlight: NOTHING_IN_FLIGHT,
+      inFlight: [],
+      replay: undefined,
       stepId: undefined,
       stepsStarted: 0,
     }
@@ -74,8 +76,16 @@ export function createDeltaChannel(): DeltaChannel {
     for (const listener of [...args.state.listeners]) listener(args.signal)
   }
 
+  const stableReplay = (state: ThreadState): readonly StepSignal[] => {
+    if (state.inFlight.length === 0) return NOTHING_IN_FLIGHT
+    if (state.replay !== undefined) return state.replay
+    state.replay = Object.freeze([...state.inFlight])
+    return state.replay
+  }
+
   const publish = (args: { state: ThreadState; signal: StepSignal }) => {
-    args.state.inFlight = [...args.state.inFlight, args.signal]
+    args.state.inFlight.push(args.signal)
+    args.state.replay = undefined
     notify(args)
   }
 
@@ -83,7 +93,8 @@ export function createDeltaChannel(): DeltaChannel {
     args.state.stepsStarted += 1
     const stepId = toStepId(`${args.threadId}#${args.state.stepsStarted}`)
     args.state.stepId = stepId
-    args.state.inFlight = NOTHING_IN_FLIGHT
+    args.state.inFlight = []
+    args.state.replay = undefined
     publish({ state: args.state, signal: { type: 'step-started', stepId } })
     return stepId
   }
@@ -98,7 +109,8 @@ export function createDeltaChannel(): DeltaChannel {
     if (stepId === undefined) return false
 
     args.state.stepId = undefined
-    args.state.inFlight = NOTHING_IN_FLIGHT
+    args.state.inFlight = []
+    args.state.replay = undefined
     notify({
       state: args.state,
       signal: { type: 'step-ended', stepId, end: args.end, supersededBy: args.supersededBy },
@@ -110,7 +122,7 @@ export function createDeltaChannel(): DeltaChannel {
   return {
     subscribe({ threadId, listener }) {
       const state = stateFor(threadId)
-      for (const signal of state.inFlight) listener(signal)
+      for (const signal of stableReplay(state)) listener(signal)
       state.listeners.add(listener)
 
       return () => {
@@ -120,7 +132,9 @@ export function createDeltaChannel(): DeltaChannel {
     },
 
     snapshot({ threadId }) {
-      return threads.get(threadId)?.inFlight ?? NOTHING_IN_FLIGHT
+      const state = threads.get(threadId)
+      if (state === undefined) return NOTHING_IN_FLIGHT
+      return stableReplay(state)
     },
 
     publisherFor({ threadId, filter }) {

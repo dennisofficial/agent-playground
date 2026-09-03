@@ -2,7 +2,7 @@ import React from 'react'
 
 import { useClickRegion } from '../../hooks/use-click-region'
 import { MarkdownView } from '../../markdown/markdown-view'
-import { tail, THINKING_TAIL_LINES, thinkingSummary, wrapWords } from '../../text-flow'
+import { tail, THINKING_TAIL_LINES, thinkingSummary, wrapStreamingLines } from '../../text-flow'
 import { glyph, theme, TRANSCRIPT_INSET } from '../../theme'
 
 const NARROWEST_BAND = 24
@@ -77,7 +77,7 @@ function OpenedDocument(props: { text: string; inner: number }): React.ReactNode
 
 function LiveTail(props: { text: string; inner: number }): React.ReactNode {
   const band = Math.max(1, props.inner - BODY_INDENT)
-  const rows = props.text.split('\n').flatMap((line) => wrapWords({ text: line, width: band }))
+  const rows = wrapStreamingLines({ text: props.text, width: band })
   const view = tail({ items: rows, limit: THINKING_TAIL_LINES })
 
   return (

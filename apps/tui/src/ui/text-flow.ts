@@ -48,6 +48,38 @@ export function wrapWords(args: { text: string; width: number }): string[] {
   return rows.length > 0 ? rows : ['']
 }
 
+const SETTLED_WRAP_LIMIT = 8
+
+const settledWrapCache = new Map<string, readonly string[]>()
+
+/**
+ * Every line before the final newline is frozen, so a growing stream rewraps only the trailing
+ * partial line; the frozen rows are cached by their text and width.
+ */
+export function wrapStreamingLines(args: { text: string; width: number }): string[] {
+  const lastBreak = args.text.lastIndexOf('\n')
+  if (lastBreak < 0) return wrapWords(args)
+
+  const settled = settledWrappedRows({
+    prefix: args.text.slice(0, lastBreak),
+    width: args.width,
+  })
+  return [...settled, ...wrapWords({ text: args.text.slice(lastBreak + 1), width: args.width })]
+}
+
+function settledWrappedRows(args: { prefix: string; width: number }): readonly string[] {
+  const key = `${args.width}\n${args.prefix}`
+  const hit = settledWrapCache.get(key)
+  if (hit !== undefined) return hit
+
+  const rows = args.prefix
+    .split('\n')
+    .flatMap((line) => wrapWords({ text: line, width: args.width }))
+  if (settledWrapCache.size >= SETTLED_WRAP_LIMIT) settledWrapCache.clear()
+  settledWrapCache.set(key, rows)
+  return rows
+}
+
 const CHARS_PER_TOKEN = 4
 
 export function thinkingSummary(text: string): string {
