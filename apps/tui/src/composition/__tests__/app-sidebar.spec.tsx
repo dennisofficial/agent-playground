@@ -1,7 +1,7 @@
 import { homedir } from 'node:os'
 
 import { parseColor, type CapturedFrame, type Renderable } from '@opentui/core'
-import { ESettingId, toThreadId } from '@dltech/atlas-core'
+import { ESettingId, EWorktreeExit, toRunId, toThreadId } from '@dltech/atlas-core'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -127,6 +127,43 @@ describe('the sidebar', () => {
       const mark = rows.findIndex((row) => row.includes(SIDEBAR_MARK))
       expect(rows[mark - 2]).toContain('~/Developer/comp-v3')
       expect(rows[mark - 1]).toContain('.claude/worktrees/portal-auth-url')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('names the main checkout alone once the session launched inside a worktree has left it', async () => {
+    const repo = `${homedir()}/Developer/comp-v3`
+    const worktree = `${repo}/.claude/worktrees/portal-auth-url`
+    const app: FakeApp = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }),
+      cwd: worktree,
+      workspace: { workspace: worktree, repo },
+    })
+    const events = await app.log.append({
+      threadId: THREAD,
+      runId: toRunId('run-before'),
+      drafts: [
+        { type: 'user-said', text: 'wrap it up' },
+        { type: 'worktree-exited', path: worktree, action: EWorktreeExit.Keep, returnTo: repo },
+      ],
+    })
+    const setup = await testRender(
+      <App app={app} opened={{ threadId: THREAD, events, turns: [], name: null, started: true }} />,
+      { width: 140, height: 40 },
+    )
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+      expect(frame).not.toContain('.claude/worktrees/portal-auth-url')
+
+      const rows = frame.split('\n')
+      const mark = rows.findIndex((row) => row.includes(SIDEBAR_MARK))
+      expect(rows[mark - 1]).toContain('~/Developer/comp-v3')
     } finally {
       await teardown(setup)
     }

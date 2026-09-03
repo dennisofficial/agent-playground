@@ -432,8 +432,13 @@ function Workspace(props: {
   const overlay = sidebarVisible && !wide
 
   const launchWorktree = launchWorktreeOf(props.app.workspace)
-  const projectRoot =
-    launchWorktree === null ? props.app.config.cwd : (props.app.workspace.repo ?? props.app.config.cwd)
+  const repoRoot = props.app.workspace.repo ?? props.app.config.cwd
+  const sidebarWorktree =
+    conversation.activeWorktree?.path ??
+    (launchWorktree !== null && conversation.projectDirectory === props.app.config.cwd
+      ? launchWorktree
+      : null)
+  const projectRoot = sidebarWorktree === null ? conversation.projectDirectory : repoRoot
   const docked = wide && !welcome
   const contentWidth = contentWidthOf({ width, sidebarWidth, docked })
   const chromeWidth = chromeWidthOf({ width, sidebarWidth, docked })
@@ -1052,7 +1057,7 @@ function Workspace(props: {
             width={overlay ? floatingSidebarWidth({ width, sidebarWidth }) : sidebarWidth}
             model={withSections({ model: agents.sidebar, sections: surfaces.sidebarSections })}
             root={projectRoot}
-            worktree={conversation.activeWorktree?.path ?? launchWorktree}
+            worktree={sidebarWorktree}
             overlay={overlay}
             shells={shells.folded}
             shellNow={shells.now}

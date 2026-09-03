@@ -61,6 +61,25 @@ describe('session facts follow the worktree the session is standing in', () => {
     expect(facts.directory()).toBe(LAUNCH)
   })
 
+  it('follows the returnTo an exit records, even launched inside the worktree it is leaving', async () => {
+    const facts = createSessionFacts({ launchDirectory: TREE })
+    expect(facts.directory()).toBe(TREE)
+
+    const announced = new Promise<void>((resolve) => facts.subscribe(() => resolve()))
+    await facts.followWorktree({
+      call: callOf('exit_worktree'),
+      result: {
+        ok: true,
+        output: { exitedWorktree: { path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH } },
+        modelText: 'exited',
+      },
+      signal: NEVER_ABORTED,
+    })
+
+    expect(facts.directory()).toBe(LAUNCH)
+    await announced
+  })
+
   it('stays put when the entry did not succeed', async () => {
     const facts = createSessionFacts({ launchDirectory: LAUNCH })
     const version = facts.version()
