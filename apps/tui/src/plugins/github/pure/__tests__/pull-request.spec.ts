@@ -23,7 +23,7 @@ describe('pullRequestBadge', () => {
       pullRequest({ state: EPullRequestState.Open, checks: EChecksState.Passing }),
     )
 
-    expect(badge.label).toBe('PR #123')
+    expect(badge.label).toBe('#123')
     expect(badge.url).toBe('https://github.com/o/r/pull/123')
     expect(badge.checks).toBe(EChecksState.Passing)
   })

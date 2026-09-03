@@ -76,8 +76,8 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
     ]
   }
 
-  const used = context.tokensUsed === undefined ? null : `${formatTokens(context.tokensUsed)} ctx`
-  const head = used === null ? percent : `${used}${HINT_SEPARATOR}${percent}`
+  const used = context.tokensUsed === undefined ? null : formatTokens(context.tokensUsed)
+  const head = used === null ? percent : `${used} ${percent}`
   const withMeters = meters.map((unused, index) => ({
     full: true,
     text: head,
@@ -93,24 +93,38 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
 
 export function readoutCells(args: { readout: FooterReadout }): number {
   const meters = args.readout.meters.reduce(
-    (total, meter) => total + cellsOf(HINT_SEPARATOR) + cellsOf(meterText(meter)),
+    (total, meter) => total + 1 + cellsOf(meterText(meter)),
     0,
   )
 
   return cellsOf(args.readout.text) + meters
 }
 
+const CHIP_GAP_CELLS = 1
+
+/**
+ * Everything on the row is a single space apart — facts, chips, the read-out and its meters. The
+ * one separator dot left is the one between the facts and the chips, marking where the
+ * instruments end and the pressable row begins.
+ */
 export function instrumentCells(args: { instruments: FooterInstruments }): number {
   const { model, effort, items, context } = args.instruments
-  const segments = [
+
+  const facts = [
     ...(model === null ? [] : [cellsOf(model)]),
     ...(effort === null ? [] : [cellsOf(effort)]),
-    ...items.map(footerItemCells),
-    ...(context === null ? [] : [readoutCells({ readout: context })]),
   ]
-  if (segments.length === 0) return 0
-  const spelled = segments.reduce((total, cells) => total + cells, 0)
-  return spelled + (segments.length - 1) * cellsOf(HINT_SEPARATOR)
+  const factsCells =
+    facts.reduce((total, cells) => total + cells, 0) + Math.max(0, facts.length - 1)
+
+  const itemsCells =
+    items.reduce((total, item) => total + footerItemCells(item), 0) +
+    Math.max(0, items.length - 1) * CHIP_GAP_CELLS
+
+  const lead = factsCells > 0 && items.length > 0 ? cellsOf(HINT_SEPARATOR) : 0
+  const contextCells = context === null ? 0 : readoutCells({ readout: context })
+
+  return factsCells + lead + itemsCells + contextCells
 }
 
 type Facts = { model: string; effort: string | null }

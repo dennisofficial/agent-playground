@@ -14,11 +14,11 @@ await grammarsReady()
 
 const WIDE = { width: 150, height: 40 }
 
-const PILL = '⏺ 1/1'
+const PILL = '1 shell'
 
 const SHELLS_OVERLAY = 'SHELL LOG'
 
-const TOO_NARROW_FOR_A_PILL = 54
+const TOO_NARROW_FOR_A_PILL = 40
 
 const running = (shellId: string): ShellSnapshot => ({
   command: 'bun run dev',
@@ -60,9 +60,15 @@ type Colour = { equals: (other: unknown) => boolean }
 
 type Spans = { lines: ({ spans: { text: string; bg: Colour }[] } | undefined)[] }
 
+const footerRow = (setup: Mounted): string =>
+  setup
+    .captureCharFrame()
+    .split('\n')
+    .find((line) => line.includes(PILL) && line.includes('haiku-4-5')) ?? ''
+
 const bandedPill = (setup: Mounted): boolean => {
   const rows = setup.captureCharFrame().split('\n')
-  const row = rows.findIndex((line) => line.includes(PILL))
+  const row = rows.findIndex((line) => line.includes(PILL) && line.includes('haiku-4-5'))
   if (row < 0) return false
 
   const cell = (rows[row] ?? '').indexOf(PILL)
@@ -86,7 +92,7 @@ describe('stepping into the row under the composer', () => {
     const setup = await opened(appWithAShell())
 
     try {
-      expect(setup.captureCharFrame()).toContain(PILL)
+      expect(footerRow(setup)).toContain(PILL)
       expect(bandedPill(setup)).toBe(false)
 
       setup.mockInput.pressArrow('down')
@@ -145,7 +151,7 @@ describe('stepping into the row under the composer', () => {
 
       setup.resize(TOO_NARROW_FOR_A_PILL, WIDE.height)
       await painted(setup)
-      expect(setup.captureCharFrame()).not.toContain(PILL)
+      expect(footerRow(setup)).not.toContain(PILL)
       expect(setup.captureCharFrame()).not.toContain(SHELLS_OVERLAY)
 
       setup.mockInput.pressEnter()
@@ -216,12 +222,12 @@ describe('stepping into the row under the composer', () => {
     try {
       await setup.mockInput.typeText('/')
       await painted(setup)
-      expect(setup.captureCharFrame()).toContain(PILL)
+      expect(footerRow(setup)).toContain(PILL)
 
       setup.mockInput.pressArrow('down')
       await painted(setup)
 
-      expect(setup.captureCharFrame()).toContain(PILL)
+      expect(footerRow(setup)).toContain(PILL)
       expect(bandedPill(setup)).toBe(false)
     } finally {
       await teardown(setup)
@@ -246,7 +252,7 @@ describe('stepping into the row under the composer', () => {
       await painted(setup)
 
       expect(setup.captureCharFrame()).not.toContain(SHELLS_OVERLAY)
-      expect(setup.captureCharFrame()).toContain(PILL)
+      expect(footerRow(setup)).toContain(PILL)
       expect(bandedPill(setup)).toBe(false)
     } finally {
       await teardown(setup)

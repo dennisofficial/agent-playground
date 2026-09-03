@@ -50,14 +50,13 @@ import { LostChildren } from '../ui/components/lost-children'
 import { hasLostChildren } from '../ui/lost-children-model'
 import { Shortcuts } from '../ui/components/shortcuts'
 import { Sidebar } from '../ui/components/sidebar'
-import { withNudgeMarker } from '../ui/nudge-marker'
 import { WelcomeScreen } from '../ui/components/welcome-screen'
 import { Transcript } from '../ui/components/transcript'
 import { useDraft } from '../ui/hooks/use-draft'
 import { composerEdgeVersion, subscribeComposerEdge } from '../ui/composer-edge-store'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { modelLabel } from '../ui/model-label'
-import { theme } from '../ui/theme'
+import { glyph, theme } from '../ui/theme'
 import { ENoticeTone, notify } from '../ui/notice-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
@@ -105,6 +104,7 @@ import {
 import { useOverlayKeys } from './use-overlay-keys'
 import { useSettings } from './use-settings'
 import { useShells } from './use-shells'
+import { subagentsSurface } from './agents-surface'
 import { shellsSurface } from './shells-surface'
 import { usePluginSurfaces } from './use-plugin-surfaces'
 import { useFooterStrip } from './use-footer-strip'
@@ -661,7 +661,11 @@ function Workspace(props: {
   ])
 
   const surfaces = usePluginSurfaces({
-    surfaces: [...props.app.pluginSurfaces, shellsSurface({ shells })],
+    surfaces: [
+      ...props.app.pluginSurfaces,
+      shellsSurface({ shells }),
+      subagentsSurface({ agents, picker: agentsPicker }),
+    ],
   })
 
   /**
@@ -675,22 +679,18 @@ function Workspace(props: {
         width: chromeWidth,
         model: card?.label ?? modelLabel(selection.ref.modelId),
         effort: selection.effort,
-        items: withNudgeMarker({
-          items: surfaces.footerItems,
-          fold: conversation.sidebar.classifier,
-        }),
+        items: surfaces.footerItems,
         context: readout,
       }),
-    [
-      card,
-      chromeWidth,
-      conversation.sidebar.classifier,
-      readout,
-      selection.effort,
-      selection.ref,
-      surfaces.footerItems,
-    ],
+    [card, chromeWidth, readout, selection.effort, selection.ref, surfaces.footerItems],
   )
+
+  const judgeUnreachable = conversation.sidebar.classifier?.judgeUnreachable === true
+  useEffect(() => {
+    if (judgeUnreachable) {
+      notify({ text: `${glyph.warning} nudge offline`, tone: ENoticeTone.Warn })
+    }
+  }, [judgeUnreachable])
 
   const footerStrip = useFooterStrip({ items: footerRow.instruments.items, draft })
 

@@ -5,7 +5,7 @@ import type { UrlOpener } from '@dltech/atlas-harness'
 import { EFooterItemReach, type FooterItem } from '../../ui/footer-item'
 import type { PluginSurface, PluginSurfaceHook } from '../surface'
 import type { PullRequestBadge } from './pure'
-import { pullRequestPill } from './pull-request-pill'
+import { pullRequestChip } from './pull-request-pill'
 import type { PullRequestService } from './pull-request-service'
 import type { SessionFacts } from './session'
 import { usePullRequest } from './use-pull-request'
@@ -17,9 +17,11 @@ export function pullRequestItem(args: {
   const { badge } = args
   if (badge === null) return null
 
+  const chip = pullRequestChip(badge)
   return {
     id: 'pr',
-    spans: pullRequestPill(badge),
+    spans: chip.spans,
+    ground: chip.ground,
     reach: EFooterItemReach.Keyboard,
     onActivate: () => args.onOpen(badge.url),
   }

@@ -4,7 +4,6 @@ import { EEffort, EMeterBand } from '@dltech/atlas-core'
 
 import { CONTEXT_WARN_PERCENT } from '../context-bar'
 import { EFooterItemReach, footerItemCells, type FooterItem } from '../footer-item'
-import { cellsOf, HINT_SEPARATOR } from '../hint-layout'
 import {
   FOOTER_GUTTER,
   footerLayout,
@@ -42,7 +41,7 @@ const widthWhereLost = (present: (layout: FooterLayout) => boolean): number => {
 }
 
 const hasTail = (layout: FooterLayout): boolean =>
-  layout.instruments.context?.text.includes('ctx') === true
+  layout.instruments.context?.text.includes('124.0k') === true
 
 const hasWeekly = (layout: FooterLayout): boolean => meterLabels(layout).includes('wk')
 
@@ -58,7 +57,7 @@ describe('footerLayout at ease', () => {
       model: MODEL,
       effort: 'med',
       items: [],
-      context: { full: true, text: '124.0k ctx · 62%', meters: METERS },
+      context: { full: true, text: '124.0k 62%', meters: METERS },
     })
   })
 
@@ -110,7 +109,7 @@ describe('footerLayout meters', () => {
     })
     expect(layout.instruments.context).toEqual({
       full: true,
-      text: '124.0k ctx · 62%',
+      text: '124.0k 62%',
       meters: [],
     })
   })
@@ -191,12 +190,12 @@ describe('footerLayout under pressure', () => {
 const PILLS: readonly FooterItem[] = [
   {
     id: 'pr',
-    spans: [{ text: 'PR #123' }, { text: ' ✓' }],
+    spans: [{ text: '#123' }],
     reach: EFooterItemReach.Keyboard,
   },
   {
     id: 'shells',
-    spans: [{ text: '⏺ 2/3' }],
+    spans: [{ text: '2 shells' }],
     reach: EFooterItemReach.Keyboard,
   },
 ]
@@ -223,10 +222,10 @@ describe('footerLayout carrying items', () => {
     expect(itemIds(withItems(200))).toEqual(['pr', 'shells'])
   })
 
-  it('charges each pill its own separator', () => {
+  it('charges the chips their single-cell gaps and the one lead separator', () => {
     const spelled = instrumentCells({ instruments: withItems(200).instruments })
     const bare = instrumentCells({ instruments: at(200).instruments })
-    expect(spelled - bare).toBe(9 + 5 + cellsOf(HINT_SEPARATOR) * 2)
+    expect(spelled - bare).toBe(4 + 8 + 1 + 3)
   })
 
   it('sheds the pills before the weekly meter, which is the first instrument to go', () => {
@@ -269,10 +268,8 @@ describe('footerLayout carrying items', () => {
   it('spends its cells on the pills it kept and charges nothing for the ones it shed', () => {
     for (const width of WIDTHS) {
       const layout = withItems(width)
-      const kept = layout.instruments.items.reduce(
-        (total, pill) => total + footerItemCells(pill) + cellsOf(HINT_SEPARATOR),
-        0,
-      )
+      const kept =
+        layout.instruments.items.reduce((total, pill) => total + footerItemCells(pill) + 1, 0) + 2
       expect(layout.instrumentCells - instrumentCells({ instruments: at(width).instruments })).toBe(
         layout.instruments.items.length === 0 ? 0 : kept,
       )

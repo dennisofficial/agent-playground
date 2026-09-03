@@ -25,24 +25,12 @@ export type { FooterContext, FooterEffort }
 function separated(groups: readonly (readonly Span[])[]): Span[] {
   return groups
     .filter((group) => group.length > 0)
-    .flatMap((group, index) => [
-      ...(index === 0 ? [] : [{ text: HINT_SEPARATOR, fg: theme.rule }]),
-      ...group,
-    ])
-}
-
-function tinted(args: { text: string; fg: string }): Span[] {
-  return args.text
-    .split(HINT_SEPARATOR)
-    .flatMap((piece, index) => [
-      ...(index === 0 ? [] : [{ text: HINT_SEPARATOR, fg: theme.rule }]),
-      { text: piece, fg: args.fg },
-    ])
+    .flatMap((group, index) => [...(index === 0 ? [] : [{ text: ' ' }]), ...group])
 }
 
 function meterSpans(meters: readonly FooterMeter[]): Span[] {
   return meters.flatMap((meter) => [
-    { text: HINT_SEPARATOR, fg: theme.rule },
+    { text: ' ' },
     { text: `${meter.label} `, fg: theme.rule },
     { text: meter.text, fg: meterTone(meter.band) },
   ])
@@ -50,10 +38,7 @@ function meterSpans(meters: readonly FooterMeter[]): Span[] {
 
 function readoutSpans(args: { readout: FooterReadout; context: FooterContext }): Span[] {
   const fg = isMeasured(args.context) ? contextTone(args.context.percent) : theme.warn
-  return [
-    ...tinted({ text: args.readout.text, fg }),
-    ...meterSpans(args.readout.meters),
-  ]
+  return [{ text: args.readout.text, fg }, ...meterSpans(args.readout.meters)]
 }
 
 function factSpans(args: { instruments: FooterInstruments }): Span[][] {

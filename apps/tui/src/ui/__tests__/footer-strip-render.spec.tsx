@@ -7,6 +7,7 @@ import React from 'react'
 import { EEffort } from '@dltech/atlas-core'
 
 import { Footer } from '../components/footer'
+import { hoverGround } from '../components/footer-strip'
 import { EFooterItemReach, type FooterItem } from '../footer-item'
 import { cellsOf } from '../hint-layout'
 import { teardown } from '../markdown/__tests__/harness'
@@ -24,13 +25,15 @@ const pill = (over: Partial<FooterItem> & { id: string }): FooterItem => ({
 
 const PR = pill({
   id: 'pr',
-  spans: [
-    { text: 'PR #123', fg: theme.hover },
-    { text: ' ✓', fg: theme.ok },
-  ],
+  spans: [{ text: '#123', fg: theme.appBg }],
+  ground: theme.ok,
 })
 
-const SHELLS = pill({ id: 'shells', spans: [{ text: '⏺ 2/3' }] })
+const SHELLS = pill({
+  id: 'shells',
+  spans: [{ text: '2 shells', fg: theme.appBg }],
+  ground: theme.bright,
+})
 
 const footer = (props: {
   width: number
@@ -89,33 +92,49 @@ const mount = async (
   )
 
 describe('the pills under the composer', () => {
-  it('spells each one after the model and the effort, separated the way the row is', async () => {
+  it('spaces the facts apart and marks where the chips begin with the one separator dot', async () => {
     const frame = await frameOf(footer({ width: 140, items: [PR, SHELLS] }), 140)
-    expect(rowOf(frame).trimStart()).toStartWith(`${MODEL} · med · PR #123 ✓ · ⏺ 2/3`)
+    expect(rowOf(frame).trimStart()).toStartWith(`${MODEL} med · #123 2 shells`)
   })
 
   it('leaves the read-out flush against the far edge', async () => {
     const frame = await frameOf(footer({ width: 140, items: [PR, SHELLS] }), 140)
     const row = rowOf(frame)
-    expect(row).toEndWith('124.0k ctx · 62%')
+    expect(row).toEndWith('124.0k 62%')
     expect(cellsOf(row)).toBe(140 - 3)
   })
 
   it('says nothing at a width the ladder sheds them at', async () => {
-    const frame = await frameOf(footer({ width: 44, items: [PR, SHELLS] }), 44)
-    expect(frame).not.toContain('PR #123')
-    expect(frame).not.toContain('2/3')
+    const frame = await frameOf(footer({ width: 32, items: [PR, SHELLS] }), 32)
+    expect(frame).not.toContain('#123')
+    expect(frame).not.toContain('2 shells')
   })
 
-  it('inverts the selected pill into a chip rather than tinting the ground behind it', async () => {
+  it('fills each pill with the ground its builder chose', async () => {
+    const setup = await mount(footer({ width: 140, items: [PR, SHELLS] }), 140)
+    try {
+      const rows = (await drawn(setup)).split('\n')
+      const row = rows.findIndex((line) => line.includes('#123'))
+
+      const spans = setup.captureSpans() as unknown as Spans
+      const pr = (rows[row] ?? '').indexOf('#123')
+      const shells = (rows[row] ?? '').indexOf('2 shells')
+      expect(groundAt(spans, row, pr)?.equals(parseColor(theme.ok))).toBe(true)
+      expect(groundAt(spans, row, shells)?.equals(parseColor(theme.bright))).toBe(true)
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('inverts the selected pill rather than keeping its own fill', async () => {
     const setup = await mount(
       footer({ width: 140, items: [PR, SHELLS], strip: { itemId: 'shells' } }),
       140,
     )
     try {
       const rows = (await drawn(setup)).split('\n')
-      const row = rows.findIndex((line) => line.includes('2/3'))
-      const column = (rows[row] ?? '').indexOf('⏺ 2/3')
+      const row = rows.findIndex((line) => line.includes('2 shells'))
+      const column = (rows[row] ?? '').indexOf('2 shells')
 
       const spans = setup.captureSpans() as unknown as Spans
       expect(groundAt(spans, row, column)?.equals(parseColor(theme.hover))).toBe(true)
@@ -126,51 +145,49 @@ describe('the pills under the composer', () => {
     }
   }, 30_000)
 
-  it('overrides every tone the pill spells itself in, not just the one behind it', async () => {
+  it('overrides the ink the pill spells itself in when the band reaches it', async () => {
     const setup = await mount(
       footer({ width: 140, items: [PR, SHELLS], strip: { itemId: 'pr' } }),
       140,
     )
     try {
       const rows = (await drawn(setup)).split('\n')
-      const row = rows.findIndex((line) => line.includes('PR #123'))
-      const label = (rows[row] ?? '').indexOf('PR #123')
-      const check = (rows[row] ?? '').indexOf('✓')
+      const row = rows.findIndex((line) => line.includes('#123'))
+      const label = (rows[row] ?? '').indexOf('#123')
 
       const spans = setup.captureSpans() as unknown as Spans
       expect(inkAt(spans, row, label)?.equals(parseColor(theme.appBg))).toBe(true)
-      expect(inkAt(spans, row, check)?.equals(parseColor(theme.appBg))).toBe(true)
-      expect(groundAt(spans, row, check)?.equals(parseColor(theme.hover))).toBe(true)
+      expect(groundAt(spans, row, label)?.equals(parseColor(theme.hover))).toBe(true)
     } finally {
       await teardown(setup)
     }
   }, 30_000)
 
-  it('reads as selected rather than merely hovered when the pointer rests on the chip', async () => {
-    const setup = await mount(
-      footer({ width: 140, items: [PR, SHELLS], strip: { itemId: 'shells' } }),
-      140,
-    )
+  it('shifts a filled pill toward contrast under the pointer rather than washing it out', async () => {
+    const setup = await mount(footer({ width: 140, items: [PR, SHELLS] }), 140)
     try {
       const rows = (await drawn(setup)).split('\n')
-      const row = rows.findIndex((line) => line.includes('2/3'))
-      const selected = (rows[row] ?? '').indexOf('⏺ 2/3') + 2
-      const unselected = (rows[row] ?? '').indexOf('PR #123') + 2
+      const row = rows.findIndex((line) => line.includes('#123'))
+      const pr = (rows[row] ?? '').indexOf('#123') + 1
+      const shells = (rows[row] ?? '').indexOf('2 shells') + 2
 
       await act(async () => {
-        await setup.mockMouse.moveTo(unselected, row)
+        await setup.mockMouse.moveTo(pr, row)
       })
       await setup.flush()
-      const hovering = setup.captureSpans() as unknown as Spans
-      expect(groundAt(hovering, row, unselected)?.equals(parseColor(theme.hoverBg))).toBe(true)
+
+      const dark = setup.captureSpans() as unknown as Spans
+      expect(groundAt(dark, row, pr)?.equals(parseColor(hoverGround(theme.ok)))).toBe(true)
+      expect(groundAt(dark, row, pr)?.equals(parseColor(theme.ok))).toBe(false)
 
       await act(async () => {
-        await setup.mockMouse.moveTo(selected, row)
+        await setup.mockMouse.moveTo(shells, row)
       })
       await setup.flush()
-      const both = setup.captureSpans() as unknown as Spans
-      expect(groundAt(both, row, selected)?.equals(parseColor(theme.hover))).toBe(true)
-      expect(groundAt(both, row, selected)?.equals(parseColor(theme.hoverBg))).toBe(false)
+
+      const light = setup.captureSpans() as unknown as Spans
+      expect(groundAt(light, row, shells)?.equals(parseColor(hoverGround(theme.bright)))).toBe(true)
+      expect(groundAt(light, row, shells)?.equals(parseColor(theme.bright))).toBe(false)
     } finally {
       await teardown(setup)
     }
@@ -188,8 +205,8 @@ describe('the pills under the composer', () => {
     )
     try {
       const rows = (await drawn(setup)).split('\n')
-      const row = rows.findIndex((line) => line.includes('PR #123'))
-      const column = (rows[row] ?? '').indexOf('PR #123') + 2
+      const row = rows.findIndex((line) => line.includes('#123'))
+      const column = (rows[row] ?? '').indexOf('#123') + 2
 
       await act(async () => {
         await setup.mockMouse.click(column, row)
@@ -202,7 +219,7 @@ describe('the pills under the composer', () => {
     }
   }, 30_000)
 
-  it('activates nothing when the separator between two pills is clicked', async () => {
+  it('activates nothing when the gap between two pills is clicked', async () => {
     const activated: string[] = []
     const setup = await mount(
       footer({
@@ -214,8 +231,8 @@ describe('the pills under the composer', () => {
     )
     try {
       const rows = (await drawn(setup)).split('\n')
-      const row = rows.findIndex((line) => line.includes('PR #123'))
-      const column = (rows[row] ?? '').indexOf('⏺ 2/3') - 2
+      const row = rows.findIndex((line) => line.includes('#123'))
+      const column = (rows[row] ?? '').indexOf('2 shells') - 1
 
       await act(async () => {
         await setup.mockMouse.click(column, row)
@@ -241,9 +258,9 @@ describe('the pills under the composer', () => {
     )
     try {
       const rows = (await drawn(setup)).split('\n')
-      const row = rows.findIndex((line) => line.includes('PR #123'))
-      const clicked = (rows[row] ?? '').indexOf('PR #123') + 2
-      const banded = (rows[row] ?? '').indexOf('⏺ 2/3') + 2
+      const row = rows.findIndex((line) => line.includes('#123'))
+      const clicked = (rows[row] ?? '').indexOf('#123') + 2
+      const banded = (rows[row] ?? '').indexOf('2 shells') + 2
 
       await act(async () => {
         await setup.mockMouse.click(clicked, row)
@@ -253,7 +270,7 @@ describe('the pills under the composer', () => {
       expect(activated).toEqual(['pr'])
       const spans = setup.captureSpans() as unknown as Spans
       expect(groundAt(spans, row, banded)?.equals(parseColor(theme.hover))).toBe(true)
-      expect(groundAt(spans, row, clicked)?.equals(parseColor(theme.hover))).toBe(false)
+      expect(groundAt(spans, row, clicked)?.equals(parseColor(theme.ok))).toBe(true)
     } finally {
       await teardown(setup)
     }
@@ -280,7 +297,7 @@ describe('the pills under the composer', () => {
       const rows = (await drawn(setup)).split('\n')
       const row = rows.findIndex((line) => line.includes('agents 2'))
       const clicked = (rows[row] ?? '').indexOf('agents 2') + 2
-      const banded = (rows[row] ?? '').indexOf('⏺ 2/3') + 2
+      const banded = (rows[row] ?? '').indexOf('2 shells') + 2
 
       await act(async () => {
         await setup.mockMouse.click(clicked, row)

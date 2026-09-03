@@ -36,7 +36,7 @@ const SETTLED_STATES = new Set([EPullRequestState.Merged, EPullRequestState.Clos
 
 export function pullRequestBadge(pullRequest: PullRequest): PullRequestBadge {
   return {
-    label: `PR #${pullRequest.number}`,
+    label: `#${pullRequest.number}`,
     url: pullRequest.url,
     state: pullRequest.state,
     checks: SETTLED_STATES.has(pullRequest.state) ? EChecksState.None : pullRequest.checks,

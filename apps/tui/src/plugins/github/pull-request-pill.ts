@@ -1,29 +1,30 @@
 import type { Span } from '../../ui/components/spans'
-import { glyph, theme } from '../../ui/theme'
+import { theme } from '../../ui/theme'
 import { EChecksState, EPullRequestState, type PullRequestBadge } from './pure'
 
-const STATE_TONE: Record<EPullRequestState, string> = {
-  [EPullRequestState.Open]: theme.meta,
-  [EPullRequestState.Draft]: theme.rule,
-  [EPullRequestState.Merged]: theme.court.external,
-  [EPullRequestState.Closed]: theme.rule,
+export type PullRequestChip = {
+  spans: readonly Span[]
+  ground: string
 }
+
+const MUTED = { ground: theme.selectedBg, ink: theme.body } as const
 
 /**
- * A static glyph, never a spinner frame: animating this would give the whole footer row a ticking
- * dependency and repaint it at 12.5 fps for a check nobody is watching.
+ * The fill is the whole reading: a red or amber chip is the reason the pill earns its cells, so
+ * the check reading outranks the state reading and no glyph repeats it. An open pull request with
+ * no checks configured gets the link blue — green would claim a signal nobody sent.
  */
-const CHECKS_MARK: Record<EChecksState, Span | null> = {
-  [EChecksState.None]: null,
-  [EChecksState.Passing]: { text: glyph.passed, fg: theme.meta },
-  [EChecksState.Failing]: { text: glyph.failed, fg: theme.error },
-  [EChecksState.Running]: { text: glyph.available, fg: theme.rule },
+function chipTone(badge: PullRequestBadge): { ground: string; ink: string } {
+  if (badge.checks === EChecksState.Failing) return { ground: theme.error, ink: theme.appBg }
+  if (badge.checks === EChecksState.Running) return { ground: theme.warn, ink: theme.appBg }
+  if (badge.checks === EChecksState.Passing) return { ground: theme.ok, ink: theme.appBg }
+  if (badge.state === EPullRequestState.Merged)
+    return { ground: theme.court.external, ink: theme.appBg }
+  if (badge.state === EPullRequestState.Open) return { ground: theme.link, ink: theme.appBg }
+  return MUTED
 }
 
-export function pullRequestPill(badge: PullRequestBadge): readonly Span[] {
-  const label: Span = { text: badge.label, fg: STATE_TONE[badge.state] }
-  const mark = CHECKS_MARK[badge.checks]
-  if (mark === null) return [label]
-
-  return [label, { text: ' ' }, mark]
+export function pullRequestChip(badge: PullRequestBadge): PullRequestChip {
+  const { ground, ink } = chipTone(badge)
+  return { spans: [{ text: badge.label, fg: ink }], ground }
 }
