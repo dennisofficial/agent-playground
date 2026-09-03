@@ -1,4 +1,4 @@
-import { toEventId, toRunId, toThreadId, type Event, type EventBody } from '@dltech/atlas-core'
+import { toCallId, toEventId, toRunId, toThreadId, type Event, type EventBody } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import { sessionDigest } from '../session-rename'
@@ -48,5 +48,37 @@ describe('sessionDigest', () => {
     expect(digest).toContain('the latest ask')
     expect(digest).toContain('…')
     expect(digest.length).toBeLessThan(2000)
+  })
+
+  it('leaves tool chatter out, so a noisy tail cannot crowd out the latest ask', () => {
+    const events = [
+      said('the opening ask', 1),
+      ...Array.from({ length: 20 }, (_, index) =>
+        stamped(
+          {
+            type: 'tool-result',
+            callId: toCallId(`call-${index}`),
+            name: 'bash',
+            output: 'x'.repeat(590),
+          },
+          index + 2,
+        ),
+      ),
+      said('the latest ask', 100),
+      stamped(
+        {
+          type: 'tool-result',
+          callId: toCallId('call-tail'),
+          name: 'bash',
+          output: 'y'.repeat(590),
+        },
+        101,
+      ),
+    ]
+
+    const digest = sessionDigest(events)
+
+    expect(digest).toContain('the latest ask')
+    expect(digest).not.toContain('bash')
   })
 })
