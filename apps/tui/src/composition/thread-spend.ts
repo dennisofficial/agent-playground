@@ -1,7 +1,7 @@
 import type { ThreadId } from '@dltech/atlas-core'
 import type { TurnLedgerPort, TurnSpend } from '@dltech/atlas-harness'
 
-import { ENoticeTone, notify } from '../ui/notice-store'
+import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 
 export type ThreadSpend = { turns: readonly TurnSpend[] }
 
@@ -18,7 +18,7 @@ export async function readThreadSpend(args: {
   try {
     return { turns: await args.ledger.forThread({ threadId: args.threadId }) }
   } catch {
-    notify({ text: UNREADABLE, tone: ENoticeTone.Warn })
+    notify({ key: 'spend-ledger', text: UNREADABLE, tone: ENoticeTone.Warn, ttlMs: NOTICE_WARN_MS })
     return { turns: [] }
   }
 }

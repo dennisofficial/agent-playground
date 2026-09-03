@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { UNMEASURED_CONTEXT } from '../../ui/footer-layout'
-import { currentNotice, dismissNotice } from '../../ui/notice-store'
+import { currentNotices, dismissNotice } from '../../ui/notice-store'
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { App } from '../app'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
@@ -46,7 +46,9 @@ describe('launching on a model with no card', () => {
     const setup = await mounted(withNoCard(appWith()))
 
     try {
-      expect(currentNotice()?.text).toContain('Auto-compact and the context meter are off')
+      expect(currentNotices().map((notice) => notice.text).join('\n')).toContain(
+        'Auto-compact and the context meter are off',
+      )
     } finally {
       await teardown(setup)
     }
@@ -69,7 +71,9 @@ describe('launching on a model with no card', () => {
     const setup = await mounted(appWith())
 
     try {
-      expect(currentNotice()?.text ?? '').not.toContain('Auto-compact')
+      expect(currentNotices().map((notice) => notice.text).join('\n')).not.toContain(
+        'Auto-compact',
+      )
     } finally {
       await teardown(setup)
     }

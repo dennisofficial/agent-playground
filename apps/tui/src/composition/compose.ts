@@ -139,7 +139,7 @@ import { mcpBootNotice } from './mcp-report'
 import { selectableModel, type ModelChoice } from './model-selection'
 import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
 import { assemblePlugins } from '../plugins/assemble'
-import { ENoticeTone, notify } from '../ui/notice-store'
+import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { tldrFeed } from '../ui/tldr-feed-store'
 import type { ContributedProjection } from '../plugins/projection'
 import type { ContributedSurface } from '../plugins/surface'
@@ -223,7 +223,14 @@ export async function composeAtlas(args: {
 
   for (const server of mcp.servers()) {
     const notice = mcpBootNotice(server)
-    if (notice !== null) notify({ tone: ENoticeTone.Warn, text: notice })
+    if (notice !== null) {
+      notify({
+        key: `mcp:${server.spec.name}`,
+        tone: ENoticeTone.Warn,
+        ttlMs: NOTICE_WARN_MS,
+        text: notice,
+      })
+    }
   }
 
   const settings = args.settings.service
@@ -419,7 +426,12 @@ export async function composeAtlas(args: {
 
   container.register(HookMishapReporterToken, {
     useValue: (mishap: HookMishap) =>
-      notify({ tone: ENoticeTone.Warn, text: `hook ${mishap.label} ${mishap.detail}` }),
+      notify({
+        key: `hook:${mishap.label}`,
+        tone: ENoticeTone.Warn,
+        ttlMs: NOTICE_WARN_MS,
+        text: `hook ${mishap.label} ${mishap.detail}`,
+      }),
   })
 
   const plugins = await assemblePlugins({
@@ -429,7 +441,9 @@ export async function composeAtlas(args: {
   })
   for (const refusal of [...plugins.refused, ...plugins.unreadable]) {
     notify({
+      key: `plugin:${refusal.id ?? '?'}`,
       tone: ENoticeTone.Warn,
+      ttlMs: NOTICE_WARN_MS,
       text: `plugin refused: ${refusal.id ?? '?'} — ${'reason' in refusal ? refusal.reason : refusal.detail}`,
     })
   }

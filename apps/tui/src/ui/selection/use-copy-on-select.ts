@@ -26,10 +26,10 @@ export function useCopyOnSelect(): void {
     last.current = { selection, text }
 
     if (!copyToClipboard({ renderer, text })) {
-      notify({ text: 'clipboard unavailable', tone: ENoticeTone.Warn })
+      notify({ key: 'copy', text: 'clipboard unavailable', tone: ENoticeTone.Warn })
       return
     }
 
-    notify({ text: copiedLabel(text) })
+    notify({ key: 'copy', text: copiedLabel(text) })
   })
 }

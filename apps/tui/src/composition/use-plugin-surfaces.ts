@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 
 import { SURFACES_NOTHING, type ContributedSurface, type PluginSurface } from '../plugins/surface'
 import { NO_FOOTER_ITEMS, type FooterItem } from '../ui/footer-item'
-import { ENoticeTone, notify } from '../ui/notice-store'
+import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { NO_SIDEBAR_SECTIONS, orderSections, type SidebarSection } from '../ui/sidebar-section'
 
 export type PluginSurfaces = {
@@ -64,7 +64,12 @@ export function usePluginSurfaces(args: {
   useEffect(() => {
     if (failed === '') return
 
-    notify({ text: `surface failed: ${failed}`, tone: ENoticeTone.Warn })
+    notify({
+      key: `surface:${failed}`,
+      text: `surface failed: ${failed}`,
+      tone: ENoticeTone.Warn,
+      ttlMs: NOTICE_WARN_MS,
+    })
   }, [failed])
 
   return useMemo(() => foldSurfaces(gathered), gathered)

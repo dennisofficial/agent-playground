@@ -27,6 +27,8 @@ import {
 import { SHIPPED_THINKING, thinkingVisibilityOf, type EThinkingVisibility } from '../store'
 
 const AUTO_COMPACT_AT_PERCENT = 90
+
+const NOTICE_SECONDS = 2
 import {
   currentRow,
   movePage,
@@ -53,6 +55,7 @@ export type SettingsControl = {
   sidebarWidth: number
   sidebarFoldBelow: number
   autoCompactAtPercent: number
+  noticeSeconds: number
   paceReveal: boolean
   thinking: EThinkingVisibility
   tldrStatus: boolean
@@ -213,6 +216,11 @@ export function useSettings(args: {
       resolution: held.resolution,
       id: ESettingId.AutoCompact,
       fallback: AUTO_COMPACT_AT_PERCENT,
+    }),
+    noticeSeconds: rangeValueOf({
+      resolution: held.resolution,
+      id: ESettingId.NoticeSeconds,
+      fallback: NOTICE_SECONDS,
     }),
     paceReveal: toggleValueOf({ resolution: held.resolution, id: ESettingId.SmoothStreaming }),
     footerMeters: footerMetersOf(
