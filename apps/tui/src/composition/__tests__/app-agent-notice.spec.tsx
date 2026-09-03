@@ -2,6 +2,7 @@ import { EAgentStatus } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
+import { glyph } from '../../ui/theme'
 import { open, until, REPLY, THINKING } from './app-fixture'
 import { fakeAgentSnapshot } from './fake-agents'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
@@ -49,7 +50,14 @@ describe('a sub-agent that ends while the parent is mid-turn', () => {
       })
 
       expect(shown).toBe(true)
-      expect(await mounted.frame()).toContain('queued')
+
+      const rows = (await mounted.frame()).split('\n')
+      const working = rows.findIndex((row) => row.includes('esc to interrupt'))
+      const notice = rows.findIndex((row) => row.includes(NAMED))
+
+      expect(notice).toBeGreaterThan(working)
+      expect(rows[notice]).toContain(glyph.block)
+      expect(rows[notice]).not.toContain('queued')
     } finally {
       await mounted.done()
     }

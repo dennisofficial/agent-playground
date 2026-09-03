@@ -3,7 +3,6 @@ export const glyph = {
   block: '⏺',
   result: '⎿',
   thinking: '✻',
-  queued: '⤷',
   swap: '⤿',
   selected: '❯',
   marker: '▸',
@@ -19,6 +18,8 @@ export const glyph = {
   file: '⬚',
   copy: '⧉',
   retry: '↻',
+  home: '⌂',
+  worktree: '⑂',
 } as const
 
 export const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'] as const

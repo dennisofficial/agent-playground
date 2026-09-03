@@ -6,6 +6,7 @@ import { EAuthor, EEntryKind, EPendingKind, type AgentEndedEntry } from '../../s
 import { PendingBlock } from '../components/blocks/pending-block'
 import { EntryView } from '../components/entry-view'
 import { teardown } from '../markdown/__tests__/harness'
+import { glyph } from '../theme'
 
 const WIDE = { width: 120, height: 30 }
 
@@ -72,7 +73,9 @@ describe('a sub-agent ending in the scrollback', () => {
       />,
     )
 
-    expect(frame).toContain(HEADLINE)
-    expect(frame).toContain('queued')
+    const row = frame.split('\n').find((line) => line.includes(HEADLINE))
+
+    expect(row).toContain(glyph.block)
+    expect(row).not.toContain('queued')
   })
 })

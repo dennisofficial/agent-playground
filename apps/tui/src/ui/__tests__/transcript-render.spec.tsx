@@ -336,7 +336,7 @@ describe('what the transcript actually says', () => {
     )
 
     expect(frame).toContain('Background shell "Run full TUI suite" completed (exit code 0)')
-    expect(frame).toContain('queued')
+    expect(frame).toContain(glyph.block)
     expect(frame).not.toContain('↑ to edit')
   })
 

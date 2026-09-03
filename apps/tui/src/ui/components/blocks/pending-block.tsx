@@ -62,7 +62,8 @@ export function PendingBlock(props: {
 
 /**
  * Nobody typed this, so it carries no take-back affordance: it is waiting to be handed to the model,
- * not waiting to be sent.
+ * not waiting to be sent. It reads exactly as it will once the transcript lands it — the queue only
+ * moves it under the working line, it does not restyle it.
  */
 function WaitingNoticeRow(props: {
   text: string
@@ -74,9 +75,8 @@ function WaitingNoticeRow(props: {
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0}>
       <text wrapMode="none" width={inner} flexShrink={0}>
-        <span fg={props.failed ? theme.error : theme.ok}>{`${glyph.queued} `}</span>
+        <span fg={props.failed ? theme.error : theme.ok}>{`${glyph.block} `}</span>
         <span fg={theme.meta}>{props.text}</span>
-        <span fg={theme.dim}>{'  queued'}</span>
       </text>
     </box>
   )
