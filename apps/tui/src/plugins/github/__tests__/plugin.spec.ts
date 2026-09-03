@@ -51,13 +51,15 @@ describe('the github plugin as the loader sees it', () => {
     }
   })
 
-  it('contributes the four hooks the feature listens on, one surface and its port', async () => {
+  it('contributes the six hooks the feature listens on, one surface and its port', async () => {
     const plugin = resolved()
     const contribution = await plugin.contribute()
 
     expect((contribution.hooks ?? []).map((hook) => `${hook.phase}:${hook.name}`)).toEqual([
       `${EHookPhase.BeforeTurn}:follow-session`,
       `${EHookPhase.AfterTurn}:turn-ended`,
+      `${EHookPhase.OnThreadOpen}:thread-opened`,
+      `${EHookPhase.AfterTool}:follow-worktree`,
       `${EHookPhase.AfterTool}:refresh-pull-request`,
       `${EHookPhase.AfterShell}:refresh-pull-request-after-shell`,
     ])
