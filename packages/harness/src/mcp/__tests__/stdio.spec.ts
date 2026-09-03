@@ -5,6 +5,7 @@ import { StdioTransport } from '../transport/stdio'
 import type { ServerTransport } from '../transport/transport'
 
 const FIXTURE = join(__dirname, 'fixture-server.ts')
+const NOISY_FIXTURE = join(__dirname, 'fixture-noisy-server.ts')
 
 const spec = { kind: 'stdio' as const, command: 'bun', args: [FIXTURE] }
 
@@ -58,6 +59,18 @@ describe('StdioTransport', () => {
     await expect(transport.callTool({ name: 'throw', input: {} })).rejects.toThrow(
       'the fixture threw',
     )
+
+    await transport.close()
+  })
+
+  it('serves a server that floods stderr without stalling the protocol', async () => {
+    const transport = new StdioTransport({ kind: 'stdio', command: 'bun', args: [NOISY_FIXTURE] })
+
+    const capabilities = await transport.connect()
+    expect(capabilities.tools).toBe(true)
+
+    const result = await transport.callTool({ name: 'echo', input: {} })
+    expect(result.isError).toBe(false)
 
     await transport.close()
   })

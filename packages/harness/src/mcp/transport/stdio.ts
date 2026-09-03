@@ -36,7 +36,7 @@ const scrubEnv = (extra: Record<string, string> | undefined): Record<string, str
 })
 
 export class StdioTransport implements ServerTransport {
-  private child: Bun.Subprocess<'pipe', 'pipe', 'pipe'> | undefined
+  private child: Bun.Subprocess<'pipe', 'pipe', 'ignore'> | undefined
   private readonly pending = new Map<JsonRpcId, Pending>()
   private nextId = 1
   private closed = false
@@ -52,7 +52,7 @@ export class StdioTransport implements ServerTransport {
       env: scrubEnv(this.spec.env),
       stdin: 'pipe',
       stdout: 'pipe',
-      stderr: 'pipe',
+      stderr: 'ignore',
     })
     this.consume()
 
