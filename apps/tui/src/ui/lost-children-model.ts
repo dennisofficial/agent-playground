@@ -52,3 +52,6 @@ export const NOTHING_WAS_LOST = 'nothing was lost when this conversation was ope
 
 export const lostChildCount = (rows: readonly LostChildRow[]): string =>
   rows.length === 1 ? '1 sub-agent' : `${rows.length} sub-agents`
+
+export const lostChildrenNotice = (lost: RecoveredAgents | null): string =>
+  `${lostChildCount(lostChildRows(lost))} left no record in this conversation — /agents to view`

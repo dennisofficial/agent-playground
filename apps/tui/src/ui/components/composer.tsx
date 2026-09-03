@@ -8,7 +8,6 @@ import type { DraftControls } from '../hooks/use-draft'
 import { cellsOf } from '../hint-layout'
 import { glyph, theme } from '../theme'
 import { EFrameRule, Frame, FRAME_INSET, FRAME_PAD } from './frame'
-import { NoticeSlab } from './notice-slab'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
 import { truncateCells } from './sidebar/cells'
 
@@ -81,26 +80,7 @@ const chromeColumns = (edge: EComposerEdge): number => {
 
 const TITLE_RUNWAY = 4
 
-const NOTICE_RUNWAY = 2
-
 const slabCells = (text: string): number => cellsOf(text) + TITLE_PAD * 2
-
-export function composerNoticeCells(args: {
-  width: number
-  badge: string | null
-  title: string | null
-  edge?: EComposerEdge
-}): number {
-  const closing = args.edge === EComposerEdge.Bordered ? CLOSING_RULE_COLUMNS : 0
-  const spent =
-    PANEL_PAD * 2 +
-    closing +
-    NOTICE_RUNWAY +
-    (args.badge === null ? 0 : slabCells(args.badge) + 1) +
-    (args.title === null ? 0 : slabCells(args.title))
-
-  return Math.max(0, args.width - spent)
-}
 
 /**
  * The head row is shared: whatever the badge takes, plus the `▄` between them, is gone before the
@@ -259,7 +239,6 @@ export function Composer(props: {
       ? null
       : composerTitle({ title: props.title, width: props.width, badge, edge })
 
-  const noticeCells = composerNoticeCells({ width: props.width, badge, title, edge })
 
   const draft = (
     <textarea
@@ -295,7 +274,6 @@ export function Composer(props: {
               ),
             }
           : {})}
-        label={<NoticeSlab bg={theme.appBg} cells={noticeCells} />}
         {...(badge === null
           ? {}
           : { badge: <text fg={theme.hint} bg={theme.appBg}>{` ${badge} `}</text> })}
@@ -315,7 +293,6 @@ export function Composer(props: {
       width={props.width}
       rail={rail}
       fill={theme.panelBg}
-      label={<NoticeSlab bg={theme.panelBg} cells={noticeCells} />}
       {...(badge === null
         ? {}
         : { badge: <text fg={theme.hint} bg={theme.panelBg}>{` ${badge} `}</text> })}

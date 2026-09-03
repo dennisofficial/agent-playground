@@ -19,7 +19,6 @@ import {
 import { applyComposerEdge, EComposerEdge, SHIPPED_COMPOSER_EDGE } from '../composer-edge-store'
 import {
   Composer,
-  composerNoticeCells,
   composerTitle,
   composerTone,
   EComposerTone,
@@ -29,7 +28,6 @@ import { PANEL_INSET, PANEL_PAD } from '../components/panel'
 import { ComposerHints, type Hint } from '../components/composer-hints'
 import { useDraft } from '../hooks/use-draft'
 import { grammarsReady, teardown } from '../markdown/__tests__/harness'
-import { dismissNotice, ENoticeTone, notify } from '../notice-store'
 import { glyph, theme } from '../theme'
 import { drawn, frameOf, HEIGHT } from './transcript-fixture'
 
@@ -37,7 +35,6 @@ await grammarsReady()
 
 afterEach(() => {
   applyComposerEdge(SHIPPED_COMPOSER_EDGE)
-  dismissNotice()
 })
 
 const WIDTH = 60
@@ -47,8 +44,6 @@ const PLACEHOLDER = 'Ask anything'
 const LONG_DRAFT = 'wrap '.repeat(60)
 
 const TITLE = 'Refresh-token rotation'
-
-const NOTICE = 'copied 3 lines'
 
 function Draft(props: {
   text?: string
@@ -158,60 +153,11 @@ async function spansOf(node: React.ReactNode): Promise<{ rows: string[]; spans: 
   }
 }
 
-async function groundOnHead(node: React.ReactNode, cell: number): Promise<Colour | undefined> {
-  const { rows, spans } = await spansOf(node)
-  const head = rows.findIndex((row) => row.startsWith(RAIL_HEAD))
-  return groundAt(spans, head, cell)
-}
-
 async function groundOf(node: React.ReactNode, cell: number): Promise<Colour | undefined> {
   const { rows, spans } = await spansOf(node)
   const body = rows.findIndex((row) => row.includes(PLACEHOLDER))
   return groundAt(spans, body, cell)
 }
-
-describe('the composer notice', () => {
-  it('sets a notice into the head row rather than spending a row on it', async () => {
-    notify({ text: NOTICE })
-    const rows = (await frameOf(<Draft />, WIDTH)).split('\n')
-
-    const head = rows.find((row) => row.startsWith(RAIL_HEAD))
-    expect(head).toContain(`${PANEL_TOP_EDGE} ${NOTICE} ${PANEL_TOP_EDGE}`)
-    expect(rows.filter((row) => row.includes(NOTICE)).length).toBe(1)
-  })
-
-  it('leaves the head row alone while nothing is being said', async () => {
-    const frame = await frameOf(<Draft />, WIDTH)
-    const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
-
-    expect(head).toBe(`${RAIL_HEAD}${PANEL_TOP_EDGE.repeat(WIDTH - 1)}`)
-  })
-
-  it('says a notice on the same rule the title is set into', async () => {
-    notify({ text: NOTICE })
-    const rows = (await frameOf(<Draft title={TITLE} />, WIDTH)).split('\n')
-
-    const head = rows.find((row) => row.startsWith(RAIL_HEAD))
-    expect(head).toContain(NOTICE)
-    expect(head).toContain(TITLE)
-  })
-
-  it('truncates the notice rather than letting it run into the title', async () => {
-    const room = composerNoticeCells({ width: WIDTH, badge: null, title: TITLE })
-    const bare = composerNoticeCells({ width: WIDTH, badge: null, title: null })
-
-    expect(room).toBeLessThan(bare)
-    expect(room).toBe(bare - TITLE.length - 2)
-  })
-
-  it("grounds the notice on the composer's own fill rather than an accent slab", async () => {
-    notify({ text: NOTICE, tone: ENoticeTone.Warn })
-    const ground = await groundOnHead(<Draft />, PANEL_INSET)
-
-    expect(ground?.equals(parseColor(theme.panelBg))).toBe(true)
-    expect(ground?.equals(parseColor(theme.accent))).toBe(false)
-  })
-})
 
 describe('the bordered composer', () => {
   it('rules all four sides instead of marking only the left', async () => {

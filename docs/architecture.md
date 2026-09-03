@@ -1125,6 +1125,30 @@ the default reaches the next conversation instead of the one on screen. A conver
 down the moment its thread row exists, which is why an untouched new conversation still records what
 it actually ran on rather than re-deriving it from a default that may have moved since.
 
+## Notices
+
+Everything the TUI says *about* the app rather than *in* the conversation — copied, a plugin that
+refused to load, the nudge classifier gone unreachable, sub-agents a dead process never recorded —
+goes through one notice system, so no feature hand-rolls its own toast, pill or pop-up again.
+
+**The queue is pure and lives in `core/notices`.** A notice is keyed by its producer
+(`copy`, `classifier-offline`, `plugin:<id>`), and posting an existing key replaces it in place
+rather than stacking a twin — that is what lets a source re-report a standing condition on every
+render pass without the stack filling with copies of itself. Expiry is a function of `now`, which
+the caller passes in: `expireNotices` and `nextExpiryAtMs` decide, and `ui/notice-store` holds the
+one timer, scheduled at the earliest deadline rather than one timeout per notice.
+
+**Two lifetimes, no third.** A notice either carries a TTL and fades, or is sticky (`ttlMs: null`)
+and stands until the condition that raised it clears the key — there is no manual-dismiss gesture,
+because a notice never owns the keyboard. Anything that needs a keypress is an overlay, not a
+notice: approvals, the exit guard and the switcher stay drawers, and the lost-children card stays
+a panel the notice only points at.
+
+**The stack floats above the composer**, anchored to the bottom of the transcript region rather
+than set into the composer's chrome, so it survives the welcome state (where the transcript is not
+mounted) and never moves text the operator is reading. Rendering stays per-feature in the text
+itself; tone only picks the glyph and the ink.
+
 ## Packages
 
 ```
@@ -1172,6 +1196,7 @@ packages/core/src/
                  ClockPort, IdPort, SettingsStorePort
   credentials/   accounts, provider specs, and the pure decisions: refresh, adoption, selection
   settings/      definitions, layered resolution with provenance, edit operations, the registry
+  notices/       the notice queue: keyed replace, TTL expiry, stack cap — pure, no clock
   message/       Atlas's own message type (see below)
 
 packages/harness/src/

@@ -45,9 +45,10 @@ import { footerLayout } from '../ui/footer-layout'
 import { Screen } from '../ui/components/screen'
 import { AgentTypes } from '../ui/components/agent-types'
 import { LostChildren } from '../ui/components/lost-children'
-import { hasLostChildren } from '../ui/lost-children-model'
+import { hasLostChildren, lostChildrenNotice } from '../ui/lost-children-model'
 import { Shortcuts } from '../ui/components/shortcuts'
 import { Sidebar } from '../ui/components/sidebar'
+import { NoticeStack } from '../ui/components/notice-stack'
 import { WelcomeScreen } from '../ui/components/welcome-screen'
 import { Transcript } from '../ui/components/transcript'
 import { useDraft } from '../ui/hooks/use-draft'
@@ -55,8 +56,16 @@ import { useSince } from '../ui/hooks/use-since'
 import { composerEdgeVersion, subscribeComposerEdge } from '../ui/composer-edge-store'
 import { densityVersion, subscribeDensity } from '../ui/density-store'
 import { modelLabel } from '../ui/model-label'
-import { glyph, theme } from '../ui/theme'
-import { ENoticeTone, notify } from '../ui/notice-store'
+import { theme } from '../ui/theme'
+import {
+  clearNotice,
+  configureNotices,
+  ENoticeTone,
+  NOTICE_KEY_CLASSIFIER_OFFLINE,
+  NOTICE_KEY_LOST_AGENTS,
+  NOTICE_WARN_MS,
+  notify,
+} from '../ui/notice-store'
 import { paletteVersion, subscribePalette } from '../ui/palette-store'
 import { ERewindPointKind, ERewindVerb, type RewindChoice } from '../ui/rewind-model'
 import { SelectionSurface } from '../ui/selection/selection-surface'
@@ -279,7 +288,12 @@ function Workspace(props: {
     })
     if (warning === null) return
 
-    notify({ text: warning, tone: ENoticeTone.Warn })
+    notify({
+      key: 'context-window-unmeasured',
+      text: warning,
+      tone: ENoticeTone.Warn,
+      ttlMs: NOTICE_WARN_MS,
+    })
   }, [props.app.model, props.app.models])
 
   const { usage } = props.app
@@ -322,20 +336,49 @@ function Workspace(props: {
   const handleShowLostAgents = useCallback((): boolean => {
     if (!hasLostChildren(lost)) return false
 
+    clearNotice({ key: NOTICE_KEY_LOST_AGENTS })
     setPanel(EChromePanel.LostAgents)
     return true
   }, [lost])
 
   /**
-   * Raised by the open rather than asked for, because nothing else in the conversation will ever
-   * mention these: a child with no `agent-spawned` behind it is absent from the log the transcript
-   * is built from and from the roster the sidebar reads.
+   * Announced rather than raised: nothing else in the conversation will ever mention a child with
+   * no `agent-spawned` behind it, so a sticky notice stands until the card it points at is opened.
+   * The card itself stays asked for — a conversation reopened only to be read is not interrupted.
    */
   useEffect(() => {
-    if (!hasLostChildren(lost)) return
+    if (!hasLostChildren(lost)) {
+      clearNotice({ key: NOTICE_KEY_LOST_AGENTS })
+      return
+    }
 
-    setPanel(EChromePanel.LostAgents)
+    notify({
+      key: NOTICE_KEY_LOST_AGENTS,
+      text: lostChildrenNotice(lost),
+      tone: ENoticeTone.Warn,
+      sticky: true,
+    })
   }, [lost])
+
+  const judgeUnreachable = conversation.sidebar.classifier?.judgeUnreachable === true
+
+  useEffect(() => {
+    if (!judgeUnreachable) {
+      clearNotice({ key: NOTICE_KEY_CLASSIFIER_OFFLINE })
+      return
+    }
+
+    notify({
+      key: NOTICE_KEY_CLASSIFIER_OFFLINE,
+      text: 'nudge offline — the classifier could not be reached',
+      tone: ENoticeTone.Warn,
+      sticky: true,
+    })
+  }, [judgeUnreachable])
+
+  useEffect(() => {
+    configureNotices({ ttlMs: settings.noticeSeconds * 1000 })
+  }, [settings.noticeSeconds])
 
   const handleOpenThread = useCallback(
     (threadId: string) => {
@@ -743,13 +786,6 @@ function Workspace(props: {
     [card, chromeWidth, readout, selection.effort, selection.ref, surfaces.footerItems],
   )
 
-  const judgeUnreachable = conversation.sidebar.classifier?.judgeUnreachable === true
-  useEffect(() => {
-    if (judgeUnreachable) {
-      notify({ text: `${glyph.warning} nudge offline`, tone: ENoticeTone.Warn })
-    }
-  }, [judgeUnreachable])
-
   const footerStrip = useFooterStrip({ items: footerRow.instruments.items, draft })
 
   /**
@@ -923,43 +959,48 @@ function Workspace(props: {
     <Screen>
       <SelectionSurface>
         <box flexDirection="column" width={contentWidth} flexGrow={1} flexShrink={1} flexBasis={0}>
-          <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
-          {welcome ? (
-            <WelcomeScreen
-              cwd={props.app.config.cwd}
-              home={homedir()}
-              modelId={selection.ref.modelId}
-              width={contentWidth}
-            />
-          ) : agentView.selected === null ? (
-            <Transcript
-              model={conversation.model}
-              width={contentWidth}
-              now={conversation.now}
-              cwd={conversation.projectDirectory}
-              turn={conversation.turn}
-              sends={sends}
-              pending={conversation.pending}
-              background={background}
-              waitingSince={waitingSince}
-              {...(conversation.handleRetry === null ? {} : { onRetry: conversation.handleRetry })}
-              {...(conversation.handleResume === null
-                ? {}
-                : { onResume: conversation.handleResume })}
-              opened={opened}
-              onToggle={handleToggle}
-            />
-          ) : (
-            <SubagentTranscript
-              app={props.app}
-              agent={agentView.selected}
-              thinking={settings.thinking}
-              width={contentWidth}
-              cwd={conversation.projectDirectory}
-              opened={opened}
-              onToggle={handleToggle}
-            />
-          )}
+          <box flexDirection="column" flexGrow={1} flexShrink={1}>
+            <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
+            {welcome ? (
+              <WelcomeScreen
+                cwd={props.app.config.cwd}
+                home={homedir()}
+                modelId={selection.ref.modelId}
+                width={contentWidth}
+              />
+            ) : agentView.selected === null ? (
+              <Transcript
+                model={conversation.model}
+                width={contentWidth}
+                now={conversation.now}
+                cwd={conversation.projectDirectory}
+                turn={conversation.turn}
+                sends={sends}
+                pending={conversation.pending}
+                background={background}
+                waitingSince={waitingSince}
+                {...(conversation.handleRetry === null
+                  ? {}
+                  : { onRetry: conversation.handleRetry })}
+                {...(conversation.handleResume === null
+                  ? {}
+                  : { onResume: conversation.handleResume })}
+                opened={opened}
+                onToggle={handleToggle}
+              />
+            ) : (
+              <SubagentTranscript
+                app={props.app}
+                agent={agentView.selected}
+                thinking={settings.thinking}
+                width={contentWidth}
+                cwd={conversation.projectDirectory}
+                opened={opened}
+                onToggle={handleToggle}
+              />
+            )}
+            <NoticeStack width={chromeWidth} />
+          </box>
           {panel === EChromePanel.Shortcuts ? <Shortcuts width={chromeWidth} /> : null}
           {panel === EChromePanel.AgentTypes ? (
             <AgentTypes width={chromeWidth} catalog={props.app.agentTypes} />

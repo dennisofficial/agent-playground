@@ -489,14 +489,39 @@ async function openedWith(app: FakeApp, lost?: RecoveredAgents): Promise<Mounted
 }
 
 describe('children the last process lost', () => {
-  it('names an unlogged child on open, because nothing else in the app ever will', async () => {
+  async function ask(setup: Mounted, text: string): Promise<void> {
+    await setup.mockInput.typeText(text)
+    await setup.flush()
+    setup.mockInput.pressEnter()
+    await setup.flush()
+    await settle(250)
+    await setup.flush()
+  }
+
+  it('announces an unlogged child on open, because nothing else in the app ever will', async () => {
     const setup = await openedWith(appWith(), LOST)
 
     try {
       const frame = setup.captureCharFrame()
+      expect(frame).toContain('1 sub-agent left no record in this conversation')
+      expect(frame).toContain('/agents to view')
+      expect(frame).not.toContain(ORPHAN_TITLE)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('names the child on the card the notice points at, and clears the notice once it is open', async () => {
+    const setup = await openedWith(appWith(), LOST)
+
+    try {
+      await ask(setup, '/agents lost')
+
+      const frame = setup.captureCharFrame()
       expect(frame).toContain(ORPHAN_TITLE)
       expect(frame).toContain('no record of')
       expect(frame).toContain('check the tree')
+      expect(frame).not.toContain('/agents to view')
     } finally {
       await teardown(setup)
     }
@@ -507,6 +532,8 @@ describe('children the last process lost', () => {
     const setup = await openedWith(app, LOST)
 
     try {
+      await ask(setup, '/agents lost')
+
       expect(setup.captureCharFrame()).toContain('Nothing was resumed for you')
       expect(app.turnsDriven).toBe(0)
       expect(app.agents.said).toEqual([])
@@ -520,7 +547,7 @@ describe('children the last process lost', () => {
 
     try {
       const frame = setup.captureCharFrame()
-      expect(frame).not.toContain('no record of')
+      expect(frame).not.toContain('no record')
       expect(frame).not.toContain('check the tree')
       expect(frame).not.toContain('sub-agent')
     } finally {
@@ -528,10 +555,11 @@ describe('children the last process lost', () => {
     }
   }, 60_000)
 
-  it('goes away on the next key and comes back on /agents lost', async () => {
+  it('keeps the card asked for: it goes away on the next key and comes back on /agents lost', async () => {
     const setup = await openedWith(appWith(), LOST)
 
     try {
+      await ask(setup, '/agents lost')
       expect(setup.captureCharFrame()).toContain(ORPHAN_TITLE)
 
       setup.mockInput.pressEscape()
@@ -540,13 +568,7 @@ describe('children the last process lost', () => {
       await setup.flush()
       expect(setup.captureCharFrame()).not.toContain(ORPHAN_TITLE)
 
-      await setup.mockInput.typeText('/agents lost')
-      await setup.flush()
-      setup.mockInput.pressEnter()
-      await setup.flush()
-      await settle(250)
-      await setup.flush()
-
+      await ask(setup, '/agents lost')
       expect(setup.captureCharFrame()).toContain(ORPHAN_TITLE)
     } finally {
       await teardown(setup)
