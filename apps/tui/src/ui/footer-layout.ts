@@ -76,7 +76,7 @@ export function readouts(context: FooterContext): readonly FooterReadout[] {
     ]
   }
 
-  const used = context.tokensUsed === undefined ? null : `${formatTokens(context.tokensUsed)} ctx`
+  const used = context.tokensUsed === undefined ? null : formatTokens(context.tokensUsed)
   const head = used === null ? percent : `${used} ${percent}`
   const withMeters = meters.map((unused, index) => ({
     full: true,

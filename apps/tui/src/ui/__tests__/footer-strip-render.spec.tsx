@@ -100,12 +100,12 @@ describe('the pills under the composer', () => {
   it('leaves the read-out flush against the far edge', async () => {
     const frame = await frameOf(footer({ width: 140, items: [PR, SHELLS] }), 140)
     const row = rowOf(frame)
-    expect(row).toEndWith('124.0k ctx 62%')
+    expect(row).toEndWith('124.0k 62%')
     expect(cellsOf(row)).toBe(140 - 3)
   })
 
   it('says nothing at a width the ladder sheds them at', async () => {
-    const frame = await frameOf(footer({ width: 36, items: [PR, SHELLS] }), 36)
+    const frame = await frameOf(footer({ width: 32, items: [PR, SHELLS] }), 32)
     expect(frame).not.toContain('#123')
     expect(frame).not.toContain('2 shells')
   })

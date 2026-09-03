@@ -41,7 +41,7 @@ const widthWhereLost = (present: (layout: FooterLayout) => boolean): number => {
 }
 
 const hasTail = (layout: FooterLayout): boolean =>
-  layout.instruments.context?.text.includes('ctx') === true
+  layout.instruments.context?.text.includes('124.0k') === true
 
 const hasWeekly = (layout: FooterLayout): boolean => meterLabels(layout).includes('wk')
 
@@ -57,7 +57,7 @@ describe('footerLayout at ease', () => {
       model: MODEL,
       effort: 'med',
       items: [],
-      context: { full: true, text: '124.0k ctx 62%', meters: METERS },
+      context: { full: true, text: '124.0k 62%', meters: METERS },
     })
   })
 
@@ -109,7 +109,7 @@ describe('footerLayout meters', () => {
     })
     expect(layout.instruments.context).toEqual({
       full: true,
-      text: '124.0k ctx 62%',
+      text: '124.0k 62%',
       meters: [],
     })
   })

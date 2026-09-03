@@ -31,7 +31,6 @@ import { IDLE_TURN } from '../src/ui/components/transcript'
 import { chipItem, EFooterItemReach, type FooterItem } from '../src/ui/footer-item'
 import { enterStrip, moveStripSelection, type FooterStripState } from '../src/ui/footer-strip'
 import { registerGrammars } from '../src/ui/markdown/grammars/index'
-import { NUDGE_MARKER_TEXT } from '../src/ui/nudge-marker'
 import { SIDEBAR_WIDTH, theme } from '../src/ui/theme'
 import { FED_SIDEBAR } from './round2-data'
 
@@ -64,12 +63,6 @@ const services = (running: number): FooterItem =>
     reach: EFooterItemReach.Keyboard,
     onActivate: noop,
   })
-
-const NUDGE: FooterItem = {
-  id: 'nudge-degraded',
-  spans: [{ text: NUDGE_MARKER_TEXT, fg: theme.warn }],
-  reach: EFooterItemReach.None,
-}
 
 const SETTLED = EChecksState.None
 
@@ -134,10 +127,6 @@ const GALLERY: readonly GalleryRow[] = [
     ],
     strip: { itemId: 'subagents' },
   },
-  {
-    label: 'nudge degraded — still a pill nothing reaches',
-    items: [subagents(1), NUDGE],
-  },
 ]
 
 function GalleryRowView(props: { row: GalleryRow; width: number }): React.ReactNode {
@@ -174,7 +163,6 @@ const LIVE_ITEMS: readonly FooterItem[] = [
   shells(2),
   subagents(1),
   services(1),
-  NUDGE,
 ]
 
 function Live(props: { width: number }): React.ReactNode {
