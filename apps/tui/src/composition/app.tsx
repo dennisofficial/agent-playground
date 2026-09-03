@@ -99,6 +99,7 @@ import { globalBindings } from './global-bindings'
 import { applyTranscriptCovered } from '../ui/covered-store'
 import { OverlayStack } from './overlay-stack'
 import { unmeasuredWindowWarning } from './providers'
+import { checkForUpdate } from './update-check'
 import type { OpenedConversation } from './open-conversation'
 import { useConversation } from './use-conversation'
 import { useExitGuard } from './use-exit-guard'
@@ -295,6 +296,14 @@ function Workspace(props: {
       ttlMs: NOTICE_WARN_MS,
     })
   }, [props.app.model, props.app.models])
+
+  /**
+   * Ambient and off the boot path: a stale-build or release-available notice may arrive a beat
+   * after the curtain lifts, and a probe that cannot reach its ground truth says nothing.
+   */
+  useEffect(() => {
+    void checkForUpdate()
+  }, [])
 
   const { usage } = props.app
   const working = conversation.working

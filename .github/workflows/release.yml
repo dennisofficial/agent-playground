@@ -1,0 +1,56 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      tuiReleased: ${{ steps.rp.outputs['apps/tui--release_created'] }}
+      tuiTag: ${{ steps.rp.outputs['apps/tui--tag_name'] }}
+      tuiVersion: ${{ steps.rp.outputs['apps/tui--version'] }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+
+  build-tui:
+    needs: release-please
+    if: needs.release-please.outputs.tuiReleased == 'true'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+
+      - run: bun install
+
+      - name: typecheck and test
+        run: bun run typecheck && bun run test
+        env:
+          ATLAS_HOME: ${{ github.workspace }}/.atlas-home
+
+      - name: build binaries
+        working-directory: apps/tui
+        env:
+          ATLAS_VERSION: ${{ needs.release-please.outputs.tuiVersion }}
+          ATLAS_RELEASE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          bun run build:prepare
+          for target in bun-darwin-arm64 bun-darwin-x64 bun-linux-x64; do
+            asset="atlas-${target#bun-}"
+            bun scripts/build.ts --target "$target" --outfile "dist/${asset}"
+            shasum -a 256 "dist/${asset}" > "dist/${asset}.sha256"
+          done
+
+      - name: attach assets
+        working-directory: apps/tui
+        run: gh release upload "${{ needs.release-please.outputs.tuiTag }}" dist/* --clobber
