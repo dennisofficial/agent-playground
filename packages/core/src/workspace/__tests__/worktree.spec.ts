@@ -2,7 +2,13 @@ import { describe, expect, it } from 'bun:test'
 
 import type { Event } from '../../events/envelope'
 import { EWorktreeExit } from '../../events/body'
-import { activeWorktreeAfter, activeWorktreeOf, projectDirectoryOf } from '../worktree'
+import {
+  activeWorktreeAfter,
+  activeWorktreeOf,
+  homeDirectoryAfter,
+  homeDirectoryOf,
+  projectDirectoryOf,
+} from '../worktree'
 
 const LAUNCH = '/Users/dev/atlas'
 const TREE = `${LAUNCH}/.atlas/worktrees/eng-327-api-eslint`
@@ -28,8 +34,13 @@ const said = (text: string) => event({ type: 'user-said', text })
 const entered = (args: { path: string; branch: string }) =>
   event({ type: 'worktree-entered', path: args.path, branch: args.branch, base: 'origin/main' })
 
-const exited = (args: { path: string; action: EWorktreeExit }) =>
-  event({ type: 'worktree-exited', path: args.path, action: args.action })
+const exited = (args: { path: string; action: EWorktreeExit; returnTo?: string }) =>
+  event({
+    type: 'worktree-exited',
+    path: args.path,
+    action: args.action,
+    ...(args.returnTo === undefined ? {} : { returnTo: args.returnTo }),
+  })
 
 describe('which worktree the session is in', () => {
   it('is in none until one is entered', () => {
@@ -95,6 +106,58 @@ describe('where the project is', () => {
     ]
 
     expect(projectDirectoryOf({ events, launchDirectory: LAUNCH })).toBe(LAUNCH)
+  })
+
+  it('lands on the returnTo an exit recorded, even when that is not the launch directory', () => {
+    const events = [exited({ path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH })]
+
+    expect(projectDirectoryOf({ events, launchDirectory: TREE })).toBe(LAUNCH)
+  })
+
+  it('keeps the re-homed directory as home across later enter and exit cycles', () => {
+    const events = [
+      exited({ path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH }),
+      entered({ path: OTHER, branch: 'dennis/eng-401' }),
+      exited({ path: OTHER, action: EWorktreeExit.Keep }),
+    ]
+
+    expect(projectDirectoryOf({ events, launchDirectory: TREE })).toBe(LAUNCH)
+  })
+
+  it('is the worktree entered after a re-home, not the home itself', () => {
+    const events = [
+      exited({ path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH }),
+      entered({ path: OTHER, branch: 'dennis/eng-401' }),
+    ]
+
+    expect(projectDirectoryOf({ events, launchDirectory: TREE })).toBe(OTHER)
+  })
+})
+
+describe('the home directory', () => {
+  it('is the launch directory while no exit has recorded a returnTo', () => {
+    const events = [entered({ path: TREE, branch: 'dennis/eng-327' })]
+
+    expect(homeDirectoryOf({ events, launchDirectory: LAUNCH })).toBe(LAUNCH)
+  })
+
+  it('follows the latest returnTo in the log', () => {
+    const events = [
+      exited({ path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH }),
+      exited({ path: OTHER, action: EWorktreeExit.Keep, returnTo: TREE }),
+    ]
+
+    expect(homeDirectoryOf({ events, launchDirectory: OTHER })).toBe(TREE)
+  })
+
+  it('folds unwritten drafts the same way', () => {
+    expect(homeDirectoryAfter({ drafts: [{ type: 'user-said', text: 'hi' }], home: LAUNCH })).toBe(LAUNCH)
+
+    const moved = homeDirectoryAfter({
+      drafts: [{ type: 'worktree-exited', path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH }],
+      home: TREE,
+    })
+    expect(moved).toBe(LAUNCH)
   })
 })
 

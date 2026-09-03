@@ -74,7 +74,7 @@ export type EventBody =
       base?: string | undefined
       adopted?: boolean | undefined
     }
-  | { type: 'worktree-exited'; path: string; action: EWorktreeExit }
+  | { type: 'worktree-exited'; path: string; action: EWorktreeExit; returnTo?: string | undefined }
   | {
       type: 'background-shell-ended'
       shellId: string

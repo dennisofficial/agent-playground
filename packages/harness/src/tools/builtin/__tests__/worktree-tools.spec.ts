@@ -1,11 +1,20 @@
 import { afterAll, describe, expect, it } from 'bun:test'
-import { mkdtemp, rm, realpath, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, realpath, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EWorktreeExit, enteredWorktreeOf, exitedWorktreeOf, toThreadId } from '@dltech/atlas-core'
+import {
+  EWorktreeExit,
+  enteredWorktreeOf,
+  exitedWorktreeOf,
+  toThreadId,
+  worktreeLockToken,
+  type ActiveWorktree,
+} from '@dltech/atlas-core'
 
 
+import { ownIdentity } from '../../../workspace/process-identity'
+import { listWorktrees, lockWorktree } from '../../../workspace/worktrees'
 import { EnterWorktreeTool } from '../enter-worktree'
 import { ExitWorktreeTool } from '../exit-worktree'
 import { WorktreeListTool } from '../worktree-list'
@@ -42,11 +51,18 @@ const toolsFor = (launchDirectory: string) => ({
   list: new WorktreeListTool(),
 })
 
-const invocation = (args: { input: unknown; projectDirectory: string }) => ({
+const invocation = (args: {
+  input: unknown
+  projectDirectory: string
+  homeDirectory?: string
+  activeWorktree?: ActiveWorktree
+}) => ({
   input: args.input,
   signal: new AbortController().signal,
   idempotencyKey: 'run:call',
   projectDirectory: args.projectDirectory,
+  homeDirectory: args.homeDirectory,
+  activeWorktree: args.activeWorktree,
   threadId: toThreadId('thread-1'),
 })
 
@@ -122,7 +138,13 @@ describe('entering a worktree', () => {
     if (!first.ok) return
 
     const inside = enteredWorktreeOf(first.output)?.path ?? root
-    const second = await enter.invoke(invocation({ input: { name: 'eng-401' }, projectDirectory: inside }))
+    const second = await enter.invoke(
+      invocation({
+        input: { name: 'eng-401' },
+        projectDirectory: inside,
+        activeWorktree: { path: inside, branch: 'eng-327', base: 'main', adopted: false },
+      }),
+    )
 
     expect(second.ok).toBe(false)
     if (second.ok) return
@@ -163,11 +185,18 @@ describe('entering a worktree', () => {
 })
 
 describe('leaving a worktree', () => {
-  const entered = async (root: string): Promise<string> => {
+  const entered = async (root: string): Promise<ActiveWorktree> => {
     const { enter } = toolsFor(root)
     const outcome = await enter.invoke(invocation({ input: { name: 'eng-327' }, projectDirectory: root }))
     if (!outcome.ok) throw new Error('could not enter')
-    return enteredWorktreeOf(outcome.output)?.path ?? root
+    const entry = enteredWorktreeOf(outcome.output)
+    if (entry === undefined) throw new Error('enter reported no worktree')
+    return {
+      path: entry.path,
+      branch: entry.branch,
+      base: entry.base,
+      adopted: entry.adopted === true,
+    }
   }
 
   it('does nothing at all when the session is not in a worktree', async () => {
@@ -190,13 +219,21 @@ describe('leaving a worktree', () => {
     const { exit } = toolsFor(root)
 
     const outcome = await exit.invoke(
-      invocation({ input: { action: EWorktreeExit.Keep }, projectDirectory: inside }),
+      invocation({
+        input: { action: EWorktreeExit.Keep },
+        projectDirectory: inside.path,
+        activeWorktree: inside,
+      }),
     )
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
-    expect(exitedWorktreeOf(outcome.output)).toEqual({ path: inside, action: EWorktreeExit.Keep })
-    expect(await exists(inside)).toBe(true)
+    expect(exitedWorktreeOf(outcome.output)).toEqual({
+      path: inside.path,
+      action: EWorktreeExit.Keep,
+      returnTo: root,
+    })
+    expect(await exists(inside.path)).toBe(true)
   })
 
   it('removes a clean worktree and its branch', async () => {
@@ -205,47 +242,160 @@ describe('leaving a worktree', () => {
     const { exit } = toolsFor(root)
 
     const outcome = await exit.invoke(
-      invocation({ input: { action: EWorktreeExit.Remove }, projectDirectory: inside }),
+      invocation({
+        input: { action: EWorktreeExit.Remove },
+        projectDirectory: inside.path,
+        activeWorktree: inside,
+      }),
     )
 
     expect(outcome.ok).toBe(true)
     if (!outcome.ok) return
     expect(exitedWorktreeOf(outcome.output)?.action).toBe(EWorktreeExit.Remove)
-    expect(await exists(inside)).toBe(false)
+    expect(await exists(inside.path)).toBe(false)
   })
 
   it('refuses to remove a worktree holding uncommitted work, and names what would be lost', async () => {
     const root = await repoWithCommit()
     const inside = await entered(root)
-    await Bun.write(join(inside, 'notes.md'), 'work in progress')
+    await Bun.write(join(inside.path, 'notes.md'), 'work in progress')
     const { exit } = toolsFor(root)
 
     const outcome = await exit.invoke(
-      invocation({ input: { action: EWorktreeExit.Remove }, projectDirectory: inside }),
+      invocation({
+        input: { action: EWorktreeExit.Remove },
+        projectDirectory: inside.path,
+        activeWorktree: inside,
+      }),
     )
 
     expect(outcome.ok).toBe(false)
     if (outcome.ok) return
     expect(outcome.reason).toContain('notes.md')
     expect(outcome.reason).toContain('discardChanges')
-    expect(await exists(inside)).toBe(true)
+    expect(await exists(inside.path)).toBe(true)
   })
 
   it('removes it anyway once discardChanges says so', async () => {
     const root = await repoWithCommit()
     const inside = await entered(root)
-    await Bun.write(join(inside, 'notes.md'), 'work in progress')
+    await Bun.write(join(inside.path, 'notes.md'), 'work in progress')
     const { exit } = toolsFor(root)
 
     const outcome = await exit.invoke(
       invocation({
         input: { action: EWorktreeExit.Remove, discardChanges: true },
-        projectDirectory: inside,
+        projectDirectory: inside.path,
+        activeWorktree: inside,
       }),
     )
 
     expect(outcome.ok).toBe(true)
-    expect(await exists(inside)).toBe(false)
+    expect(await exists(inside.path)).toBe(false)
+  })
+})
+
+describe('leaving a worktree the session was launched inside', () => {
+  const repoWithWorktree = async (): Promise<{ root: string; tree: string }> => {
+    const root = await repoWithCommit()
+    const tree = join(root, 'launched-here')
+    await git(['worktree', 'add', '-b', 'launched', tree], root)
+    return { root, tree }
+  }
+
+  it('moves the session to the main checkout and keeps the worktree', async () => {
+    const { root, tree } = await repoWithWorktree()
+    const { exit } = toolsFor(tree)
+
+    const outcome = await exit.invoke(
+      invocation({ input: { action: EWorktreeExit.Keep }, projectDirectory: tree }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(exitedWorktreeOf(outcome.output)).toEqual({
+      path: tree,
+      action: EWorktreeExit.Keep,
+      returnTo: root,
+    })
+    expect(outcome.modelText).toContain('main checkout')
+    expect(await exists(tree)).toBe(true)
+  })
+
+  it('releases the lock the session took at launch', async () => {
+    const { root, tree } = await repoWithWorktree()
+    await lockWorktree({
+      cwd: root,
+      path: tree,
+      reason: worktreeLockToken({ label: 'session', identity: await ownIdentity() }),
+    })
+    const { exit } = toolsFor(tree)
+
+    const outcome = await exit.invoke(
+      invocation({ input: { action: EWorktreeExit.Keep }, projectDirectory: tree }),
+    )
+
+    expect(outcome.ok).toBe(true)
+
+    const listing = await listWorktrees({ cwd: root })
+    const found = listing.ok ? listing.worktrees.find((worktree) => worktree.path === tree) : undefined
+    expect(found?.isLocked).toBe(false)
+  })
+
+  it('never removes it, whichever action is asked for', async () => {
+    const { root, tree } = await repoWithWorktree()
+    const { exit } = toolsFor(tree)
+
+    const outcome = await exit.invoke(
+      invocation({ input: { action: EWorktreeExit.Remove }, projectDirectory: tree }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(exitedWorktreeOf(outcome.output)).toEqual({
+      path: tree,
+      action: EWorktreeExit.Keep,
+      returnTo: root,
+    })
+    expect(outcome.modelText).toContain('did not create it')
+    expect(await exists(tree)).toBe(true)
+  })
+
+  it('finds the worktree when the launch directory is a subdirectory of it', async () => {
+    const { root, tree } = await repoWithWorktree()
+    const nested = join(tree, 'packages', 'core')
+    await mkdir(nested, { recursive: true })
+    const { exit } = toolsFor(nested)
+
+    const outcome = await exit.invoke(
+      invocation({ input: { action: EWorktreeExit.Keep }, projectDirectory: nested }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(exitedWorktreeOf(outcome.output)).toEqual({
+      path: tree,
+      action: EWorktreeExit.Keep,
+      returnTo: root,
+    })
+  })
+
+  it('does nothing once the session has already landed on the main checkout', async () => {
+    const { root, tree } = await repoWithWorktree()
+    const { exit } = toolsFor(tree)
+
+    const outcome = await exit.invoke(
+      invocation({
+        input: { action: EWorktreeExit.Keep },
+        projectDirectory: root,
+        homeDirectory: root,
+      }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(exitedWorktreeOf(outcome.output)).toBeUndefined()
+    expect(outcome.modelText).toContain('not in a worktree')
   })
 })
 

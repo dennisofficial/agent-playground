@@ -13,6 +13,7 @@ import {
   toEventId,
   toRunId,
   toThreadId,
+  type ActiveWorktree,
   type Event,
   type EventDraft,
   type ToolCall,
@@ -76,11 +77,17 @@ describe('a worktree the whole way round', () => {
     const exit = new ExitWorktreeTool(root)
     const hook = new TrackWorktreeHook()
 
-    const invocation = (input: unknown, projectDirectory: string) => ({
+    const invocation = (
+      input: unknown,
+      projectDirectory: string,
+      activeWorktree?: ActiveWorktree,
+    ) => ({
       input,
       signal: new AbortController().signal,
       idempotencyKey: 'run:call',
       projectDirectory,
+      homeDirectory: root,
+      activeWorktree,
       threadId: toThreadId('thread-1'),
     })
 
@@ -94,10 +101,11 @@ describe('a worktree the whole way round', () => {
 
     const tree = join(root, '.atlas/worktrees/eng-327')
     expect(projectDirectoryOf({ events: afterEnter, launchDirectory: root })).toBe(tree)
-    expect(projectDirectoryOf({ events: afterEnter, launchDirectory: root })).toBe(tree)
     expect(activeWorktreeOf(afterEnter)?.branch).toBe('eng-327')
 
-    const leaving = await exit.invoke(invocation({ action: EWorktreeExit.Keep }, tree))
+    const leaving = await exit.invoke(
+      invocation({ action: EWorktreeExit.Keep }, tree, activeWorktreeOf(afterEnter)),
+    )
     expect(leaving.ok).toBe(true)
     if (!leaving.ok) return
 
@@ -106,7 +114,43 @@ describe('a worktree the whole way round', () => {
     const afterExit = log([...enteredDrafts, ...exitedDrafts])
 
     expect(projectDirectoryOf({ events: afterExit, launchDirectory: root })).toBe(root)
-    expect(projectDirectoryOf({ events: afterExit, launchDirectory: root })).toBe(root)
     expect(activeWorktreeOf(afterExit)).toBeUndefined()
+  })
+
+  it('moves a session launched inside a worktree back to the main checkout', async () => {
+    const root = await repoWithCommit()
+    const tree = join(root, 'launched-here')
+    await git(['worktree', 'add', '-b', 'launched', tree], root)
+
+    const exit = new ExitWorktreeTool(tree)
+    const hook = new TrackWorktreeHook()
+
+    const invocation = (input: unknown, projectDirectory: string) => ({
+      input,
+      signal: new AbortController().signal,
+      idempotencyKey: 'run:call',
+      projectDirectory,
+      threadId: toThreadId('thread-1'),
+    })
+
+    const leaving = await exit.invoke(invocation({ action: EWorktreeExit.Keep }, tree))
+    expect(leaving.ok).toBe(true)
+    if (!leaving.ok) return
+
+    const exitedDrafts =
+      (await hook.run({ call: call('exit_worktree'), result: leaving, signal: NEVER_ABORTED })).drafts ?? []
+    const afterExit = log(exitedDrafts)
+
+    expect(afterExit.some((event) => event.type === 'worktree-exited')).toBe(true)
+    expect(projectDirectoryOf({ events: afterExit, launchDirectory: tree })).toBe(root)
+    expect(activeWorktreeOf(afterExit)).toBeUndefined()
+
+    const again = await exit.invoke(invocation({ action: EWorktreeExit.Keep }, root))
+    expect(again.ok).toBe(true)
+    if (!again.ok) return
+
+    const secondDrafts =
+      (await hook.run({ call: call('exit_worktree'), result: again, signal: NEVER_ABORTED })).drafts ?? []
+    expect(secondDrafts).toEqual([])
   })
 })

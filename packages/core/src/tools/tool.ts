@@ -83,7 +83,9 @@ export type WorktreeEntry = {
 
 export type WorktreeEntered = { enteredWorktree: WorktreeEntry }
 
-export type WorktreeExited = { exitedWorktree: { path: string; action: EWorktreeExit } }
+export type WorktreeExited = {
+  exitedWorktree: { path: string; action: EWorktreeExit; returnTo?: string | undefined }
+}
 
 export function enteredWorktreeOf(output: unknown): WorktreeEntry | undefined {
   if (typeof output !== 'object' || output === null) return undefined
@@ -111,11 +113,14 @@ export function exitedWorktreeOf(output: unknown): WorktreeExited['exitedWorktre
   const exited = (output as Partial<WorktreeExited>).exitedWorktree
   if (exited === undefined) return undefined
 
-  const { path, action } = exited
+  const { path, action, returnTo } = exited
   if (typeof path !== 'string' || path.length === 0) return undefined
   if (action !== EWorktreeExit.Keep && action !== EWorktreeExit.Remove) return undefined
+  if (returnTo !== undefined && (typeof returnTo !== 'string' || returnTo.length === 0)) {
+    return undefined
+  }
 
-  return { path, action }
+  return { path, action, ...(returnTo === undefined ? {} : { returnTo }) }
 }
 
 export type WholeFileClaim<TInput> = { input: TInput; output: unknown }
@@ -139,6 +144,7 @@ export type ToolInvocation = {
   signal: AbortSignal
   idempotencyKey: string
   projectDirectory: string
+  homeDirectory?: string | undefined
   activeWorktree?: ActiveWorktree | undefined
   threadId: ThreadId
 }
@@ -148,6 +154,7 @@ export type ToolRun<TSchema extends ZodType> = {
   signal: AbortSignal
   idempotencyKey: string
   projectDirectory: string
+  homeDirectory?: string | undefined
   activeWorktree: ActiveWorktree | undefined
   threadId: ThreadId
 }
@@ -175,6 +182,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
     signal,
     idempotencyKey,
     projectDirectory,
+    homeDirectory,
     activeWorktree,
     threadId,
   }: ToolInvocation): Promise<ToolOutcome> {
@@ -188,6 +196,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
       signal,
       idempotencyKey,
       projectDirectory,
+      homeDirectory,
       activeWorktree,
       threadId,
     })
