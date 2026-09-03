@@ -22,6 +22,12 @@ function index(specs: readonly CommandSpec[]): ReadonlyMap<string, CommandSpec> 
     }
   }
 
+  for (const spec of specs) {
+    for (const alias of spec.aliases ?? []) {
+      if (!byName.has(alias)) byName.set(alias, spec)
+    }
+  }
+
   return byName
 }
 
@@ -88,5 +94,7 @@ export function commandCandidates(args: {
   if (query === null) return []
 
   const lowered = query.toLowerCase()
-  return args.specs.filter((spec) => matches({ name: spec.name, query: lowered }))
+  return args.specs.filter((spec) =>
+    [spec.name, ...(spec.aliases ?? [])].some((name) => matches({ name, query: lowered })),
+  )
 }

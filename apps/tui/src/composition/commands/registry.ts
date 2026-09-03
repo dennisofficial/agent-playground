@@ -202,6 +202,7 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
     }),
     local({
       name: 'new',
+      aliases: ['clear'],
       summary: 'start a fresh conversation',
       group: ECommandGroup.Session,
       timing: ECommandTiming.Settled,

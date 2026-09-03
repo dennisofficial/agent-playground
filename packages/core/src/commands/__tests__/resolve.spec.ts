@@ -10,8 +10,9 @@ const skill = (name: string): CommandSpec => ({
   group: ECommandGroup.Workspace,
 })
 
-const local = (name: string): CommandSpec => ({
+const local = (name: string, aliases?: readonly string[]): CommandSpec => ({
   name,
+  aliases,
   kind: ECommandKind.Local,
   summary: name,
   group: ECommandGroup.Session,
@@ -93,6 +94,26 @@ describe('resolveSubmission', () => {
 
     expect(resolveSubmission({ text: '/local:review', specs: clash }).local?.spec.name).toBe('review')
   })
+
+  it('runs a local command through one of its aliases', () => {
+    const submission = resolveSubmission({ text: '/clear', specs: [local('new', ['clear'])] })
+
+    expect(submission.local?.spec.name).toBe('new')
+    expect(submission.skills).toEqual([])
+  })
+
+  it('hands an alias the rest of the line, like the name would', () => {
+    const submission = resolveSubmission({ text: '/clear later', specs: [local('new', ['clear'])] })
+
+    expect(submission.local?.spec.name).toBe('new')
+    expect(submission.local?.argumentText).toBe('later')
+  })
+
+  it('lets a real name win over another command\'s alias', () => {
+    const specs = [local('new', ['restart']), local('restart')]
+
+    expect(resolveSubmission({ text: '/restart', specs }).local?.spec.name).toBe('restart')
+  })
 })
 
 describe('activeQuery', () => {
@@ -133,6 +154,18 @@ describe('commandCandidates', () => {
     const specs = [skill('code-review')]
 
     expect(commandCandidates({ text: '/rev', specs }).map((one) => one.name)).toEqual(['code-review'])
+  })
+
+  it('matches an alias, returning the command it belongs to once', () => {
+    const specs = [local('new', ['clear'])]
+
+    expect(commandCandidates({ text: '/cle', specs }).map((one) => one.name)).toEqual(['new'])
+  })
+
+  it('matches an alias on a word inside it', () => {
+    const specs = [local('new', ['fresh-conversation'])]
+
+    expect(commandCandidates({ text: '/conv', specs }).map((one) => one.name)).toEqual(['new'])
   })
 
   it('lists nothing when no token is being typed', () => {
