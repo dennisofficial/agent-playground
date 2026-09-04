@@ -7,6 +7,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { holderIsLive, ownIdentity } from './process-identity'
+import { probeWorkspace } from './probe'
 import { listWorktrees, lockWorktree, unlockWorktree } from './worktrees'
 
 export enum EWorktreeClaim {
@@ -110,6 +111,28 @@ export async function claimWorktree(args: {
     note: `It is locked outside Atlas (${existing.reason === undefined || existing.reason.length === 0 ? 'no reason given' : existing.reason}), so that lock was left alone and this session is working in it as a guest.`,
     heldBy: undefined,
   }
+}
+
+export type WorktreeAtClaim = {
+  repo: string
+  path: string
+  outcome: WorktreeClaim
+}
+
+/** `claimWorktree` for a caller that knows the directory, not the repository: a reopened thread. */
+export async function claimWorktreeAt(args: {
+  cwd: string
+  label: string
+}): Promise<WorktreeAtClaim | undefined> {
+  const identity = await probeWorkspace({ cwd: args.cwd })
+  if (identity.repo === null || identity.workspace === identity.repo) return undefined
+
+  const outcome = await claimWorktree({
+    cwd: identity.repo,
+    path: identity.workspace,
+    label: args.label,
+  })
+  return { repo: identity.repo, path: identity.workspace, outcome }
 }
 
 export async function releaseWorktree(args: { cwd: string; path: string }): Promise<boolean> {

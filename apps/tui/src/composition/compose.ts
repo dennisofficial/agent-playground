@@ -56,6 +56,7 @@ import {
   ProviderAdapter,
   bindAgentTypes,
   claimWorktree,
+  claimWorktreeAt,
   EWorktreeClaim,
   releaseWorktree,
   pinnedModelSource,
@@ -152,6 +153,24 @@ export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Pr
 
 const SESSION_CLAIM_LABEL = 'session'
 
+const releasedOnClose = new Set<string>()
+
+function releaseWorktreeOnClose(args: {
+  container: DependencyContainer
+  repo: string
+  path: string
+}): void {
+  if (releasedOnClose.has(args.path)) return
+  releasedOnClose.add(args.path)
+
+  registerDisposable({
+    container: args.container,
+    close: async () => {
+      await releaseWorktree({ cwd: args.repo, path: args.path })
+    },
+  })
+}
+
 async function claimLaunchWorktree(args: {
   container: DependencyContainer
   workspace: WorkspaceIdentity
@@ -165,12 +184,50 @@ async function claimLaunchWorktree(args: {
   )
   if (claimed?.claim !== EWorktreeClaim.Owned && claimed?.claim !== EWorktreeClaim.Reclaimed) return
 
-  registerDisposable({
-    container: args.container,
-    close: async () => {
-      await releaseWorktree({ cwd: repo, path })
-    },
-  })
+  releaseWorktreeOnClose({ container: args.container, repo, path })
+}
+
+/**
+ * A resumed thread's worktree is folded back out of its event log, so nothing re-locks it for the
+ * process that picked the thread up — the lock still names the process that entered it, which may
+ * be long dead. Every thread open re-claims it; a stale lock is cleared and retaken, a live one is
+ * reported, and the claim is handed back when the app closes.
+ */
+async function claimOpenedWorktree(args: {
+  container: DependencyContainer
+  threadId: ThreadId
+  projectDirectory: string
+}): Promise<void> {
+  const claimed = await claimWorktreeAt({
+    cwd: args.projectDirectory,
+    label: `thread ${args.threadId}`,
+  }).catch(() => undefined)
+  if (claimed === undefined) return
+
+  if (claimed.outcome.claim === EWorktreeClaim.Held) {
+    notify({
+      tone: ENoticeTone.Warn,
+      ttlMs: NOTICE_WARN_MS,
+      text: `This thread's worktree is locked by another running Atlas session (pid ${claimed.outcome.heldBy ?? 'unknown'}); this one is working in it as a guest.`,
+    })
+    return
+  }
+
+  if (claimed.outcome.claim === EWorktreeClaim.Reclaimed) {
+    notify({
+      tone: ENoticeTone.Info,
+      text: 'That worktree was left locked by an Atlas session that is no longer running; the stale lock was cleared.',
+    })
+  }
+
+  if (
+    claimed.outcome.claim !== EWorktreeClaim.Owned &&
+    claimed.outcome.claim !== EWorktreeClaim.Reclaimed
+  ) {
+    return
+  }
+
+  releaseWorktreeOnClose({ container: args.container, repo: claimed.repo, path: claimed.path })
 }
 
 export type AtlasApp = {
@@ -672,6 +729,8 @@ export async function composeAtlas(args: {
      * is opened by its first turn, and an OnThreadOpen draft must not open it early.
      */
     threadOpened: async ({ threadId, projectDirectory }) => {
+      await claimOpenedWorktree({ container, threadId, projectDirectory })
+
       const chain = container.resolve(HookChainToken)
       const drafts = await chain.onThreadOpen({ threadId, projectDirectory })
       if (drafts.length === 0) return
