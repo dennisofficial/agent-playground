@@ -620,6 +620,7 @@ export function fakeApp(args: {
       ...(args.secrets === undefined ? {} : { secrets: args.secrets }),
     }),
     close: async () => {},
+    warp: null,
     runner: {
       say: (call) => runner.say(call),
       resume: (call) => {
