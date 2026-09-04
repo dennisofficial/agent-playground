@@ -135,6 +135,8 @@ const SUBAGENT_PLACEHOLDER = 'Message this sub-agent'
 
 const HELP_KEY = '?'
 
+const STALE_CHECK_MS = 60_000
+
 /**
  * Reference the operator reads and dismisses, drawn above the composer rather than over it. One at
  * a time, and any key puts it away, which is what makes it a veil rather than an overlay.
@@ -299,8 +301,8 @@ function Workspace(props: {
   /**
    * Ambient and off the boot path: a stale-build or release-available notice may arrive a beat
    * after the curtain lifts, and a probe that cannot reach its ground truth says nothing. The
-   * staleness probe stamps the source tree at launch; the falling edge of `working` is a turn
-   * ending, which is when a stale session is told so.
+   * staleness probe stamps the source tree at launch and re-checks on a slow timer; the falling
+   * edge of `working` is a turn ending, which is when a working session is told it went stale.
    */
   const staleness = useRef<SourceStaleness | null>(null)
   useEffect(() => {
@@ -310,8 +312,11 @@ function Workspace(props: {
     void sourceStalenessProbe().then((probe) => {
       if (mounted) staleness.current = probe
     })
+
+    const timer = setInterval(() => void staleness.current?.check(), STALE_CHECK_MS)
     return () => {
       mounted = false
+      clearInterval(timer)
     }
   }, [])
 
