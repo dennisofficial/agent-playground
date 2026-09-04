@@ -3,6 +3,7 @@ import { homedir } from 'node:os'
 import React from 'react'
 
 import { HEADER_GUTTER, headerBarModel, headerLocation, type DiffStat } from '../header-bar'
+import { theme } from '../theme'
 import { Spans } from './spans'
 
 export function HeaderBar(props: {
@@ -27,6 +28,7 @@ export function HeaderBar(props: {
       flexShrink={0}
       paddingLeft={HEADER_GUTTER}
       paddingRight={HEADER_GUTTER}
+      backgroundColor={theme.panelBg}
     >
       <text flexShrink={0}>
         <Spans spans={model.left} />
