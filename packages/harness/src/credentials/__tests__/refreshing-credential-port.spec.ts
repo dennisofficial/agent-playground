@@ -268,6 +268,27 @@ describe('RefreshingCredentialPort', () => {
     expect(await statusOf(account.id)).toBe(EAccountStatus.Active)
   })
 
+  it('keeps the provider account id the login stamped across a rotation', async () => {
+    const account = await vault.addAccount({
+      label: 'work',
+      secret: oauthSecret({ accountId: 'acct-123' }),
+    })
+    await vault.store.setActive({ provider: EAuthProvider.Anthropic, accountId: account.id })
+
+    clock.set(minutesFromNow(90))
+
+    const credential = await portWith({ client: rotating() }).read()
+
+    expect(credential.kind).toBe(EAuthKind.Oauth)
+    if (credential.kind !== EAuthKind.Oauth) return
+    expect(credential.providerAccountId).toBe('acct-123')
+
+    const stored = await vault.store.read(account.id)
+    expect(stored?.secret.kind).toBe(EAuthKind.Oauth)
+    if (stored?.secret.kind !== EAuthKind.Oauth) return
+    expect(stored.secret.tokens.accountId).toBe('acct-123')
+  })
+
   it('answers from the account the operator made active', async () => {
     await vault.addAccount({ label: 'work', secret: oauthSecret({ access: 'work-token' }) })
     const personal = await vault.addAccount({

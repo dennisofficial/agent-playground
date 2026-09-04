@@ -6,11 +6,13 @@ export const oauthCredential = (args: {
   accessToken: string
   accountId?: string
   expiresAt?: string
+  providerAccountId?: string
 }): Credential => ({
   kind: EAuthKind.Oauth,
   accountId: toAccountId(args.accountId ?? 'acc_test'),
   accessToken: args.accessToken,
   expiresAt: args.expiresAt ?? new Date(Date.now() + AN_HOUR_MS).toISOString(),
+  ...(args.providerAccountId === undefined ? {} : { providerAccountId: args.providerAccountId }),
 })
 
 export const apiKeyCredential = (args: { apiKey: string; accountId?: string }): Credential => ({

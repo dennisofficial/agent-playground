@@ -9,9 +9,25 @@ import {
   type AccountStorePort,
 } from '@dltech/atlas-core'
 
-import { clientFor, unsupportedProvider, type OauthClients, type Pkce } from './oauth'
+import {
+  canDeviceLogin,
+  canPasteLogin,
+  clientFor,
+  EDevicePoll,
+  unsupportedProvider,
+  type DeviceLogin,
+  type OauthClients,
+  type OauthLogin,
+  type Pkce,
+} from './oauth'
 
 export type LoginTicket = { provider: EAuthProvider; url: string; pkce: Pkce }
+
+export type DeviceTicket = { provider: EAuthProvider } & DeviceLogin
+
+export type DeviceSignIn =
+  | { status: EDevicePoll.Pending }
+  | { status: EDevicePoll.Complete; account: Account }
 
 const labelFor = (args: {
   provider: EAuthProvider
@@ -46,6 +62,8 @@ export class AccountsService {
       throw unsupportedProvider(provider)
 
     const client = clientFor({ clients: this.clients, provider })
+    if (!canPasteLogin(client)) throw unsupportedProvider(provider)
+
     const pkce = client.generatePkce()
 
     return { provider, url: client.authorizeUrl(pkce), pkce }
@@ -53,22 +71,55 @@ export class AccountsService {
 
   async complete(args: { ticket: LoginTicket; pasted: string }): Promise<Account> {
     const client = clientFor({ clients: this.clients, provider: args.ticket.provider })
+    if (!canPasteLogin(client)) throw unsupportedProvider(args.ticket.provider)
+
     const login = await client.exchange({ pasted: args.pasted, pkce: args.ticket.pkce })
 
-    const added = await this.accounts.add({
-      provider: args.ticket.provider,
-      label: labelFor({
-        provider: args.ticket.provider,
-        email: login.email,
-        subscription: login.subscription,
-      }),
-      secret: { kind: EAuthKind.Oauth, tokens: login.tokens },
-      origin: EAccountOrigin.Login,
-      ...(login.email === undefined ? {} : { email: login.email }),
-      ...(login.subscription === undefined ? {} : { subscription: login.subscription }),
+    return this.addLogin({ provider: args.ticket.provider, login })
+  }
+
+  async beginDevice(provider: EAuthProvider): Promise<DeviceTicket> {
+    if (!providerSpec(provider).logins.includes(ELoginFlow.DeviceCode))
+      throw unsupportedProvider(provider)
+
+    const client = clientFor({ clients: this.clients, provider })
+    if (!canDeviceLogin(client)) throw unsupportedProvider(provider)
+
+    return { provider, ...(await client.startDeviceLogin()) }
+  }
+
+  async pollDevice(ticket: DeviceTicket): Promise<DeviceSignIn> {
+    const client = clientFor({ clients: this.clients, provider: ticket.provider })
+    if (!canDeviceLogin(client)) throw unsupportedProvider(ticket.provider)
+
+    const poll = await client.pollDeviceLogin({
+      deviceAuthId: ticket.deviceAuthId,
+      userCode: ticket.userCode,
     })
 
-    await this.accounts.setActive({ provider: args.ticket.provider, accountId: added.id })
+    if (poll.status === EDevicePoll.Pending) return poll
+
+    return {
+      status: EDevicePoll.Complete,
+      account: await this.addLogin({ provider: ticket.provider, login: poll.login }),
+    }
+  }
+
+  private async addLogin(args: { provider: EAuthProvider; login: OauthLogin }): Promise<Account> {
+    const added = await this.accounts.add({
+      provider: args.provider,
+      label: labelFor({
+        provider: args.provider,
+        email: args.login.email,
+        subscription: args.login.subscription,
+      }),
+      secret: { kind: EAuthKind.Oauth, tokens: args.login.tokens },
+      origin: EAccountOrigin.Login,
+      ...(args.login.email === undefined ? {} : { email: args.login.email }),
+      ...(args.login.subscription === undefined ? {} : { subscription: args.login.subscription }),
+    })
+
+    await this.accounts.setActive({ provider: args.provider, accountId: added.id })
 
     return added
   }

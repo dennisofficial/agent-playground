@@ -5,6 +5,7 @@ export type OauthCredential = {
   accountId: AccountId
   accessToken: string
   expiresAt: string
+  providerAccountId?: string | undefined
 }
 
 export type ApiKeyCredential = {

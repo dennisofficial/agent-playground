@@ -51,6 +51,11 @@ const PROMPT_HINTS: readonly Hint[] = [
   { key: 'esc', label: 'cancel' },
 ]
 
+const DEVICE_HINTS: readonly Hint[] = [
+  { key: 'click', label: 'reopen url' },
+  { key: 'esc', label: 'cancel' },
+]
+
 export const OPEN_URL_HINT =
   'Opened in your browser. Approve, then paste the code. Click to reopen:'
 
@@ -185,6 +190,35 @@ function Prompt(props: {
           spans={[{ text: `Paste a ${provider ?? ''} api key and press enter.`, fg: theme.hint }]}
           cells={props.cells}
         />
+      ) : state.view === EAccountsView.DeviceCode ? (
+        <>
+          {state.prompt?.userCode === undefined || state.prompt.userCode.length === 0 ? (
+            <TextLine
+              spans={[{ text: 'Asking OpenAI for a code…', fg: theme.hint }]}
+              cells={props.cells}
+            />
+          ) : (
+            <>
+              <TextLine
+                spans={[
+                  { text: 'Enter this code to sign in: ', fg: theme.hint },
+                  { text: state.prompt.userCode, fg: theme.bright },
+                ]}
+                cells={props.cells}
+              />
+              <Wrapped
+                text={state.prompt.url}
+                cells={props.cells}
+                fg={theme.court.external}
+                press={press(props.onOpenUrl)}
+              />
+              <TextLine
+                spans={[{ text: 'waiting for approval…', fg: theme.hint }]}
+                cells={props.cells}
+              />
+            </>
+          )}
+        </>
       ) : (
         <>
           <TextLine
@@ -200,13 +234,15 @@ function Prompt(props: {
           />
         </>
       )}
-      <TextLine
-        spans={[
-          { text: `${glyph.marker} `, fg: theme.accent },
-          { text: typing.length === 0 ? 'waiting for a paste…' : typing, fg: theme.bright },
-        ]}
-        cells={props.cells}
-      />
+      {state.view === EAccountsView.DeviceCode ? null : (
+        <TextLine
+          spans={[
+            { text: `${glyph.marker} `, fg: theme.accent },
+            { text: typing.length === 0 ? 'waiting for a paste…' : typing, fg: theme.bright },
+          ]}
+          cells={props.cells}
+        />
+      )}
       {state.busy ? (
         <TextLine spans={[{ text: 'working…', fg: theme.hint }]} cells={props.cells} />
       ) : null}
@@ -236,7 +272,13 @@ export function Accounts(props: {
         <>
           <DrawerGap />
           <DrawerHints
-            hints={prompting ? PROMPT_HINTS : LIST_HINTS}
+            hints={
+              prompting
+                ? props.state.view === EAccountsView.DeviceCode
+                  ? DEVICE_HINTS
+                  : PROMPT_HINTS
+                : LIST_HINTS
+            }
             cells={cells}
             onDismiss={props.onDismiss}
           />

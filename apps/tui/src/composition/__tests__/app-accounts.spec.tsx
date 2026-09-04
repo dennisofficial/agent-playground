@@ -1,5 +1,10 @@
 import { EAccountOrigin, EAuthKind, EAuthProvider, toThreadId } from '@dltech/atlas-core'
-import { AccountsService, memoryAccountStore, SystemClock } from '@dltech/atlas-harness'
+import {
+  AccountsService,
+  EDevicePoll,
+  memoryAccountStore,
+  SystemClock,
+} from '@dltech/atlas-harness'
 import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
@@ -60,6 +65,33 @@ const accountsHolding = async (labels: readonly string[]): Promise<AccountsServi
         refresh: async () => ({
           accessToken: 'access-2',
           refreshToken: 'refresh-2',
+          expiresAt: '2099-01-01T00:00:00.000Z',
+        }),
+      },
+      [EAuthProvider.OpenAI]: {
+        startDeviceLogin: async () => ({
+          deviceAuthId: 'da-1',
+          userCode: 'ABCD-EFGH',
+          verificationUrl: 'https://auth.openai.com/codex/device',
+          intervalMs: 100,
+          expiresInMs: 900_000,
+        }),
+        pollDeviceLogin: async () => ({
+          status: EDevicePoll.Complete,
+          login: {
+            tokens: {
+              accessToken: 'openai-access',
+              refreshToken: 'openai-refresh',
+              expiresAt: '2099-01-01T00:00:00.000Z',
+              accountId: 'acct-123',
+            },
+            email: 'codex-user@example.com',
+            subscription: 'plus',
+          },
+        }),
+        refresh: async () => ({
+          accessToken: 'openai-access-2',
+          refreshToken: 'openai-refresh-2',
           expiresAt: '2099-01-01T00:00:00.000Z',
         }),
       },
@@ -306,6 +338,36 @@ describe('the accounts overlay', () => {
       await setup.flush()
 
       expect(setup.captureCharFrame()).toContain('signed-in@example.com')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('shows the device code for OpenAI and signs in once the poll completes', async () => {
+    const app = await appWith([])
+    const setup = await opened({ app })
+
+    try {
+      await openOverlay(setup)
+      setup.mockInput.pressArrow('down')
+      await setup.flush()
+      await settle(120)
+      setup.mockInput.pressKey('n')
+      await setup.flush()
+      await settle(200)
+      await setup.flush()
+
+      const prompting = setup.captureCharFrame()
+      expect(prompting).toContain('ABCD-EFGH')
+      expect(prompting).toContain('auth.openai.com/codex/device')
+      expect(app.openedUrls).toEqual(['https://auth.openai.com/codex/device'])
+
+      await settle(3500)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain('codex-user@example.com')
+      expect(await app.accounts.activeFor(EAuthProvider.OpenAI)).not.toBeUndefined()
     } finally {
       await teardown(setup)
     }
