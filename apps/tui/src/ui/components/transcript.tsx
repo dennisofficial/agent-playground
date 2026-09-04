@@ -10,6 +10,7 @@ import { applyTranscriptBounds } from '../viewport-rows-store'
 import { ErrorBlock } from './blocks/error-block'
 import { PendingBlock } from './blocks/pending-block'
 import { ResumeBlock } from './blocks/resume-block'
+import { openedSubsetOf, type OpenedSubsets } from './blocks/tool-run-expansion'
 import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
 import { PeekLine } from './peek-line'
@@ -95,6 +96,7 @@ export function Transcript(props: {
 
   const opened = props.opened ?? ownOpened
   const handleToggle = props.onToggle ?? handleOwnToggle
+  const openedSubsets = useMemo((): OpenedSubsets => new WeakMap(), [])
 
   const peekLine =
     viewport.tailing || peeked === null ? null : (
@@ -130,7 +132,9 @@ export function Transcript(props: {
               entry={entry}
               width={props.width}
               expanded={opened.has(entry.key)}
-              opened={opened}
+              {...(entry.kind === EEntryKind.ToolsRan
+                ? { opened: openedSubsetOf({ cache: openedSubsets, run: entry.run, opened }) }
+                : {})}
               onToggle={handleToggle}
               cwd={props.cwd}
               continues={model.entries[index - 1]?.kind === EEntryKind.ToolsRan}

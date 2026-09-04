@@ -11,6 +11,7 @@ import {
 
 import {
   createConversationStore,
+  sameEvents,
   type ConversationStore,
   type EThinkingVisibility,
   type SidebarModel,
@@ -97,23 +98,41 @@ export function useThreadView(args: {
 
   const paceReveal = args.paceReveal ?? false;
 
-  const [events, setEvents] = useState<readonly Event[]>(
+  const [events, setEventsState] = useState<readonly Event[]>(
     () => initial?.().events ?? NO_EVENTS,
   );
+  /**
+   * A refresh that re-read the log it already has must not cost a render: the OpenTUI reconciler
+   * commits even when a setState updater returns its current value, so the no-op case never
+   * dispatches. The ref holds the truth synchronously, where the state lags a commit behind.
+   */
+  const heldEvents = useRef(events);
+  const setEvents = useCallback((next: readonly Event[]) => {
+    if (sameEvents({ left: heldEvents.current, right: next })) return;
+
+    heldEvents.current = next;
+    setEventsState(next);
+  }, []);
   const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS);
   const characters = useRef(0);
 
   /**
    * `characters` counts for the token estimate but is not itself on screen, so a chunk that moves
-   * only it must not cost a render — the ref keeps the count while the state keeps the clock.
+   * only it must not cost a render — the ref keeps the count while the state keeps the clock. The
+   * clock is compared ahead of dispatch for the same reason: the OpenTUI reconciler commits even
+   * when an updater returns its current value, so an unchanged clock never reaches setProgress.
    */
+  const heldProgress = useRef(progress);
   const stamp = useCallback(
-    (advance: (progress: TurnProgress) => TurnProgress) =>
-      setProgress((current) => {
-        const next = advance({ characters: characters.current, clock: current.clock });
-        characters.current = next.characters;
-        return next.clock === current.clock ? current : next;
-      }),
+    (advance: (progress: TurnProgress) => TurnProgress) => {
+      const current = heldProgress.current;
+      const next = advance({ characters: characters.current, clock: current.clock });
+      characters.current = next.characters;
+      if (next.clock === current.clock) return;
+
+      heldProgress.current = next;
+      setProgress(next);
+    },
     [],
   );
 
@@ -145,7 +164,7 @@ export function useThreadView(args: {
     if (initial === undefined) return;
 
     setEvents(initial().events);
-  }, [initial]);
+  }, [initial, setEvents]);
 
   useEffect(() => () => store.dispose(), [store]);
 

@@ -17,13 +17,15 @@ import {
   type RevealGate,
 } from "./reveal";
 import {
+  sameSidebar,
   sidebarFoldOf,
   sidebarFrom,
   type SidebarEventFold,
   type SidebarModel,
 } from "./sidebar-model";
 import { pendingTldrOf, subscribeTldrFeed } from "../ui/tldr-feed-store";
-import type { ModelPriceLookup, SidebarSpend } from "./sidebar-spend";
+import { sameEvents, sameTurns } from "./same-log";
+import type { ModelPriceLookup } from "./sidebar-spend";
 import { stabilisedEntries } from "./stable-entries";
 import { createStepTracker } from "./step-tracker";
 import { SHIPPED_THINKING, type EThinkingVisibility } from "./thinking-fold";
@@ -99,29 +101,6 @@ export function createConversationStore(args: {
 
   const sidebarNow = (): SidebarModel =>
     sidebarFrom({ fold: foldNow(), turn, turns, priceOf: args.priceOf, name });
-
-  const sameSpend = (left: SidebarSpend, right: SidebarSpend): boolean =>
-    left.costUsd === right.costUsd &&
-    left.totals.turns === right.totals.turns &&
-    left.totals.steps === right.totals.steps &&
-    left.totals.inputTokens === right.totals.inputTokens &&
-    left.totals.outputTokens === right.totals.outputTokens &&
-    left.totals.cacheReadTokens === right.totals.cacheReadTokens &&
-    left.totals.cacheWriteTokens === right.totals.cacheWriteTokens
-
-  const sameSidebar = (left: SidebarModel, right: SidebarModel): boolean =>
-    left.title === right.title &&
-    left.turnCount === right.turnCount &&
-    sameSpend(left.spend, right.spend) &&
-    left.approvals === right.approvals &&
-    left.lastActivity === right.lastActivity &&
-    left.todo === right.todo &&
-    left.subagents === right.subagents &&
-    left.crewFold === right.crewFold &&
-    left.teammates === right.teammates &&
-    left.sections === right.sections &&
-    left.classifier === right.classifier &&
-    left.grants === right.grants
 
   let model = assembleTranscript({ durable: durableNow(), live: [], thinking, pendingTldr, tldrStatus })
   let sidebar = sidebarNow()
@@ -241,6 +220,11 @@ export function createConversationStore(args: {
     getSidebar: () => sidebar,
 
     setEvents(next) {
+      const logMoved = !sameEvents({ left: events, right: next.events });
+      const spendMoved =
+        next.turns !== undefined && !sameTurns({ left: turns, right: next.turns });
+      if (!logMoved && !spendMoved) return;
+
       events = next.events;
       if (next.turns !== undefined) turns = next.turns;
       republish();

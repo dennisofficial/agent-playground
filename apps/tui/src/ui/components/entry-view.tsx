@@ -33,7 +33,7 @@ function DerivedEntryView(props: {
    * path the tool was actually handed.
    */
   cwd?: string
-  /** The transcript's whole expansion set — a tool run owns three levels of it, not one flag. */
+  /** The run's own slice of the expansion set — a tool run owns three levels of it, not one flag. */
   opened?: ReadonlySet<string>
   /** Whether the entry above was also a tool run, so this one continues a cluster rather than opening one. */
   continues?: boolean
