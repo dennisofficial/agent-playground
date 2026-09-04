@@ -46,6 +46,12 @@ trap 'rm -f "$restart_file"' EXIT
 export ATLAS_DEV_RESTART_FILE="$restart_file"
 export ATLAS_DEV=1
 
+# Bun resolves react's development build when NODE_ENV is unset, and a profiler showed the dev
+# reconciler at a quarter of a session's CPU (per-element prop diffing and Error-stack capture).
+# The shipped binary is built with NODE_ENV=production; a source launch should run the same build
+# it is standing in for.
+export NODE_ENV=production
+
 generate
 
 # Every source launch profiles itself at Bun's default 1 ms sampling interval: cheap enough that
