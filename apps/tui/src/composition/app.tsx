@@ -42,6 +42,8 @@ import { pasteDirectoryOf } from './paste-directory'
 import { Footer, type FooterContext } from '../ui/components/footer'
 import { footerLayout } from '../ui/footer-layout'
 import { Screen } from '../ui/components/screen'
+import { HeaderBar } from '../ui/components/header-bar'
+import { useDiffStat } from '../ui/hooks/use-diff-stat'
 import { AgentTypes } from '../ui/components/agent-types'
 import { LostChildren } from '../ui/components/lost-children'
 import { hasLostChildren, lostChildrenNotice } from '../ui/lost-children-model'
@@ -470,6 +472,10 @@ function Workspace(props: {
       ? conversation.projectDirectory
       : null)
   const projectRoot = sidebarWorktree === null ? conversation.projectDirectory : repoRoot
+  const headerDiff = useDiffStat({
+    projectDirectory: conversation.projectDirectory,
+    working: conversation.working,
+  })
   const docked = wide && !welcome
   const contentWidth = contentWidthOf({ width, sidebarWidth, docked })
   const chromeWidth = chromeWidthOf({ width, sidebarWidth, docked })
@@ -997,6 +1003,14 @@ function Workspace(props: {
     <Screen>
       <SelectionSurface>
         <box flexDirection="column" width={contentWidth} flexGrow={1} flexShrink={1} flexBasis={0}>
+          {welcome ? null : (
+            <HeaderBar
+              width={chromeWidth}
+              projectDirectory={conversation.projectDirectory}
+              repoRoot={repoRoot}
+              diff={headerDiff}
+            />
+          )}
           <box flexDirection="column" flexGrow={1} flexShrink={1}>
             <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
             {welcome ? (
