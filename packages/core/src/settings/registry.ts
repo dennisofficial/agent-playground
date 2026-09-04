@@ -40,6 +40,7 @@ export enum ESettingId {
   SubagentModel = 'agents.subagentModel',
   DatabaseUrl = 'store.databaseUrl',
   KeychainService = 'credentials.keychainService',
+  AutoRestart = 'dev.autoRestart',
 }
 
 export const DEFAULT_WORKTREE_DIRECTORY = '.atlas/worktrees'
@@ -328,6 +329,17 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 10,
     step: 1,
     unit: ' s',
+  },
+  {
+    id: ESettingId.AutoRestart,
+    page: ESettingPage.General,
+    group: 'Development',
+    label: 'Restart atlas-dev when it goes stale',
+    description:
+      'Only an atlas-dev session can go stale — one running straight from the source tree, while the tree moves under it. When it does, the session exits at the end of the next turn and the wrapper rebuilds from source and relaunches, resuming the conversation where it was. The restart never fires while tasks are still running, a message is queued or half-typed, or an approval is waiting — then the stale notice stands instead, and the restart waits for a clean moment. Off means the notice is all you ever get.',
+    environmentVariable: 'ATLAS_AUTO_RESTART',
+    kind: ESettingKind.Toggle,
+    fallback: true,
   },
   {
     id: ESettingId.WebSearchBackend,

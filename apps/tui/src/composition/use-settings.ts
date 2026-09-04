@@ -55,6 +55,7 @@ export type SettingsControl = {
   sidebarWidth: number
   sidebarFoldBelow: number
   autoCompactAtPercent: number
+  autoRestart: boolean
   noticeSeconds: number
   paceReveal: boolean
   thinking: EThinkingVisibility
@@ -217,6 +218,7 @@ export function useSettings(args: {
       id: ESettingId.AutoCompact,
       fallback: AUTO_COMPACT_AT_PERCENT,
     }),
+    autoRestart: toggleValueOf({ resolution: held.resolution, id: ESettingId.AutoRestart }),
     noticeSeconds: rangeValueOf({
       resolution: held.resolution,
       id: ESettingId.NoticeSeconds,
