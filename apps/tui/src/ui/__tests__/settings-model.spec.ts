@@ -44,8 +44,9 @@ describe('settingsModel', () => {
       ['Development', 1],
       ['Web', 2],
       ['Model', 2],
+      ['Execution', 4],
     ])
-    expect(general?.rows).toHaveLength(24)
+    expect(general?.rows).toHaveLength(28)
   })
 
   it('keeps the appearance page to its colour, its density and its composer', () => {
@@ -82,7 +83,7 @@ describe('moving around the page', () => {
     const top = openSettings()
 
     expect(moveRow({ state: top, model, delta: -1 })).toEqual({ pageIndex: 0, rowIndex: 0 })
-    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 23 })
+    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 27 })
   })
 
   it('wraps around the tab strip and lands on its first row', () => {

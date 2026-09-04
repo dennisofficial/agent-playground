@@ -46,11 +46,6 @@ async function credentialRefusal(app: AtlasApp): Promise<CredentialDiagnosis | n
   }
 }
 
-/**
- * The safety net for sessions that died hard: a container labelled for a worktree that is neither
- * in this repository's worktree list nor on disk is orphaned, and removing it is what keeps `docker
- * ps` honest. Never awaited — boot does not wait on a daemon.
- */
 async function sweepOrphanedSandboxes(args: { cwd: string }): Promise<void> {
   const socketPath = process.env.ATLAS_DOCKER_SOCKET ?? DEFAULT_DOCKER_SOCKET
   if (!existsSync(socketPath)) return
@@ -90,10 +85,6 @@ async function startSession(args: {
   progress.report(EBootStep.Composing)
   const app = await composeAtlas({ config, env: args.env, settings: args.settings })
 
-  /**
-   * A credential Atlas cannot use is no longer a reason to refuse to start: the accounts overlay is
-   * inside the app, so the session opens carrying what went wrong and offers the fix.
-   */
   progress.report(EBootStep.Authorising)
   const refused = await credentialRefusal(app)
 
@@ -127,10 +118,6 @@ async function startSession(args: {
   }
 }
 
-/**
- * Never rejects: the curtain and the boot path both hold this promise, and a rejection racing the
- * renderer's own startup would be reported before either could restore the terminal.
- */
 export function openSession(args: {
   config: AtlasConfig
   env: Record<string, string | undefined>

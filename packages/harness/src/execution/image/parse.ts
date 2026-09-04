@@ -94,36 +94,36 @@ const isReservedPath = (path: string): boolean => {
 type MountPathCheck = { ok: true; path: string } | { ok: false; refusal: ConfigRefusal }
 
 const checkMountPath = (args: { path: string; file: string }): MountPathCheck => {
-  const refused = (refusal: EConfigRefusal, detail: string): MountPathCheck => ({
+  const refused = (because: { refusal: EConfigRefusal; detail: string }): MountPathCheck => ({
     ok: false,
-    refusal: { refusal, file: args.file, detail },
+    refusal: { refusal: because.refusal, file: args.file, detail: because.detail },
   })
 
   const path = posix.normalize(args.path).replace(/\/+$/, '') || '/'
 
   if (!posix.isAbsolute(args.path)) {
-    return refused(
-      EConfigRefusal.MountRelative,
-      `mount "${args.path}" is not an absolute host path — mounts must be absolute, because they are bind-mounted at their own path inside the container`,
-    )
+    return refused({
+      refusal: EConfigRefusal.MountRelative,
+      detail: `mount "${args.path}" is not an absolute host path — mounts must be absolute, because they are bind-mounted at their own path inside the container`,
+    })
   }
   if (args.path.split('/').includes('..')) {
-    return refused(
-      EConfigRefusal.MountDotDot,
-      `mount "${args.path}" contains a ".." component — name the real path instead`,
-    )
+    return refused({
+      refusal: EConfigRefusal.MountDotDot,
+      detail: `mount "${args.path}" contains a ".." component — name the real path instead`,
+    })
   }
   if (path.length > MAX_MOUNT_PATH_LENGTH) {
-    return refused(
-      EConfigRefusal.MountOverLong,
-      `mount "${args.path}" is ${path.length} characters, over the ${MAX_MOUNT_PATH_LENGTH} limit`,
-    )
+    return refused({
+      refusal: EConfigRefusal.MountOverLong,
+      detail: `mount "${args.path}" is ${path.length} characters, over the ${MAX_MOUNT_PATH_LENGTH} limit`,
+    })
   }
   if (isReservedPath(path)) {
-    return refused(
-      EConfigRefusal.MountReserved,
-      `mount "${args.path}" targets a reserved container path — mounting over it would shadow the toolchain or the runtime`,
-    )
+    return refused({
+      refusal: EConfigRefusal.MountReserved,
+      detail: `mount "${args.path}" targets a reserved container path — mounting over it would shadow the toolchain or the runtime`,
+    })
   }
 
   return { ok: true, path }

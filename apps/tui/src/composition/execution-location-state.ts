@@ -8,12 +8,6 @@ export type ExecutionLocationState = {
   subscribe: (listener: () => void) => () => void
 }
 
-/**
- * Two readings of the same truth: the cell is where the conversation on screen runs, and the
- * per-thread record is what the process router asks, since a spawn names its thread rather than
- * the one being viewed. Only threads the operator has opened this session are noted; the router's
- * fallback for any other is the cell itself.
- */
 export function createExecutionLocationState(args: {
   initial: EExecutionLocation
 }): ExecutionLocationState {

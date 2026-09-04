@@ -9,12 +9,6 @@ export type ExecutionLocationControl = {
   handleSet: (location: EExecutionLocation) => void
 }
 
-/**
- * The same two-preference split as the model: the thread column is where the conversation was last
- * switched, the settings row is only what a conversation with nothing of its own begins on. The
- * cell is the truth the assembly pipeline reads synchronously, so a switch reaches the next turn
- * without waiting on the store.
- */
 export function useExecutionLocation(args: {
   app: AtlasApp
   threadId: ThreadId

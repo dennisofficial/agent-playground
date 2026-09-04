@@ -24,11 +24,6 @@ const markFor = (state: ESandboxState): Span => {
 const portsLabel = (ports: SidebarContainer['ports']): string =>
   ports.map((one) => `${one.containerPort}→${one.hostPort}`).join('  ')
 
-/**
- * State, image, ports — and a reason only in the one state where the operator must be told more
- * than a word. Nothing here ticks: no uptime, no load, nothing that would pull the eye off the
- * transcript for no information.
- */
 export function ContainerSection(props: {
   container: SidebarContainer
   cells: number

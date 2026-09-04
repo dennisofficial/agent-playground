@@ -8,7 +8,11 @@ export type SandboxStatusState = {
   subscribe: (listener: () => void) => () => void
 }
 
-const merged = (held: SidebarContainer, status: SandboxStatus): SidebarContainer => {
+const merged = (args: {
+  held: SidebarContainer
+  status: SandboxStatus
+}): SidebarContainer => {
+  const { held, status } = args
   switch (status.state) {
     case ESandboxState.Starting:
       return { ...held, state: status.state }
@@ -21,11 +25,6 @@ const merged = (held: SidebarContainer, status: SandboxStatus): SidebarContainer
   }
 }
 
-/**
- * A sandbox nobody has needed yet does not exist, which the pill reads as stopped; the image is
- * known from the resolved configuration before anything runs, so it is held from creation rather
- * than learned from the daemon.
- */
 export function createSandboxStatusState(args: { image: string }): SandboxStatusState {
   let held: SidebarContainer = { state: ESandboxState.Stopped, image: args.image, ports: [] }
   const listeners = new Set<() => void>()
@@ -33,7 +32,7 @@ export function createSandboxStatusState(args: { image: string }): SandboxStatus
   return {
     current: () => held,
     mark: (status) => {
-      held = merged(held, status)
+      held = merged({ held, status })
       for (const listener of listeners) listener()
     },
     subscribe: (listener) => {

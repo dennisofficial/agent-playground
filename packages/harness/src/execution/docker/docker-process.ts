@@ -88,11 +88,6 @@ export class DockerProcessPort implements ProcessPort {
     return this.collected
   }
 
-  /**
-   * The lifecycle stops the container out from under the cached ensure, so whoever stops it says
-   * so here: the next spawn re-ensures, and ensureSandbox restarts the stopped container rather
-   * than recreating it.
-   */
   sandboxStopped(): void {
     this.sandboxPromise = undefined
     this.imageEnv = undefined

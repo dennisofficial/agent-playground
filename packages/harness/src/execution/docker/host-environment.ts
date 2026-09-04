@@ -37,11 +37,14 @@ const operatorIds = (): { uid: number; gid: number } => {
   return { uid: process.getuid(), gid: process.getgid() }
 }
 
+const containerHomeMatchingHostPath = (env: Record<string, string | undefined>): string =>
+  env.HOME ?? homedir()
+
 export function hostSandboxEnvironment(args?: {
   env?: Record<string, string | undefined>
 }): HostSandboxEnvironment {
   const env = args?.env ?? process.env
-  const home = env.HOME ?? homedir()
+  const home = containerHomeMatchingHostPath(env)
 
   const sshAuthSock = env.SSH_AUTH_SOCK
   const gitconfigPath = join(home, '.gitconfig')

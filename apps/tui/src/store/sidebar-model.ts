@@ -62,11 +62,6 @@ export type SidebarModel = {
   container?: SidebarContainer;
 };
 
-/**
- * What the pill reads: the sandbox's own state off the lifecycle, and the image and bound ports
- * off the sandbox's configuration. Nothing here ticks — a status line that changed on every read
- * would earn another read.
- */
 export type SidebarContainer = {
   state: ESandboxState;
   image: string;
@@ -208,10 +203,6 @@ export function withSections(args: {
   return { ...args.model, sections };
 }
 
-/**
- * The thread's column decides whether there is a pill at all; the sandbox's own state decides what
- * it says. Host mode gets no pill, whatever the sandbox under it is doing.
- */
 export function containerPillOf(args: {
   location: EExecutionLocation;
   container: SidebarContainer;

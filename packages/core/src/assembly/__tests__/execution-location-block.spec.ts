@@ -70,6 +70,7 @@ describe('the execution location block', () => {
     })
 
     expect(tailTextOf(assembled)).toContain('/var/lib/postgres')
+    expect(tailTextOf(assembled)).toContain('not mounted')
   })
 
   it('reflects the switch the moment it happens, because it derives from the column', () => {

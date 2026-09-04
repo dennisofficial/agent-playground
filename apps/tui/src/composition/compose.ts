@@ -470,14 +470,8 @@ export async function composeAtlas(args: {
   })
   const pinnedLocationByFlag = executionPinned({ requested: config.executionLocation })
 
-  /**
-   * Registered before anything resolves the hook chain, which is cached on first resolve: the
-   * model port below is what resolves it, so this block cannot move past it. Binding the routed
-   * process port here also precedes the first ProcessPort resolution, which the shell registry's
-   * cached factory performs.
-   */
   const engine = container.resolve(DockerEngineToken)
-  const { sandbox, containerStatus } = await bindSandbox({
+  const { sandbox, containerStatus, mounts } = await bindSandbox({
     container,
     engine,
     cwd: config.cwd,
@@ -683,7 +677,7 @@ export async function composeAtlas(args: {
       runningShells,
       runningAgents,
       runningServices,
-      executionLocation: () => ({ location: executionLocation.current(), mounts: [] }),
+      executionLocation: () => ({ location: executionLocation.current(), mounts }),
     }),
     launchDirectory: workspace.workspace,
     tools,

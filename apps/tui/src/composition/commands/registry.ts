@@ -58,7 +58,7 @@ export const containerAskOfArgument = (
   return null
 }
 
-const UNKNOWN_CONTAINER_ARGUMENT = (argumentText: string): string =>
+const unknownContainerArgument = (argumentText: string): string =>
   `/container takes no argument to say where this conversation runs, or "off" | "docker" to move it — not ${argumentText.trim()}`
 
 export type LocalCommandHandlers = {
@@ -115,7 +115,7 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
       echo: ECommandEcho.Output,
       run: ({ argumentText }) => {
         const asked = containerAskOfArgument(argumentText)
-        if (asked === null) return refused(UNKNOWN_CONTAINER_ARGUMENT(argumentText))
+        if (asked === null) return refused(unknownContainerArgument(argumentText))
 
         return { type: ECommandEffect.Ran, notice: handlers.onContainer(asked) }
       },

@@ -6,14 +6,6 @@ export type TeardownSource = {
   drainNotifications(args: { threadId: ThreadId }): readonly EventDraft[]
 }
 
-/**
- * Teardown kills every background shell, and those endings are worth keeping: reopening the
- * conversation should say where the dev server went. Nothing is left running to drain them, so the
- * close path appends what teardown produced before the database goes — each ending to the thread
- * that started the shell, which is not necessarily the one on screen when the session ended. The
- * sandbox stops only after that walk: stopping the container reaps the processes inside it, and
- * drained-afterwards endings would arrive empty.
- */
 export async function teardownSession(args: {
   sources: readonly TeardownSource[]
   log: EventLogPort

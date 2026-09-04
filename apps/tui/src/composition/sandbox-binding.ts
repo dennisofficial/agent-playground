@@ -31,11 +31,6 @@ import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import type { ExecutionLocationState } from './execution-location-state'
 import { createSandboxStatusState, type SandboxStatusState } from './sandbox-status-state'
 
-/**
- * The lifecycle of the sandbox labelled for the session's worktree: noteBash feeds the idle
- * stopwatch, stop is what quitting runs after the shells have drained. Keyed to the worktree and
- * nothing else, so /new and thread switches never reach it.
- */
 export type SandboxControl = {
   noteBash: () => void
   stop: () => Promise<boolean>
@@ -44,22 +39,21 @@ export type SandboxControl = {
 const messageOf = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 
-/**
- * The one place the execution binding is chosen: a routed port that answers each spawn, probe and
- * exposure for the thread that asked. The docker side is built on first use — a host-only session
- * never reads the container config beyond resolving it, and a thread the record does not know
- * (a sub-agent's, until issue 13) inherits the conversation on screen.
- */
 export async function bindSandbox(args: {
   container: DependencyContainer
   engine: DockerEngine
   cwd: string
   settings: SettingsService
   executionLocation: ExecutionLocationState
-}): Promise<{ sandbox: SandboxControl; containerStatus: SandboxStatusState }> {
+}): Promise<{
+  sandbox: SandboxControl
+  containerStatus: SandboxStatusState
+  mounts: readonly string[]
+}> {
   const { container, engine, cwd, settings, executionLocation } = args
 
   const resolution = await resolveContainerConfig({ projectDirectory: cwd })
+  const mounts = resolution.mounts.map((mount) => mount.path)
   for (const refusal of resolution.refusals) {
     notify({
       key: `container-refusal:${refusal.file}`,
@@ -170,5 +164,5 @@ export async function bindSandbox(args: {
     },
   }
 
-  return { sandbox, containerStatus: status }
+  return { sandbox, containerStatus: status, mounts }
 }
