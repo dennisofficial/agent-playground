@@ -10,18 +10,23 @@ export type PullRequestChip = {
 const MUTED = { ground: theme.selectedBg, ink: theme.body } as const
 
 /**
- * The fill is the whole reading: a red or amber chip is the reason the pill earns its cells, so
- * the check reading outranks the state reading and no glyph repeats it. An open pull request with
- * no checks configured gets the link blue — green would claim a signal nobody sent.
+ * The one tone every surface shares: the footer paints it as the chip's fill, the sidebar as the
+ * number's ink. A red or amber tone is the reason the pill earns its cells, so the check reading
+ * outranks the state reading. An open pull request with no checks configured gets the link blue —
+ * green would claim a signal nobody sent.
  */
+export function pullRequestStatusColor(badge: PullRequestBadge): string {
+  if (badge.checks === EChecksState.Failing) return theme.error
+  if (badge.checks === EChecksState.Running) return theme.warn
+  if (badge.checks === EChecksState.Passing) return theme.ok
+  if (badge.state === EPullRequestState.Merged) return theme.court.external
+  if (badge.state === EPullRequestState.Open) return theme.link
+  return MUTED.ink
+}
+
 function chipTone(badge: PullRequestBadge): { ground: string; ink: string } {
-  if (badge.checks === EChecksState.Failing) return { ground: theme.error, ink: theme.appBg }
-  if (badge.checks === EChecksState.Running) return { ground: theme.warn, ink: theme.appBg }
-  if (badge.checks === EChecksState.Passing) return { ground: theme.ok, ink: theme.appBg }
-  if (badge.state === EPullRequestState.Merged)
-    return { ground: theme.court.external, ink: theme.appBg }
-  if (badge.state === EPullRequestState.Open) return { ground: theme.link, ink: theme.appBg }
-  return MUTED
+  const tone = pullRequestStatusColor(badge)
+  return tone === MUTED.ink ? MUTED : { ground: tone, ink: theme.appBg }
 }
 
 export function pullRequestChip(badge: PullRequestBadge): PullRequestChip {

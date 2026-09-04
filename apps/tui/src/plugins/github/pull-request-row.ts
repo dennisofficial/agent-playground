@@ -1,7 +1,8 @@
 import type { Span } from '../../ui/components/spans'
 import { cellsOf } from '../../ui/hint-layout'
 import { spinnerFrame, theme } from '../../ui/theme'
-import type { PullRequest } from './pure'
+import { pullRequestStatusColor } from './pull-request-pill'
+import { pullRequestBadge, type PullRequest } from './pure'
 
 const PASSED = '✓'
 
@@ -30,7 +31,9 @@ export function pullRequestRow(args: {
   const { pullRequest, now } = args
   const { tally } = pullRequest
 
-  const number: Span[] = [{ text: `#${pullRequest.number}`, fg: theme.code }]
+  const number: Span[] = [
+    { text: `#${pullRequest.number}`, fg: pullRequestStatusColor(pullRequestBadge(pullRequest)) },
+  ]
   const titled: Span[] = [...number, { text: ` ${pullRequest.state}`, fg: theme.meta }]
   const running: Span[] =
     tally.running === 0
