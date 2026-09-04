@@ -322,6 +322,7 @@ describe('what the fragments actually emit', () => {
   it('skips none of the ported prose, none of which is conditional', () => {
     expect(compiled().skipped).toEqual([
       { id: 'skills.listing', reason: ESkipReason.Empty },
+      { id: 'models.answer-in-text', reason: ESkipReason.Condition },
     ])
   })
 })
@@ -358,6 +359,7 @@ describe('the registration file as the table of contents', () => {
       'skills.listing',
       'web.research',
       'web.untrusted-content',
+      'models.answer-in-text',
     ])
   })
 
@@ -380,11 +382,19 @@ describe('the registration file as the table of contents', () => {
     expect(
       deadFragmentIds({
         fragments: fragments(),
-        contexts: reachablePromptContexts({
-          agents: Object.values(EPromptAgent),
-          providerIds: ['anthropic-oauth'],
-          projectDirectory: '/w',
-        }),
+        contexts: [
+          ...reachablePromptContexts({
+            agents: Object.values(EPromptAgent),
+            providerIds: ['anthropic-oauth'],
+            projectDirectory: '/w',
+          }),
+          {
+            agent: EPromptAgent.Main,
+            provider: { id: 'inference', modelId: 'kimi-k3-fast' },
+            model: { contextWindow: 200_000 },
+            projectDirectory: '/w',
+          },
+        ],
       }),
     ).toEqual([])
   })

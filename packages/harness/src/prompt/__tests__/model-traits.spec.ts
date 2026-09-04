@@ -103,11 +103,19 @@ describe('no builtin fragment is prose no reachable context can select', () => {
     expect(
       deadFragmentIds({
         fragments: builtinFragments(),
-        contexts: reachablePromptContexts({
-          agents: Object.values(EPromptAgent),
-          providerIds: ['anthropic-oauth'],
-          projectDirectory: '/w',
-        }),
+        contexts: [
+          ...reachablePromptContexts({
+            agents: Object.values(EPromptAgent),
+            providerIds: ['anthropic-oauth'],
+            projectDirectory: '/w',
+          }),
+          {
+            agent: EPromptAgent.Main,
+            provider: { id: 'inference', modelId: 'kimi-k3-fast' },
+            model: { contextWindow: 200_000 },
+            projectDirectory: '/w',
+          },
+        ],
       }),
     ).toEqual([])
   })

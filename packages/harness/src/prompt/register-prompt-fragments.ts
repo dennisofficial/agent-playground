@@ -10,6 +10,7 @@ import {
 } from './fragments/environment'
 import { ReadBeforeWriteFragment, ReadWideFragment } from './fragments/files'
 import { AtlasIdentityFragment } from './fragments/identity'
+import { AnswerInTextFragment } from './fragments/models'
 import {
   CiteFileAndLineFragment,
   CutOrderFragment,
@@ -67,6 +68,7 @@ export function registerBuiltinPromptFragments({
     SkillListingFragment,
     WebResearchFragment,
     UntrustedWebContentFragment,
+    AnswerInTextFragment,
   ]
 
   for (const fragment of fragments) {
