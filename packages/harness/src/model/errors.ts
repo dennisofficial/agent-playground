@@ -5,6 +5,13 @@ export class ModelStreamError extends Error {
   }
 }
 
+export class StreamStallError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'StreamStallError'
+  }
+}
+
 export class MessageConversionError extends Error {
   constructor(message: string) {
     super(message)
