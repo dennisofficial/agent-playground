@@ -4,6 +4,7 @@ import type { ServiceSnapshot } from '@dltech/atlas-harness'
 
 import { plural } from '../../../store/tools/reading'
 import type { SidebarCrewFold } from '../../../store/subagent-row'
+import { usePress } from '../../hooks/use-press'
 import { isServiceRunning, serviceNameLabel, serviceReadout } from '../../services-model'
 import { glyph, theme } from '../../theme'
 import type { Span } from '../spans'
@@ -35,7 +36,9 @@ export function ServicesSection(props: {
   now: number
   cells: number
   fold?: SidebarCrewFold | undefined
+  onOpen?: (serviceId: string) => void
 }): React.ReactNode {
+  const press = usePress()
   const hidden = props.fold?.hidden ?? 0
   if (props.services.length === 0 && hidden === 0) return null
 
@@ -44,7 +47,13 @@ export function ServicesSection(props: {
   return (
     <Section label="Services" count={`${running}/${props.services.length + hidden}`}>
       {props.services.map((service) => (
-        <box key={service.serviceId} flexShrink={0}>
+        <box
+          key={service.serviceId}
+          flexShrink={0}
+          {...press(
+            props.onOpen === undefined ? undefined : () => props.onOpen?.(service.serviceId),
+          )}
+        >
           <Row
             label={serviceNameLabel(service)}
             labelFg={isServiceRunning(service) ? theme.hover : theme.meta}

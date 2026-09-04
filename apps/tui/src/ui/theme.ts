@@ -1,4 +1,4 @@
-export { ACCENT, CODE_BLUE, theme } from './palette'
+export { ACCENT, CODE_BLUE, SERVICE_BLUE, theme } from './palette'
 export type { Palette } from './palette'
 export { glyph, SPINNER_FRAMES, SPINNER_FRAME_MS, spinnerFrame } from './glyphs'
 

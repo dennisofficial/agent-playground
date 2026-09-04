@@ -114,6 +114,7 @@ import { useSettings } from './use-settings'
 import { useServices } from './use-services'
 import { useShells } from './use-shells'
 import { subagentsSurface } from './agents-surface'
+import { servicesSurface } from './services-surface'
 import { shellsSurface } from './shells-surface'
 import { usePluginSurfaces } from './use-plugin-surfaces'
 import { useFooterStrip } from './use-footer-strip'
@@ -800,6 +801,7 @@ function Workspace(props: {
     surfaces: [
       ...props.app.pluginSurfaces,
       shellsSurface({ shells }),
+      servicesSurface({ services }),
       subagentsSurface({ agents, picker: agentsPicker }),
     ],
   })
@@ -921,6 +923,7 @@ function Workspace(props: {
     covering(rewind.state !== null, rewind.handleKey),
     covering(switcher.state !== null, switcher.handleKey),
     covering(shells.state !== null, shells.handleKey),
+    covering(services.state !== null, services.handleKey),
     covering(accounts.state !== null, accounts.handleKey),
     covering(threads.state !== null, threads.handleKey),
     covering(agentsPicker.state !== null, agentsPicker.handleKey),
@@ -1096,6 +1099,7 @@ function Workspace(props: {
             serviceNow={services.now}
             serviceFold={services.fold}
             onOpenShell={shells.handleOpen}
+            onOpenService={services.handleOpen}
             onSelectSubagent={agentView.handleSelect}
             onRevokeGrant={conversation.handleRevokeGrant}
           />

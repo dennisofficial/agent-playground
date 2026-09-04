@@ -97,6 +97,7 @@ export function Sidebar(props: {
   serviceNow?: number;
   serviceFold?: SidebarCrewFold;
   onOpenShell?: (shellId: string) => void;
+  onOpenService?: (serviceId: string) => void;
   onSelectSubagent?: (agentId: string) => void;
   onRevokeGrant?: (grantId: string) => void;
 }): React.ReactNode {
@@ -150,6 +151,9 @@ export function Sidebar(props: {
               now={props.serviceNow ?? Date.now()}
               cells={cells}
               fold={props.serviceFold}
+              {...(props.onOpenService === undefined
+                ? {}
+                : { onOpen: props.onOpenService })}
             />
             <GrantsSection
               grants={model.grants ?? []}

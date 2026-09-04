@@ -2,6 +2,9 @@ export const ACCENT = '#d97757'
 
 export const CODE_BLUE = '#7cbdff'
 
+/** The steel blue the legacy web app used for its `--blue` token in dark mode. */
+export const SERVICE_BLUE = '#7d9be0'
+
 export type DiffTints = {
   addBg: string
   removeBg: string

@@ -3,8 +3,47 @@ import type { ServiceSnapshot } from '@dltech/atlas-harness'
 
 import { formatElapsed } from './theme'
 
+export type ServicesState = { index: number }
+
 export const isServiceRunning = (service: { status: EServiceStatus }): boolean =>
   service.status === EServiceStatus.Running
+
+export function openServices(args: {
+  services: readonly ServiceSnapshot[]
+  serviceId?: string
+}): ServicesState {
+  const asked = args.services.findIndex((service) => service.serviceId === args.serviceId)
+  if (asked >= 0) return { index: asked }
+
+  const running = args.services.findIndex(isServiceRunning)
+  return { index: running >= 0 ? running : 0 }
+}
+
+export function moveServiceSelection(args: {
+  state: ServicesState
+  count: number
+  delta: number
+}): ServicesState {
+  if (args.count <= 0) return { index: 0 }
+
+  const moved = args.state.index + Math.trunc(args.delta)
+  return { index: Math.min(Math.max(moved, 0), args.count - 1) }
+}
+
+export function selectService(args: {
+  services: readonly ServiceSnapshot[]
+  serviceId: string
+}): ServicesState {
+  const found = args.services.findIndex((service) => service.serviceId === args.serviceId)
+  return { index: found < 0 ? 0 : found }
+}
+
+export function selectedService(args: {
+  state: ServicesState
+  services: readonly ServiceSnapshot[]
+}): ServiceSnapshot | undefined {
+  return args.services[Math.min(Math.max(args.state.index, 0), args.services.length - 1)]
+}
 
 export const isServiceAlive = (service: {
   status: EServiceStatus

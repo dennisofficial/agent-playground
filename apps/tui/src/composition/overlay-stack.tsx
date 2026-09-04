@@ -9,6 +9,7 @@ import { CompactingOverlay, type Compacting } from '../ui/components/compacting'
 import { ExitGuard } from '../ui/components/exit-guard'
 import { exitGuardAgentRow, exitGuardRow, exitGuardServiceRow } from '../ui/exit-guard-model'
 import { Rewind } from '../ui/components/rewind'
+import { Services } from '../ui/components/services'
 import { Settings } from '../ui/components/settings'
 import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
@@ -123,6 +124,19 @@ export function OverlayStack(props: {
           overlay
           onKill={shells.handleKill}
           onDismiss={shells.handleDismiss}
+        />
+      )}
+      {props.services.state === null ? null : (
+        <Services
+          width={Math.min(props.contentWidth, props.width)}
+          services={props.services.services}
+          now={props.services.now}
+          selected={props.services.selected}
+          log={props.services.log}
+          scroll={props.services.scroll}
+          overlay
+          onStop={props.services.handleStop}
+          onDismiss={props.services.handleDismiss}
         />
       )}
       {approval.state === null ? null : (
