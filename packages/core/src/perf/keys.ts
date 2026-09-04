@@ -2,8 +2,6 @@ export enum EPerfCounter {
   TranscriptRepublish = 'transcriptRepublish',
   RepublishMs = 'republishMs',
   ChannelChunk = 'channelChunk',
-  PollShellsMs = 'pollMs:shells',
-  PollServicesMs = 'pollMs:services',
   TurnMs = 'turnMs',
   TurnLogReadMs = 'turnLogReadMs',
   TurnAssembleMs = 'turnAssembleMs',

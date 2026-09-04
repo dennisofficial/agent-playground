@@ -65,6 +65,7 @@ export type BackgroundShellSpec = {
   onAwaitingInput: (shell: BackgroundShell) => void
   onMatched: (args: { shell: BackgroundShell; matched: MatchedLines }) => void
   onStillRunning: (shell: BackgroundShell) => void
+  onActivity?: (() => void) | undefined
 }
 
 function stopReading(drains: readonly Drain[]): void {
@@ -235,6 +236,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
   const append = (chunk: string): void => {
     if (chunk === '') return
     buffer.append(chunk)
+    spec.onActivity?.()
     lastOutputAt = spec.clock.now()
     awaitingSettled = false
     watchForMatches(chunk)

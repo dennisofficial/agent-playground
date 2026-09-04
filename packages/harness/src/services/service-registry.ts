@@ -36,6 +36,8 @@ export abstract class ServiceRegistryPort {
   }): Promise<StartedServiceOutcome>
   abstract stop(args: { serviceId: string; by: EKilledBy }): ServiceStopOutcome
   abstract list(): readonly ServiceSnapshot[]
+  abstract version(): number
+  abstract subscribe(listener: () => void): () => void
   abstract drainNotifications(args: { threadId: ThreadId }): readonly EventDraft[]
   abstract pendingNotices(args: { threadId: ThreadId }): readonly ServiceSnapshot[]
   abstract threadsAwaitingNotice(): readonly ThreadId[]
@@ -69,6 +71,10 @@ export class BunServiceRegistry extends ServiceRegistryPort {
    */
   private readonly sessionToken = randomUUID().slice(0, 8)
   private started = 0
+
+  private revision = 0
+  private readonly listeners = new Set<() => void>()
+  private flushQueued = false
 
   constructor(
     private readonly root: string,
@@ -107,10 +113,30 @@ export class BunServiceRegistry extends ServiceRegistryPort {
       threadId: args.threadId,
       announced: false,
     })
+    this.bump()
 
     await within(SERVICE_SETTLE_MS, opened.service.exited)
 
     return { ok: true, snapshot: opened.service.snapshot() }
+  }
+
+  version(): number {
+    return this.revision
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private bump(): void {
+    this.revision += 1
+    if (this.flushQueued) return
+    this.flushQueued = true
+    queueMicrotask(() => {
+      this.flushQueued = false
+      for (const listener of this.listeners) listener()
+    })
   }
 
   stop({ serviceId, by }: { serviceId: string; by: EKilledBy }): ServiceStopOutcome {
@@ -158,6 +184,7 @@ export class BunServiceRegistry extends ServiceRegistryPort {
     for (const entry of entries) entry.service.stop(EKilledBy.SessionEnd)
     await Promise.all(entries.map((entry) => within(KILLED_GRACE_MS, entry.service.exited)))
     this.tracked.clear()
+    this.listeners.clear()
   }
 
   private announceExit(service: Service): void {
@@ -165,6 +192,7 @@ export class BunServiceRegistry extends ServiceRegistryPort {
     if (entry === undefined || entry.announced) return
 
     entry.announced = true
+    this.bump()
     this.notices.queue({ snapshot: service.snapshot(), threadId: entry.threadId })
   }
 }

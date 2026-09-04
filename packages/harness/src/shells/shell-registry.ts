@@ -24,6 +24,7 @@ import { toShellId, type ShellId } from './shell-id'
 import { compileWatch, MATCH_SETTLE_MS, MATCHED_LINES_CAP, type MatchedLines } from './shell-watch'
 
 export const RETAINED_CHARACTERS = 400_000
+export const ACTIVITY_NOTIFY_MS = 100
 export const OVERFLOW_CHARACTERS = 50_000_000
 export const PROMPT_SETTLE_MS = 2_000
 export const CHECK_IN_EVERY_MS = 300_000
@@ -61,6 +62,8 @@ export abstract class ShellRegistryPort {
   abstract kill(args: { shellId: string; by: EKilledBy; threadId: ThreadId }): ShellKillOutcome
   abstract list(args: { threadId: ThreadId }): readonly ShellSnapshot[]
   abstract listEverywhere(): readonly ShellSnapshot[]
+  abstract version(): number
+  abstract subscribe(listener: () => void): () => void
   abstract drainNotifications(args: { threadId: ThreadId }): readonly EventDraft[]
   abstract pendingNotices(args: { threadId: ThreadId }): readonly PendingShellNotice[]
   abstract threadsAwaitingNotice(): readonly ThreadId[]
@@ -81,6 +84,11 @@ export class BunShellRegistry extends ShellRegistryPort {
   )
   private readonly settling = new Set<Promise<void>>()
   private started = 0
+
+  private revision = 0
+  private readonly listeners = new Set<() => void>()
+  private flushQueued = false
+  private activityTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
      private readonly root: string,
@@ -124,6 +132,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       onAwaitingInput: (shell) => this.announceAwaitingInput(shell),
       onMatched: (matched) => this.announceMatched(matched),
       onStillRunning: (shell) => this.announceStillRunning({ shell, checkInMs }),
+      onActivity: () => this.noteActivity(),
     })
     if (!opened.ok) return opened
 
@@ -135,8 +144,44 @@ export class BunShellRegistry extends ShellRegistryPort {
       pattern: args.watch,
     })
     adjustPerfGauge({ key: EPerfGauge.ActiveShells, delta: 1 })
+    this.bump()
 
     return { ok: true, snapshot: opened.shell.snapshot() }
+  }
+
+  version(): number {
+    return this.revision
+  }
+
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  private flush(): void {
+    for (const listener of this.listeners) listener()
+  }
+
+  /** Structural changes (start, exit, awaiting input) flush on the microtask, coalesced. */
+  private bump(): void {
+    this.revision += 1
+    if (this.flushQueued) return
+    this.flushQueued = true
+    queueMicrotask(() => {
+      this.flushQueued = false
+      this.flush()
+    })
+  }
+
+  /** Output arrives per chunk; a chatty shell must not wake a listener per chunk. */
+  private noteActivity(): void {
+    this.revision += 1
+    if (this.flushQueued || this.activityTimer !== null) return
+    this.activityTimer = setTimeout(() => {
+      this.activityTimer = null
+      this.flush()
+    }, ACTIVITY_NOTIFY_MS)
+    this.activityTimer.unref?.()
   }
 
   read({ shellId, threadId }: { shellId: string; threadId: ThreadId }): ShellReadOutcome {
@@ -223,6 +268,11 @@ export class BunShellRegistry extends ShellRegistryPort {
     await Promise.all(running.map((entry) => entry.shell.exited))
     while (this.settling.size > 0) await Promise.all([...this.settling])
     this.tracked.clear()
+    if (this.activityTimer !== null) {
+      clearTimeout(this.activityTimer)
+      this.activityTimer = null
+    }
+    this.listeners.clear()
   }
 
   private ids(threadId: ThreadId): readonly ShellId[] {
@@ -255,6 +305,7 @@ export class BunShellRegistry extends ShellRegistryPort {
 
     entry.announced = true
     adjustPerfGauge({ key: EPerfGauge.ActiveShells, delta: -1 })
+    this.bump()
 
     const settling = this.queueEnding({ entry, shell })
     this.settling.add(settling)
@@ -278,6 +329,7 @@ export class BunShellRegistry extends ShellRegistryPort {
     const entry = this.tracked.get(shell.shellId)
     if (entry === undefined || entry.announced) return
 
+    this.bump()
     this.queue({ kind: ENotice.AwaitingInput, entry, shell })
   }
 

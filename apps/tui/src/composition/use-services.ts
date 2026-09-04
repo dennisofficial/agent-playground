@@ -2,7 +2,6 @@ import type { KeyEvent } from '@opentui/core'
 import { useCallback, useMemo, useState, useEffect } from 'react'
 
 import { EKilledBy, logTail, type ServiceSnapshot } from '@dltech/atlas-harness'
-import { EPerfCounter, measurePerf } from '@dltech/atlas-core'
 
 import { foldServices } from '../store/service-fold'
 import type { SidebarCrewFold } from '../store/subagent-row'
@@ -62,12 +61,9 @@ const sameServices = (
 }
 
 /**
- * A service is live process state rather than an event in the log, so nothing publishes a delta
- * when one exits or starts. Polling is the honest mechanism; the snapshot comparison is what keeps
- * it from re-rendering the tree twice a second while the roster sits idle.
- *
- * Unlike shells there is one list: services are session-global, so the sidebar and the exit guard
- * read the same poll.
+ * The registry publishes on start and exit, so the roster re-reads on real changes instead of a
+ * timer; the snapshot comparison keeps the tree still when a notice changed nothing visible.
+ * Services are session-global, so the sidebar and the exit guard read the same subscription.
  */
 export function useServices({ app }: { app: AtlasApp }): ServicesControl {
   const read = useCallback((): readonly ServiceSnapshot[] => app.services.list(), [app])
@@ -75,20 +71,15 @@ export function useServices({ app }: { app: AtlasApp }): ServicesControl {
   const [state, setState] = useState<ServicesState | null>(null)
 
   useEffect(() => {
-    const poll = (): void =>
-      measurePerf({
-        key: EPerfCounter.PollServicesMs,
-        run: () =>
-          setServices((current) => {
-            const latest = read()
-            return sameServices(current, latest) ? current : latest
-          }),
+    const update = (): void =>
+      setServices((current) => {
+        const latest = read()
+        return sameServices(current, latest) ? current : latest
       })
 
-    poll()
-    const timer = setInterval(poll, POLL_MS)
-    return () => clearInterval(timer)
-  }, [read])
+    update()
+    return app.services.subscribe(update)
+  }, [app, read])
 
   const now = useTickingNow(services.some(isServiceRunning))
 

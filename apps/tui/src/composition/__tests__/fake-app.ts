@@ -281,7 +281,14 @@ export function fakeShellRegistry(): FakeShells {
   const printed = new Map<string, string>()
   const killed: string[] = []
   const listeners = new Set<() => void>()
+  const revisionListeners = new Set<() => void>()
+  let revision = 0
   let ended: readonly OwnedShell[] = []
+
+  const bump = (): void => {
+    revision += 1
+    for (const listener of [...revisionListeners]) listener()
+  }
 
   const settle = (next: readonly OwnedShell[]): void => {
     ended = next
@@ -321,15 +328,25 @@ export function fakeShellRegistry(): FakeShells {
 
     place: (snapshot, owner = FAKE_SHELL_OWNER) => {
       owned.push({ snapshot, threadId: owner })
+      bump()
     },
 
     print: ({ shellId, text }) => {
       printed.set(shellId, text)
+      bump()
     },
 
     announce: (snapshot, owner = FAKE_SHELL_OWNER) => {
       owned.push({ snapshot, threadId: owner })
       settle([...ended, { snapshot, threadId: owner }])
+      bump()
+    },
+
+    version: () => revision,
+
+    subscribe: (listener) => {
+      revisionListeners.add(listener)
+      return () => void revisionListeners.delete(listener)
     },
 
     start: () => ({ ok: false, reason: 'the fake registry starts no processes' }),

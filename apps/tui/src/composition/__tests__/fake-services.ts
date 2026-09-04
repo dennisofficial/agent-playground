@@ -23,7 +23,14 @@ export function fakeServiceRegistry(): FakeServices {
   const owned: OwnedService[] = []
   const stopped: { serviceId: string; by: EKilledBy }[] = []
   const listeners = new Set<() => void>()
+  const revisionListeners = new Set<() => void>()
+  let revision = 0
   let ended: readonly OwnedService[] = []
+
+  const bump = (): void => {
+    revision += 1
+    for (const listener of [...revisionListeners]) listener()
+  }
 
   const settle = (next: readonly OwnedService[]): void => {
     ended = next
@@ -61,11 +68,20 @@ export function fakeServiceRegistry(): FakeServices {
 
     place: (snapshot, owner = FAKE_SERVICE_OWNER) => {
       owned.push({ snapshot, threadId: owner })
+      bump()
     },
 
     announce: (snapshot, owner = FAKE_SERVICE_OWNER) => {
       owned.push({ snapshot, threadId: owner })
       settle([...ended, { snapshot, threadId: owner }])
+      bump()
+    },
+
+    version: () => revision,
+
+    subscribe: (listener) => {
+      revisionListeners.add(listener)
+      return () => void revisionListeners.delete(listener)
     },
 
     start: (): Promise<StartedServiceOutcome> =>

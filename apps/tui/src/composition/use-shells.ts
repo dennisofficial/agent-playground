@@ -1,7 +1,7 @@
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { EPerfCounter, measurePerf, type ThreadId } from '@dltech/atlas-core'
+import type { ThreadId } from '@dltech/atlas-core'
 import { EKilledBy, type ShellSnapshot } from '@dltech/atlas-harness'
 
 import { DEFAULT_CREW_CAP } from '../store/crew-fold'
@@ -22,8 +22,6 @@ import {
   type ShellsState,
 } from '../ui/shells-model'
 import type { AtlasApp } from './compose'
-
-const POLL_MS = 500
 
 /**
  * The scrollback a reader can walk back through, well short of the 400k the registry retains: every
@@ -75,40 +73,32 @@ const keptIfSame = (
 ): readonly ShellSnapshot[] => (sameShells(current, latest) ? current : latest)
 
 /**
- * A background shell is live process state rather than an event in the log, so nothing publishes a
- * delta when it prints. Polling is the honest mechanism; the snapshot comparison is what keeps it
- * from re-rendering the tree twice a second while a shell sits idle.
- *
- * Both lists come off one timer. They are two views of the same registry, so polling them apart
- * would buy nothing and let the exit guard and the sidebar disagree for up to an interval.
+ * The registry publishes every change — structurally on start and exit, throttled for output — so
+ * the lists re-read when there is something to show and never on a timer. `read` still re-runs on
+ * its own change: switching conversations re-scopes the list at once rather than after the next
+ * activity. The snapshot comparison keeps the tree still when an event changed nothing visible.
  */
-function useShellSnapshots(read: () => ShellLists): ShellLists {
-  const [lists, setLists] = useState<ShellLists>(read)
+function useShellSnapshots(args: {
+  shells: AtlasApp['shells']
+  read: () => ShellLists
+}): ShellLists {
+  const [lists, setLists] = useState<ShellLists>(args.read)
 
-  /**
-   * Re-reading on the reader itself, not only on the interval: switching conversations changes who
-   * owns the list, and waiting out a poll would leave the other conversation's shells on screen.
-   */
   useEffect(() => {
-    const poll = (): void =>
-      measurePerf({
-        key: EPerfCounter.PollShellsMs,
-        run: () =>
-          setLists((current) => {
-            const latest = read()
-            const own = keptIfSame(current.own, latest.own)
-            const everywhere = keptIfSame(current.everywhere, latest.everywhere)
+    const update = (): void =>
+      setLists((current) => {
+        const latest = args.read()
+        const own = keptIfSame(current.own, latest.own)
+        const everywhere = keptIfSame(current.everywhere, latest.everywhere)
 
-            return own === current.own && everywhere === current.everywhere
-              ? current
-              : { own, everywhere }
-          }),
+        return own === current.own && everywhere === current.everywhere
+          ? current
+          : { own, everywhere }
       })
 
-    poll()
-    const timer = setInterval(poll, POLL_MS)
-    return () => clearInterval(timer)
-  }, [read])
+    update()
+    return args.shells.subscribe(update)
+  }, [args.shells, args.read])
 
   return lists
 }
@@ -146,7 +136,7 @@ export function useShells({ app, threadId }: { app: AtlasApp; threadId: ThreadId
     }),
     [app, threadId],
   )
-  const { own: shells, everywhere } = useShellSnapshots(read)
+  const { own: shells, everywhere } = useShellSnapshots({ shells: app.shells, read })
   const [state, setState] = useState<ShellsState | null>(null)
 
   const selected = state === null ? undefined : selectedShell({ state, shells })
