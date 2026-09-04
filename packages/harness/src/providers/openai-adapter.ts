@@ -1,8 +1,6 @@
-import { createOpenAI } from '@ai-sdk/openai'
 import type { LanguageModelV4, SharedV4ProviderOptions } from '@ai-sdk/provider'
 
 import {
-  EAuthProvider,
   type AccountId,
   type CredentialPort,
   type EEffort,
@@ -10,8 +8,8 @@ import {
 } from '@dltech/atlas-core'
 
 import { ProviderAdapter } from './adapter'
-import { providerKey } from './provider-key'
 import { openaiEffortOptions } from './openai-effort'
+import { createOpenAiModel } from './openai-oauth'
 
 export const OPENAI_PROVIDER_ID = 'openai'
 
@@ -41,15 +39,12 @@ export class OpenAiAdapter extends ProviderAdapter {
     effort: () => EEffort
     accountId?: AccountId | undefined
   }): LanguageModelV4 {
-    const authorized = async (): Promise<LanguageModelV4> => {
-      const credential = await this.credentials.read({
-        provider: EAuthProvider.OpenAI,
-        accountId: args.accountId,
-      })
-      const apiKey = providerKey({ credential, label: this.label })
-
-      return createOpenAI({ name: OPENAI_PROVIDER_ID, apiKey }).responses(args.card.ref.modelId)
-    }
+    const authorized = createOpenAiModel({
+      credentials: this.credentials,
+      providerId: OPENAI_PROVIDER_ID,
+      modelId: args.card.ref.modelId,
+      accountId: args.accountId,
+    })
 
     const withEffort = (options: Parameters<LanguageModelV4['doStream']>[0]) => {
       const effort = this.effortOptions({ card: args.card, effort: args.effort() })
@@ -62,8 +57,8 @@ export class OpenAiAdapter extends ProviderAdapter {
       provider: OPENAI_PROVIDER_ID,
       modelId: args.card.ref.modelId,
       supportedUrls: {},
-      doGenerate: async (options) => (await authorized()).doGenerate(withEffort(options)),
-      doStream: async (options) => (await authorized()).doStream(withEffort(options)),
+      doGenerate: (options) => authorized.doGenerate(withEffort(options)),
+      doStream: (options) => authorized.doStream(withEffort(options)),
     }
   }
 }

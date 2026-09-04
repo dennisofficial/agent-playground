@@ -35,6 +35,7 @@ const credentialOf = (stored: StoredAccount): Credential =>
         accountId: stored.id,
         accessToken: stored.secret.tokens.accessToken,
         expiresAt: stored.secret.tokens.expiresAt,
+        providerAccountId: stored.secret.tokens.accountId,
       }
 
 const tokensOf = (stored: StoredAccount): OauthTokens | undefined =>
@@ -157,11 +158,14 @@ export class RefreshingCredentialPort extends CredentialPort {
 
     try {
       const rotated = await client.refresh({ refreshToken: tokens.refreshToken })
-      const secret = { kind: EAuthKind.Oauth, tokens: rotated } as const
+      // Identity the provider only hands out at login (OpenAI's account id) survives rotation by
+      // keeping whatever the refresh response did not replace.
+      const merged = { ...tokens, ...rotated }
+      const secret = { kind: EAuthKind.Oauth, tokens: merged } as const
 
       await this.accounts.replaceSecret({ accountId: stored.id, secret })
       const next: StoredAccount = { ...stored, secret, status: EAccountStatus.Active }
-      await this.reconciler.writeBack({ stored: next, rotated, previous: tokens })
+      await this.reconciler.writeBack({ stored: next, rotated: merged, previous: tokens })
       this.rejected.delete(stored.id)
 
       return next

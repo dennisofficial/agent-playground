@@ -112,6 +112,7 @@ export function refusingFirstFetch(args: {
   body: string
   status?: number
   contentType?: string
+  refusalBody?: string
 }): RecordingFetch {
   const requests: RecordedRequest[] = []
 
@@ -125,7 +126,7 @@ export function refusingFirstFetch(args: {
       })
 
       if (requests.length === 1)
-        return new Response(REVOKED_TOKEN_BODY, {
+        return new Response(args.refusalBody ?? REVOKED_TOKEN_BODY, {
           status: args.status ?? 401,
           headers: { 'content-type': 'application/json' },
         })

@@ -9,18 +9,21 @@ import {
   type Account,
   type AccountId,
 } from '@dltech/atlas-core'
-import type { AccountsService, LoginTicket, UrlOpener } from '@dltech/atlas-harness'
+import type { AccountsService, DeviceTicket, LoginTicket, UrlOpener } from '@dltech/atlas-harness'
+import { EDevicePoll } from '@dltech/atlas-harness'
 
 import { pastedText } from '../ui/pasted-text'
 
 import {
   acceptsApiKey,
+  acceptsDeviceCode,
   acceptsPastedCode,
   accountOf,
   accountRows,
   rowProvider,
   askForApiKey,
   askForCode,
+  askForDeviceCode,
   backspace,
   backToList,
   EAccountsView,
@@ -75,6 +78,8 @@ export function useAccounts(args: {
   const held = useRef<AccountsState | null>(null)
   const [state, setState] = useState<AccountsState | null>(null)
   const ticket = useRef<LoginTicket | null>(null)
+  const device = useRef<{ ticket: DeviceTicket; deadline: number } | null>(null)
+  const deviceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const put = useCallback((next: AccountsState | null) => {
     held.current = next
@@ -103,10 +108,17 @@ export function useAccounts(args: {
     [put, rows],
   )
 
+  const stopDevice = useCallback(() => {
+    device.current = null
+    if (deviceTimer.current !== null) clearTimeout(deviceTimer.current)
+    deviceTimer.current = null
+  }, [])
+
   const handleDismiss = useCallback(() => {
     ticket.current = null
+    stopDevice()
     put(null)
-  }, [put])
+  }, [put, stopDevice])
 
   const refresh = useCallback(
     (change: (state: AccountsState) => AccountsState = (current) => current) => {
@@ -148,26 +160,98 @@ export function useAccounts(args: {
     [accounts, askForKey, refresh],
   )
 
+  /**
+   * The device code's clock keeps ticking while the drawer is open, so the poll re-reads the held
+   * state rather than trusting a closure — an escape or a re-render mid-poll must stop it.
+   */
+  const pollDevice = useCallback(() => {
+    const open = device.current
+    const current = held.current
+    if (open === null || current === null || current.view !== EAccountsView.DeviceCode) return
+
+    if (Date.now() > open.deadline) {
+      stopDevice()
+      put(failed({ state: current, reason: 'that code expired — press n for a new one.' }))
+      return
+    }
+
+    void accounts
+      .pollDevice(open.ticket)
+      .then((result) => {
+        const now = held.current
+        if (now === null || now.view !== EAccountsView.DeviceCode) return
+
+        if (result.status === EDevicePoll.Pending) {
+          deviceTimer.current = setTimeout(pollDevice, Math.max(open.ticket.intervalMs, 3000))
+          return
+        }
+
+        stopDevice()
+        refresh((next) => ({
+          ...backToList(next),
+          notice: `Signed in as ${result.account.label}.`,
+        }))
+      })
+      .catch((error: unknown) => {
+        stopDevice()
+        const now = held.current
+        if (now !== null) put(failed({ state: now, reason: reasonOf(error) }))
+      })
+  }, [accounts, put, refresh, stopDevice])
+
+  const beginDevice = useCallback(
+    (current: AccountsState, provider: EAuthProvider) => {
+      put(askForDeviceCode({ state: current, prompt: { provider, url: '' } }))
+
+      void accounts
+        .beginDevice(provider)
+        .then((begun) => {
+          const now = held.current
+          if (now === null || now.view !== EAccountsView.DeviceCode) return
+
+          device.current = { ticket: begun, deadline: Date.now() + begun.expiresInMs }
+          put(
+            askForDeviceCode({
+              state: now,
+              prompt: { provider: begun.provider, url: begun.verificationUrl, userCode: begun.userCode },
+            }),
+          )
+          openUrl(begun.verificationUrl)
+          deviceTimer.current = setTimeout(pollDevice, Math.max(begun.intervalMs, 3000))
+        })
+        .catch((error: unknown) => {
+          const now = held.current
+          if (now !== null) put(failed({ state: now, reason: reasonOf(error) }))
+        })
+    },
+    [accounts, openUrl, pollDevice, put],
+  )
+
   const beginLogin = useCallback(
     (current: AccountsState) => {
       const provider = providerOf(current)
       if (provider === undefined) return
 
-      if (!acceptsPastedCode(provider)) {
+      if (acceptsPastedCode(provider)) {
+        try {
+          const begun = accounts.begin(provider)
+          ticket.current = begun
+          put(askForCode({ state: current, prompt: { provider: begun.provider, url: begun.url } }))
+          openUrl(begun.url)
+        } catch (error) {
+          put(failed({ state: current, reason: reasonOf(error) }))
+        }
+        return
+      }
+
+      if (!acceptsDeviceCode(provider)) {
         put(failed({ state: current, reason: signInUnsupported(provider) }))
         return
       }
 
-      try {
-        const begun = accounts.begin(provider)
-        ticket.current = begun
-        put(askForCode({ state: current, prompt: { provider: begun.provider, url: begun.url } }))
-        openUrl(begun.url)
-      } catch (error) {
-        put(failed({ state: current, reason: reasonOf(error) }))
-      }
+      beginDevice(current, provider)
     },
-    [accounts, openUrl, put],
+    [accounts, beginDevice, openUrl, put],
   )
 
   const handleOpenUrl = useCallback(() => {
@@ -254,9 +338,12 @@ export function useAccounts(args: {
     (key: KeyEvent, current: AccountsState) => {
       if (key.name === 'escape') {
         ticket.current = null
+        stopDevice()
         put(backToList(current))
         return
       }
+
+      if (current.view === EAccountsView.DeviceCode) return
 
       if (key.name === 'return') {
         submit(current)
@@ -270,7 +357,7 @@ export function useAccounts(args: {
 
       if (isPrintable(key)) put(typeInto({ state: current, text: key.sequence ?? '' }))
     },
-    [put, submit],
+    [put, stopDevice, submit],
   )
 
   const handleKey = useCallback(

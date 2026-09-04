@@ -19,6 +19,9 @@ import {
   rowProvider,
   askForApiKey,
   askForCode,
+  askForDeviceCode,
+  acceptsDeviceCode,
+  acceptsPastedCode,
   backspace,
   backToList,
   EAccountsView,
@@ -241,6 +244,32 @@ describe('the login prompt', () => {
   it('masks all but the last four characters of a key', () => {
     expect(maskedKey('sk-abcdefgh')).toBe('•••••••efgh')
     expect(maskedKey('abc')).toBe('•••')
+  })
+})
+
+describe('the device-code prompt', () => {
+  it('shows the code to type into the browser rather than taking input', () => {
+    const asked = askForDeviceCode({
+      state: openAccounts({ rows: [] }),
+      prompt: {
+        provider: EAuthProvider.OpenAI,
+        url: 'https://auth.openai.com/codex/device',
+        userCode: 'ABCD-EFGH',
+      },
+    })
+
+    expect(asked.view).toBe(EAccountsView.DeviceCode)
+    expect(asked.prompt?.userCode).toBe('ABCD-EFGH')
+    expect(asked.prompt?.url).toBe('https://auth.openai.com/codex/device')
+    expect(isPrompting(asked)).toBe(true)
+    expect(asked.busy).toBe(false)
+  })
+
+  it('routes OpenAI to a device code and Anthropic to a paste-back', () => {
+    expect(acceptsDeviceCode(EAuthProvider.OpenAI)).toBe(true)
+    expect(acceptsPastedCode(EAuthProvider.OpenAI)).toBe(false)
+    expect(acceptsPastedCode(EAuthProvider.Anthropic)).toBe(true)
+    expect(acceptsDeviceCode(EAuthProvider.Anthropic)).toBe(false)
   })
 })
 

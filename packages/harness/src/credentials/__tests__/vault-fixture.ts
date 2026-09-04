@@ -33,10 +33,12 @@ export const tokens = (args: {
   access?: string
   refresh?: string
   expiresAt?: string
+  accountId?: string
 }): OauthTokens => ({
   accessToken: args.access ?? 'access-1',
   refreshToken: args.refresh ?? 'refresh-1',
   expiresAt: args.expiresAt ?? minutesFromNow(60),
+  ...(args.accountId === undefined ? {} : { accountId: args.accountId }),
 })
 
 export const oauthSecret = (args: Parameters<typeof tokens>[0] = {}): AccountSecret => ({

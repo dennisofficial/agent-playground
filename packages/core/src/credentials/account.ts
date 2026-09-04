@@ -35,6 +35,7 @@ export const oauthTokensSchema = z.object({
   refreshToken: z.string(),
   expiresAt: z.string().min(1),
   scopes: z.array(z.string()).optional(),
+  accountId: z.string().optional(),
 })
 
 export type OauthTokens = z.infer<typeof oauthTokensSchema>

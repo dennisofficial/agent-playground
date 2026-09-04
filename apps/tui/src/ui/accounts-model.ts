@@ -13,6 +13,7 @@ import {
 export enum EAccountsView {
   List = 'list',
   PastedCode = 'pasted-code',
+  DeviceCode = 'device-code',
   ApiKey = 'api-key',
 }
 
@@ -50,6 +51,7 @@ export const rowKey = (row: AccountRow): string =>
 export type AccountsPrompt = {
   provider: EAuthProvider
   url: string
+  userCode?: string | undefined
 }
 
 export type AccountsState = {
@@ -156,6 +158,21 @@ export function askForCode(args: { state: AccountsState; prompt: AccountsPrompt 
   }
 }
 
+export function askForDeviceCode(args: {
+  state: AccountsState
+  prompt: AccountsPrompt
+}): AccountsState {
+  return {
+    ...args.state,
+    view: EAccountsView.DeviceCode,
+    prompt: args.prompt,
+    typed: '',
+    failure: null,
+    notice: null,
+    busy: false,
+  }
+}
+
 export function askForApiKey(args: {
   state: AccountsState
   provider: EAuthProvider
@@ -238,6 +255,9 @@ export const acceptsApiKey = (provider: EAuthProvider): boolean =>
 
 export const acceptsPastedCode = (provider: EAuthProvider): boolean =>
   providerSpec(provider).logins.includes(ELoginFlow.PastedCode)
+
+export const acceptsDeviceCode = (provider: EAuthProvider): boolean =>
+  providerSpec(provider).logins.includes(ELoginFlow.DeviceCode)
 
 const signedOutDetail = (provider: EAuthProvider): string =>
   ['not signed in', signInFlows(provider).join(' or ')]
