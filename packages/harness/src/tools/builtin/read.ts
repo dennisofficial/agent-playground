@@ -1,10 +1,9 @@
-import { stat } from 'node:fs/promises'
-
 import {
   EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  FileSystemPort,
   imageMediaType,
   SchemaTool,
   type DeclaredPathField,
@@ -14,6 +13,7 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
+import { LocalFileSystemPort } from '../../execution/local-filesystem'
 import { filePathSchema, resolveToolPath } from './file-text'
 import { missingPathReason } from './missing-path'
 import { readImage } from './read-image'
@@ -191,6 +191,10 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
     { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Reads },
   ]
 
+  constructor(private readonly files: FileSystemPort = new LocalFileSystemPort()) {
+    super()
+  }
+
   protected override async run({
     input,
     projectDirectory,
@@ -198,7 +202,7 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
     const rawPath = input.path
     const path = resolveToolPath({ projectDirectory, path: rawPath })
     const { offset, limit } = input
-    const stats = await stat(path).catch(() => null)
+    const stats = await this.files.stat({ path }).catch(() => null)
     if (stats === null) {
       return {
         ok: false,
@@ -222,6 +226,7 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
         mediaType,
         byteLength: stats.size,
         head,
+        files: this.files,
         ...(input.region === undefined ? {} : { region: input.region }),
       })
     }

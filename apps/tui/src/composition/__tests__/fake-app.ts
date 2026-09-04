@@ -2,6 +2,7 @@ import {
   AccountUsagePort,
   ATLAS_SETTINGS,
   EEffort,
+  EExecutionLocation,
   EImageTier,
   catalogOf,
   findCard,
@@ -64,6 +65,8 @@ import type { ActiveConversation } from '../resume-hint'
 import { heldChoice } from '../model-selection'
 import type { ModelCatalogue } from '../providers'
 import { DEFAULT_MODEL_REF, EOpenMode, type AtlasConfig } from '../config'
+import { createExecutionLocationState } from '../execution-location-state'
+import { createSandboxStatusState } from '../sandbox-status-state'
 import { fakeAgentRegistry, type FakeAgents } from './fake-agents'
 import { fakeServiceRegistry, type FakeServices } from './fake-services'
 import {
@@ -77,6 +80,7 @@ import {
 
 export const FAKE_CONFIG: AtlasConfig = {
   model: undefined,
+  executionLocation: undefined,
   open: { mode: EOpenMode.New },
   cwd: '/workspace/atlas',
 }
@@ -506,6 +510,8 @@ export type FakeApp = AtlasApp & {
   readonly titled: readonly string[]
   readonly openedUrls: readonly string[]
   readonly openedDirectories: readonly string[]
+  readonly sandboxStops: number
+  readonly bashNotes: number
 }
 
 export function fakeApp(args: {
@@ -546,6 +552,8 @@ export function fakeApp(args: {
 
   let turnsDriven = 0
   let marked: ActiveConversation | null = null
+  let sandboxStops = 0
+  let bashNotes = 0
   const titled: string[] = []
   const openedUrls: string[] = []
   const openedDirectories: string[] = []
@@ -582,6 +590,24 @@ export function fakeApp(args: {
 
     get titled() {
       return titled
+    },
+
+    get sandboxStops() {
+      return sandboxStops
+    },
+
+    get bashNotes() {
+      return bashNotes
+    },
+
+    sandbox: {
+      noteBash: () => {
+        bashNotes += 1
+      },
+      stop: async () => {
+        sandboxStops += 1
+        return false
+      },
     },
 
     ledger,
@@ -628,6 +654,9 @@ export function fakeApp(args: {
     }),
     modelPinned: false,
     models: fakeCatalogue(),
+    executionLocation: createExecutionLocationState({ initial: EExecutionLocation.Host }),
+    containerStatus: createSandboxStatusState({ image: 'node:22-slim' }),
+    executionPinned: false,
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,
       user: new MemorySettingsStore({

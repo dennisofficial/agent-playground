@@ -199,6 +199,12 @@ CREATE INDEX "PerfSample_startedAt_idx" ON "PerfSample"("startedAt");
 `,
   },
   {
+    name: '20260904000000_thread_execution_location',
+    sql: `-- AlterTable
+ALTER TABLE "Thread" ADD COLUMN "executionLocation" TEXT;
+`,
+  },
+  {
     name: '20260904170000_drop_perf_samples',
     sql: `-- DropTable
 DROP TABLE "PerfSample";

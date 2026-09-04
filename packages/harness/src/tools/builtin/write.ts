@@ -1,10 +1,9 @@
-import { stat } from 'node:fs/promises'
-
 import {
   EContentAccess,
   EPathForm,
   EPathPresence,
   EToolEffect,
+  FileSystemPort,
   SchemaTool,
   type DeclaredPathField,
   type ToolOutcome,
@@ -12,7 +11,7 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import {  portToken } from '../../container/injection'
+import { LocalFileSystemPort } from '../../execution/local-filesystem'
 import { writeFileAtomically } from '../../files/atomic-write'
 import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
 import { filePathSchema, resolveToolPath } from './file-text'
@@ -39,8 +38,8 @@ export class WriteTool extends SchemaTool<typeof inputSchema> {
   ]
 
   constructor(
-    
     private readonly guard: FileWriteGuardPort = new SerializedWrites(),
+    private readonly files: FileSystemPort = new LocalFileSystemPort(),
   ) {
     super()
   }
@@ -57,12 +56,12 @@ export class WriteTool extends SchemaTool<typeof inputSchema> {
       threadId,
       path,
       write: async (): Promise<ToolOutcome> => {
-        const stats = await stat(path).catch(() => null)
+        const stats = await this.files.stat({ path }).catch(() => null)
         if (stats !== null && !stats.isFile()) {
           return { ok: false, reason: `${path} already exists and is not a regular file.` }
         }
 
-        const bytes = await writeFileAtomically({ path, content, mode: stats?.mode })
+        const bytes = await writeFileAtomically({ path, content, mode: stats?.mode, files: this.files })
         const created = stats === null
 
         return {

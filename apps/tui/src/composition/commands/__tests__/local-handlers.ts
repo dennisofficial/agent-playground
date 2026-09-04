@@ -14,6 +14,7 @@ const renamed = async (argumentText: string): Promise<Renaming> => ({
 export const handlers = (
   overrides: Partial<LocalCommandHandlers> = {},
 ): LocalCommandHandlers => ({
+  onContainer: () => 'on the host',
   onCompact: stub,
   onRewind: stub,
   onShortcuts: stub,

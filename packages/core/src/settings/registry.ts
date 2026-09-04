@@ -1,3 +1,4 @@
+import { EExecutionLocation } from '../execution/location'
 import { EFFORT_LADDER, EEffort } from '../models/effort-ladder'
 import { EClassifierMode } from '../policy/classifier/triage'
 import { EWebSearchBackend } from '../web/search'
@@ -38,12 +39,18 @@ export enum ESettingId {
   ModelEffort = 'model.effort',
   ModelFavourites = 'model.favourites',
   SubagentModel = 'agents.subagentModel',
+  ExecutionLocation = 'execution.location',
+  ContainerCpus = 'container.cpus',
+  ContainerMemory = 'container.memory',
+  ContainerIdleMinutes = 'container.idleMinutes',
   DatabaseUrl = 'store.databaseUrl',
   KeychainService = 'credentials.keychainService',
   AutoRestart = 'dev.autoRestart',
 }
 
 export const DEFAULT_WORKTREE_DIRECTORY = '.atlas/worktrees'
+
+export const DEFAULT_CONTAINER_IDLE_MINUTES = 30
 
 export const DEFAULT_EFFORT = EEffort.Medium
 
@@ -493,6 +500,66 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     environmentVariable: 'ATLAS_SUBAGENT_MODEL',
     kind: ESettingKind.Text,
     fallback: '',
+  },
+  {
+    id: ESettingId.ExecutionLocation,
+    page: ESettingPage.General,
+    group: 'Execution',
+    label: 'Where sessions run',
+    description:
+      'Where a conversation that has not been given a location of its own executes its tools. Every conversation remembers the location it was last switched to, so this is only what a new one begins with — /container writes the conversation, and --execution-location outranks this row for one launch.',
+    environmentVariable: 'ATLAS_EXECUTION_LOCATION',
+    kind: ESettingKind.Choice,
+    fallback: EExecutionLocation.Host,
+    options: [
+      { value: EExecutionLocation.Host, label: 'host', detail: 'shipped' },
+      { value: EExecutionLocation.Docker, label: 'docker' },
+    ],
+  },
+  {
+    id: ESettingId.ContainerCpus,
+    page: ESettingPage.General,
+    group: 'Execution',
+    label: 'Container CPUs',
+    description:
+      'How many cores each sandboxed conversation may use, as a ceiling the daemon enforces rather than a reservation. Every container gets this many, so a machine running several sandboxes at once can be oversubscribed — Atlas warns when the running total outruns the machine rather than pretending the limit is a guarantee.',
+    environmentVariable: 'ATLAS_CONTAINER_CPUS',
+    kind: ESettingKind.Range,
+    fallback: 4,
+    minimum: 1,
+    maximum: 32,
+    step: 1,
+    unit: ' cpus',
+  },
+  {
+    id: ESettingId.ContainerMemory,
+    page: ESettingPage.General,
+    group: 'Execution',
+    label: 'Container memory',
+    description:
+      'How much memory each sandboxed conversation may use, in gigabytes, as a hard ceiling — a container that crosses it is killed by the daemon, which looks like a stack dying for no reason. Every container gets this much, and stopped containers keep their disk but hold no memory, so the number only competes with the sandboxes actually running.',
+    environmentVariable: 'ATLAS_CONTAINER_MEMORY',
+    kind: ESettingKind.Range,
+    fallback: 8,
+    minimum: 1,
+    maximum: 128,
+    step: 1,
+    unit: ' GB',
+  },
+  {
+    id: ESettingId.ContainerIdleMinutes,
+    page: ESettingPage.General,
+    group: 'Execution',
+    label: 'Stop an idle container after',
+    description:
+      'How many minutes a sandboxed conversation may go without a bash call before Atlas stops its container. Stopping keeps the container\u2019s disk — the installed dependencies and build caches — so the next session brings it back in about a second, and a background shell that is still running always holds the stop off, so a dev server is never taken down by this.',
+    environmentVariable: 'ATLAS_CONTAINER_IDLE_MINUTES',
+    kind: ESettingKind.Range,
+    fallback: DEFAULT_CONTAINER_IDLE_MINUTES,
+    minimum: 5,
+    maximum: 240,
+    step: 5,
+    unit: ' min',
   },
   {
     id: ESettingId.DatabaseUrl,

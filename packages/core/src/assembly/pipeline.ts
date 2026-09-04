@@ -2,6 +2,10 @@ import { cacheBreakpoints } from './annotators/cache-breakpoints'
 import type { Annotator, Rule } from './rule'
 import { agentEndingsBlock } from './rules/agent-endings-block'
 import { compactedHistory } from './rules/compacted-history'
+import {
+  executionLocationBlock,
+  type ExecutionLocationSource,
+} from './rules/execution-location-block'
 import { imagesInContext } from './rules/images'
 import { messagesFromEvents } from './rules/messages-from-events'
 import { runningAgentsBlock, type RunningAgentsSource } from './rules/running-agents-block'
@@ -22,6 +26,7 @@ export function defaultRules({
   runningShells,
   runningServices,
   runningAgents,
+  executionLocation,
 }: {
   prompt: PromptSource
   launchDirectory: string
@@ -29,6 +34,7 @@ export function defaultRules({
   runningShells?: RunningShellsSource | undefined
   runningServices?: RunningServicesSource | undefined
   runningAgents?: RunningAgentsSource | undefined
+  executionLocation?: ExecutionLocationSource | undefined
 }): readonly Rule[] {
   return [
     systemPrompt({ prompt, launchDirectory }),
@@ -37,6 +43,7 @@ export function defaultRules({
     compactedHistory(),
     imagesInContext(),
     worktreeBlock({ launchDirectory, repoRoot }),
+    ...(executionLocation === undefined ? [] : [executionLocationBlock({ executionLocation })]),
     ...(runningShells === undefined ? [] : [runningShellsBlock({ runningShells })]),
     ...(runningServices === undefined ? [] : [runningServicesBlock({ runningServices })]),
     ...(runningAgents === undefined ? [] : [runningAgentsBlock({ runningAgents })]),
@@ -54,6 +61,7 @@ export function defaultPipeline({
   runningShells,
   runningServices,
   runningAgents,
+  executionLocation,
 }: {
   prompt: PromptSource
   launchDirectory: string
@@ -61,9 +69,18 @@ export function defaultPipeline({
   runningShells?: RunningShellsSource | undefined
   runningServices?: RunningServicesSource | undefined
   runningAgents?: RunningAgentsSource | undefined
+  executionLocation?: ExecutionLocationSource | undefined
 }): AssemblyPipeline {
   return {
-    rules: defaultRules({ prompt, launchDirectory, repoRoot, runningShells, runningServices, runningAgents }),
+    rules: defaultRules({
+      prompt,
+      launchDirectory,
+      repoRoot,
+      runningShells,
+      runningServices,
+      runningAgents,
+      executionLocation,
+    }),
     annotators: defaultAnnotators(),
   }
 }

@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 
-import { ClockPort, CredentialPort, EventLogPort, IdPort, toThreadId } from '@dltech/atlas-core'
+import { ClockPort, CredentialPort, EventLogPort, FileSystemPort, IdPort, ProcessPort, toThreadId } from '@dltech/atlas-core'
 
 import type { KeychainReader } from '../../credentials/keychain-reader'
+import { LocalFileSystemPort } from '../../execution/local-filesystem'
+import { LocalProcessPort } from '../../execution/local-process'
 import { RefreshingCredentialPort } from '../../credentials/refreshing-credential-port'
 import {
   ThreadStorePort,
@@ -61,6 +63,14 @@ describe('createHarnessContainer', () => {
 
   it('resolves the credential port to one that can refresh what it hands out', () => {
     expect(harness.resolve(portToken(CredentialPort))).toBeInstanceOf(RefreshingCredentialPort)
+  })
+
+  it('resolves the process port to the local adapter', () => {
+    expect(harness.resolve(portToken(ProcessPort))).toBeInstanceOf(LocalProcessPort)
+  })
+
+  it('resolves the filesystem port to the local adapter', () => {
+    expect(harness.resolve(portToken(FileSystemPort))).toBeInstanceOf(LocalFileSystemPort)
   })
 
   it('injects the registered prisma client into the event log it builds', async () => {

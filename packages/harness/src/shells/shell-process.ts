@@ -1,15 +1,20 @@
+import type { ProcessHandle, ProcessPort, ThreadId } from '@dltech/atlas-core'
+
+import { LocalProcessPort } from '../execution/local-process'
 import { atlasBinDirectory } from '../store/paths'
 
-export const SIGKILL_GRACE_MS = 5_000
+export { SIGKILL_GRACE_MS, signalGroup, type Signalable } from '../execution/local-process'
 
 const READ_GRACE_MS = 1_000
+
+const localProcesses = new LocalProcessPort()
 
 const withAtlasBinOnPath = (): Record<string, string | undefined> => ({
   ...process.env,
   PATH: `${atlasBinDirectory()}:${process.env.PATH ?? ''}`,
 })
 
-export type Shell = Bun.Subprocess<'ignore', 'pipe', 'pipe'>
+export type Shell = ProcessHandle & { readonly pid?: number | undefined }
 
 export type StartedShell = { ok: true; shell: Shell } | { ok: false; reason: string }
 
@@ -26,18 +31,21 @@ export const messageOf = (error: unknown): string =>
 
 export const countLineBreaks = (text: string): number => text.split('\n').length - 1
 
-export function startShell(args: { command: string; cwd: string }): StartedShell {
+export function startShell(args: {
+  command: string
+  cwd: string
+  processes?: ProcessPort | undefined
+  threadId?: ThreadId | undefined
+}): StartedShell {
+  const processes = args.processes ?? localProcesses
   try {
     return {
       ok: true,
-      shell: Bun.spawn({
+      shell: processes.spawn({
         cmd: ['bash', '-c', args.command],
         cwd: args.cwd,
-        stdin: 'ignore',
-        stdout: 'pipe',
-        stderr: 'pipe',
-        detached: true,
         env: withAtlasBinOnPath(),
+        threadId: args.threadId,
       }),
     }
   } catch (error) {
@@ -45,34 +53,8 @@ export function startShell(args: { command: string; cwd: string }): StartedShell
   }
 }
 
-export type Signalable = { pid: number; kill(signal: 'SIGTERM' | 'SIGKILL'): unknown }
-
-/**
- * setsid(2) makes the shell a process group leader, so a negative pid signals the whole group.
- * Signalling only the shell would strand every process it forked: those are reparented to init the
- * moment it dies, which puts them out of reach of any later kill.
- */
-export function signalGroup(args: { child: Signalable; signal: 'SIGTERM' | 'SIGKILL' }): void {
-  try {
-    process.kill(-args.child.pid, args.signal)
-  } catch {
-    try {
-      args.child.kill(args.signal)
-    } catch {
-      return
-    }
-  }
-}
-
 export function terminatorFor(shell: Shell): () => void {
-  let fired = false
-
-  return () => {
-    if (fired) return
-    fired = true
-    signalGroup({ child: shell, signal: 'SIGTERM' })
-    setTimeout(() => signalGroup({ child: shell, signal: 'SIGKILL' }), SIGKILL_GRACE_MS).unref()
-  }
+  return () => shell.terminate()
 }
 
 export function tailBuffer(limit: number): TailBuffer {

@@ -7,13 +7,16 @@ import {
   EPathForm,
   EPathPresence,
   EToolEffect,
+  ProcessPort,
   SchemaTool,
   type DeclaredPathField,
   type RevealedLines,
+  type ThreadId,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
 
+import { LocalProcessPort } from '../../execution/local-process'
 import { filePathSchema, resolveToolPath } from './file-text'
 import { missingPathReason } from './missing-path'
 
@@ -53,16 +56,6 @@ type SearchArguments = {
 }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
-
-/**
- * Bun.which resolves against the PATH captured when the process started and ignores later writes to
- * process.env.PATH unless the PATH option is passed explicitly.
- * https://bun.sh/docs/api/utils#bun-which
- */
-function ripgrepBinary(): string | null {
-  const path = process.env.PATH
-  return path === undefined ? Bun.which('rg') : Bun.which('rg', { PATH: path })
-}
 
 function ripgrepSearcher(args: SearchArguments & { binary: string }): Searcher {
   return {
@@ -106,8 +99,10 @@ function posixGrepSearcher(args: SearchArguments): Searcher {
   }
 }
 
-function searcherFor(args: SearchArguments): Searcher {
-  const binary = ripgrepBinary()
+function searcherFor(
+  args: SearchArguments & { processes: ProcessPort; threadId: ThreadId },
+): Searcher {
+  const binary = args.processes.which({ command: 'rg', threadId: args.threadId })
   return binary === null ? posixGrepSearcher(args) : ripgrepSearcher({ ...args, binary })
 }
 
@@ -209,10 +204,15 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     { field: 'path', presence: EPathPresence.Optional, form: EPathForm.Absolute, content: EContentAccess.None },
   ]
 
+  constructor(private readonly processes: ProcessPort = new LocalProcessPort()) {
+    super()
+  }
+
   protected override async run({
     input,
     signal,
     projectDirectory,
+    threadId,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, glob, caseInsensitive, context, headLimit, offset } = input
     const rawPath = input.path
@@ -238,20 +238,20 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
       glob,
       caseInsensitive: caseInsensitive ?? false,
       context,
+      processes: this.processes,
+      threadId,
     })
 
     let stdout: string
     let stderr: string
     let exitCode: number
     try {
-      const search = Bun.spawn({
+      const search = this.processes.spawn({
         cmd: [...searcher.command],
         cwd: projectDirectory,
-        stdin: 'ignore',
-        stdout: 'pipe',
-        stderr: 'pipe',
+        threadId,
       })
-      const handleAbort = (): void => void search.kill('SIGTERM')
+      const handleAbort = (): void => search.terminate()
       signal.addEventListener('abort', handleAbort, { once: true })
       try {
         ;[stdout, stderr, exitCode] = await Promise.all([

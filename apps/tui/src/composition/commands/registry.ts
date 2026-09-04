@@ -1,4 +1,4 @@
-import { ECommandGroup, ECommandKind } from '@dltech/atlas-core'
+import { ECommandGroup, ECommandKind, EExecutionLocation } from '@dltech/atlas-core'
 
 import { ECompactScope, scopeOfArgument } from '../compact-turn'
 import { ERenamed } from '../session-rename'
@@ -44,7 +44,25 @@ export const agentsAskOfArgument = (argumentText: string): EAgentsAsk | null => 
   return null
 }
 
+export enum EContainerAsk {
+  Current = 'current',
+}
+
+export const containerAskOfArgument = (
+  argumentText: string,
+): EExecutionLocation | EContainerAsk | null => {
+  const asked = argumentText.trim().toLowerCase()
+  if (asked === '') return EContainerAsk.Current
+  if (asked === 'off' || asked === 'host') return EExecutionLocation.Host
+  if (asked === 'docker') return EExecutionLocation.Docker
+  return null
+}
+
+const UNKNOWN_CONTAINER_ARGUMENT = (argumentText: string): string =>
+  `/container takes no argument to say where this conversation runs, or "off" | "docker" to move it — not ${argumentText.trim()}`
+
 export type LocalCommandHandlers = {
+  onContainer: (asked: EExecutionLocation | EContainerAsk) => string
   onCompact: (scope: ECompactScope) => void
   onRewind: () => void
   onShortcuts: () => void
@@ -88,6 +106,20 @@ const immediate = (args: {
 
 export function localCommands(handlers: LocalCommandHandlers): readonly LocalCommand[] {
   return [
+    local({
+      name: 'container',
+      summary: 'move this conversation between the host and a docker container',
+      argumentHint: '[off|docker]',
+      group: ECommandGroup.Session,
+      timing: ECommandTiming.Immediate,
+      echo: ECommandEcho.Output,
+      run: ({ argumentText }) => {
+        const asked = containerAskOfArgument(argumentText)
+        if (asked === null) return refused(UNKNOWN_CONTAINER_ARGUMENT(argumentText))
+
+        return { type: ECommandEffect.Ran, notice: handlers.onContainer(asked) }
+      },
+    }),
     immediate({
       name: 'help',
       summary: 'show every keyboard shortcut',

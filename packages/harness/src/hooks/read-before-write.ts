@@ -1,5 +1,3 @@
-import type { Stats } from 'node:fs'
-import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
 import {
@@ -10,13 +8,15 @@ import {
   ToolDefinition,
   type BeforeTool,
   type DeclaredPathField,
+  type FileStat,
+  type FileSystemPort,
   type HookOrder,
   type ThreadId,
   type ToolCall,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import {  portToken } from '../container/injection'
+import { LocalFileSystemPort } from '../execution/local-filesystem'
 import { FileReadStatePort } from '../files/read-state'
 import { movedSince } from '../files/staleness'
 import {
@@ -50,14 +50,14 @@ enum EStatus {
 type FileStatus =
   | { kind: EStatus.Absent }
   | { kind: EStatus.Unverifiable; fault: string }
-  | { kind: EStatus.Present; stats: Stats }
+  | { kind: EStatus.Present; stats: FileStat }
 
 const errorCodeOf = (error: unknown): string =>
   error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'unknown'
 
-async function statusOf(path: string): Promise<FileStatus> {
+async function statusOf(args: { path: string; files: FileSystemPort }): Promise<FileStatus> {
   try {
-    return { kind: EStatus.Present, stats: await stat(path) }
+    return { kind: EStatus.Present, stats: await args.files.stat({ path: args.path }) }
   } catch (error) {
     const fault = errorCodeOf(error)
     if (fault === 'ENOENT') return { kind: EStatus.Absent }
@@ -107,8 +107,9 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
   private readonly declaredPaths: DeclaredPaths
 
   constructor(
-     private readonly seen: FileReadStatePort,
-     tools: readonly ToolDeclaration[],
+    private readonly seen: FileReadStatePort,
+    tools: readonly ToolDeclaration[],
+    private readonly files: FileSystemPort = new LocalFileSystemPort(),
   ) {
     super()
     this.declaredPaths = createDeclaredPaths({ tools })
@@ -132,7 +133,7 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
     if (path === undefined) return undefined
 
     const content = args.declared.content
-    const status = await statusOf(path)
+    const status = await statusOf({ path, files: this.files })
     if (status.kind === EStatus.Absent) return undefined
     if (status.kind === EStatus.Unverifiable) {
       return { kind: EDenial.Unverifiable, path, content, fault: status.fault }
@@ -148,7 +149,7 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
         : undefined
     }
 
-    if (await movedSince({ view, stats, path })) {
+    if (await movedSince({ view, stats, path, files: this.files })) {
       return { kind: EDenial.Stale, path, content }
     }
 
@@ -179,4 +180,5 @@ export class ReadBeforeWriteHook extends BeforeToolHook {
 export const createReadBeforeWriteHook = (args: {
   seen: FileReadStatePort
   tools: readonly ToolDeclaration[]
-}): BeforeToolHook => new ReadBeforeWriteHook(args.seen, args.tools)
+  files?: FileSystemPort | undefined
+}): BeforeToolHook => new ReadBeforeWriteHook(args.seen, args.tools, args.files)

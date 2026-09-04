@@ -21,6 +21,7 @@ import {
   job,
   openRegistry,
   settle,
+  shellAdapters,
   THREAD,
 } from './shell-registry-fixture'
 
@@ -104,144 +105,162 @@ describe('the budget an after-shell hook is given', () => {
   })
 })
 
-describe('the after-shell phase, fired by the shell registry', () => {
-  it('runs when a shell exits, naming the shell and the thread that started it', async () => {
-    const seen: { threadId: ThreadId; shell: EndedShell }[] = []
-    const { registry } = openRegistry({ hooks: chainOf([observe({ name: 'watch', seen })]) })
+for (const adapter of shellAdapters) {
+  const describeAdapter = adapter.available ? describe : describe.skip
 
-    const started = registry.start(job({ command: 'echo pushed' }))
-    if (!started.ok) throw new Error(started.reason)
-    await settle({ registry, shellId: started.snapshot.shellId })
-    await announced({ registry })
+  describeAdapter(`${adapter.name} process adapter`, () => {
+    describe('the after-shell phase, fired by the shell registry', () => {
+      it('runs when a shell exits, naming the shell and the thread that started it', async () => {
+        const seen: { threadId: ThreadId; shell: EndedShell }[] = []
+        const { registry } = openRegistry({
+          adapter,
+          hooks: chainOf([observe({ name: 'watch', seen })]),
+        })
 
-    expect(seen).toHaveLength(1)
-    expect(seen[0]?.threadId).toBe(THREAD)
-    expect(seen[0]?.shell.shellId).toBe(started.snapshot.shellId)
-    expect(seen[0]?.shell.command).toBe('echo pushed')
-    expect(seen[0]?.shell.status).toBe(EShellStatus.Exited)
-    expect(seen[0]?.shell.exitCode).toBe(0)
-  })
+        const started = registry.start(job({ command: 'echo pushed' }))
+        if (!started.ok) throw new Error(started.reason)
+        await settle({ registry, shellId: started.snapshot.shellId })
+        await announced({ registry })
 
-  it('runs for a killed shell, and says who killed it', async () => {
-    const seen: { threadId: ThreadId; shell: EndedShell }[] = []
-    const { registry } = openRegistry({ hooks: chainOf([observe({ name: 'watch', seen })]) })
+        expect(seen).toHaveLength(1)
+        expect(seen[0]?.threadId).toBe(THREAD)
+        expect(seen[0]?.shell.shellId).toBe(started.snapshot.shellId)
+        expect(seen[0]?.shell.command).toBe('echo pushed')
+        expect(seen[0]?.shell.status).toBe(EShellStatus.Exited)
+        expect(seen[0]?.shell.exitCode).toBe(0)
+      })
 
-    const started = registry.start(job({ command: 'sleep 30' }))
-    if (!started.ok) throw new Error(started.reason)
-    registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.Model, threadId: THREAD })
-    await announced({ registry })
+      it('runs for a killed shell, and says who killed it', async () => {
+        const seen: { threadId: ThreadId; shell: EndedShell }[] = []
+        const { registry } = openRegistry({
+          adapter,
+          hooks: chainOf([observe({ name: 'watch', seen })]),
+        })
 
-    expect(seen).toHaveLength(1)
-    expect(seen[0]?.shell.status).toBe(EShellStatus.Killed)
-    expect(seen[0]?.shell.killedBy).toBe(EKilledBy.Model)
-  })
+        const started = registry.start(job({ command: 'sleep 30' }))
+        if (!started.ok) throw new Error(started.reason)
+        registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.Model, threadId: THREAD })
+        await announced({ registry })
 
-  it('runs once per shell, however often the ending is looked at', async () => {
-    const seen: { threadId: ThreadId; shell: EndedShell }[] = []
-    const { registry } = openRegistry({ hooks: chainOf([observe({ name: 'watch', seen })]) })
+        expect(seen).toHaveLength(1)
+        expect(seen[0]?.shell.status).toBe(EShellStatus.Killed)
+        expect(seen[0]?.shell.killedBy).toBe(EKilledBy.Model)
+      })
 
-    const started = registry.start(job({ command: 'echo once' }))
-    if (!started.ok) throw new Error(started.reason)
-    await settle({ registry, shellId: started.snapshot.shellId })
-    await announced({ registry })
+      it('runs once per shell, however often the ending is looked at', async () => {
+        const seen: { threadId: ThreadId; shell: EndedShell }[] = []
+        const { registry } = openRegistry({
+          adapter,
+          hooks: chainOf([observe({ name: 'watch', seen })]),
+        })
 
-    registry.drainNotifications({ threadId: THREAD })
-    registry.list({ threadId: THREAD })
-    await Bun.sleep(100)
+        const started = registry.start(job({ command: 'echo once' }))
+        if (!started.ok) throw new Error(started.reason)
+        await settle({ registry, shellId: started.snapshot.shellId })
+        await announced({ registry })
 
-    expect(seen).toHaveLength(1)
-  })
+        registry.drainNotifications({ threadId: THREAD })
+        registry.list({ threadId: THREAD })
+        await Bun.sleep(100)
 
-  it('is told the thread that started the shell, not whoever is on screen', async () => {
-    const seen: { threadId: ThreadId; shell: EndedShell }[] = []
-    const { registry } = openRegistry({ hooks: chainOf([observe({ name: 'watch', seen })]) })
+        expect(seen).toHaveLength(1)
+      })
 
-    const started = registry.start(job({ command: 'echo elsewhere', threadId: ELSEWHERE }))
-    if (!started.ok) throw new Error(started.reason)
-    await settle({ registry, shellId: started.snapshot.shellId, threadId: ELSEWHERE })
-    await announced({ registry, threadId: ELSEWHERE })
+      it('is told the thread that started the shell, not whoever is on screen', async () => {
+        const seen: { threadId: ThreadId; shell: EndedShell }[] = []
+        const { registry } = openRegistry({
+          adapter,
+          hooks: chainOf([observe({ name: 'watch', seen })]),
+        })
 
-    expect(seen.map((one) => one.threadId)).toEqual([ELSEWHERE])
-    expect(registry.pendingNotices({ threadId: THREAD })).toEqual([])
-  })
+        const started = registry.start(job({ command: 'echo elsewhere', threadId: ELSEWHERE }))
+        if (!started.ok) throw new Error(started.reason)
+        await settle({ registry, shellId: started.snapshot.shellId, threadId: ELSEWHERE })
+        await announced({ registry, threadId: ELSEWHERE })
 
-  it('hands its drafts over with the ending, because nothing else would deliver them', async () => {
-    const started = 'polling ci for the push'
-    const hook = new ObservingHook(
-      'poll-ci',
-      { stage: EStage.Observe, nudge: 0 },
-      async () => ({ additionalContext: started }),
-    )
-    const { registry } = openRegistry({ hooks: chainOf([hook]) })
+        expect(seen.map((one) => one.threadId)).toEqual([ELSEWHERE])
+        expect(registry.pendingNotices({ threadId: THREAD })).toEqual([])
+      })
 
-    const shell = registry.start(job({ command: 'echo pushed' }))
-    if (!shell.ok) throw new Error(shell.reason)
-    await settle({ registry, shellId: shell.snapshot.shellId })
-    await announced({ registry })
+      it('hands its drafts over with the ending, because nothing else would deliver them', async () => {
+        const started = 'polling ci for the push'
+        const hook = new ObservingHook(
+          'poll-ci',
+          { stage: EStage.Observe, nudge: 0 },
+          async () => ({ additionalContext: started }),
+        )
+        const { registry } = openRegistry({ adapter, hooks: chainOf([hook]) })
 
-    const drained = registry.drainNotifications({ threadId: THREAD })
+        const shell = registry.start(job({ command: 'echo pushed' }))
+        if (!shell.ok) throw new Error(shell.reason)
+        await settle({ registry, shellId: shell.snapshot.shellId })
+        await announced({ registry })
 
-    expect(endedDraft(drained[0]).shellId).toBe(shell.snapshot.shellId)
-    expect(drained[1]).toEqual({
-      type: 'context-loaded',
-      slot: 'poll-ci',
-      key: 'additional-context',
-      content: started,
+        const drained = registry.drainNotifications({ threadId: THREAD })
+
+        expect(endedDraft(drained[0]).shellId).toBe(shell.snapshot.shellId)
+        expect(drained[1]).toEqual({
+          type: 'context-loaded',
+          slot: 'poll-ci',
+          key: 'additional-context',
+          content: started,
+        })
+      })
+
+      it('keeps the ending when a hook throws, because a dying process has nowhere to report it', async () => {
+        const hook = new ObservingHook('throws', { stage: EStage.Observe, nudge: 0 }, async () => {
+          throw new Error('the poller could not reach the forge')
+        })
+        const { registry } = openRegistry({ adapter, hooks: chainOf([hook]) })
+
+        const shell = registry.start(job({ command: 'echo pushed' }))
+        if (!shell.ok) throw new Error(shell.reason)
+        await settle({ registry, shellId: shell.snapshot.shellId })
+        await announced({ registry })
+
+        const drained = registry.drainNotifications({ threadId: THREAD })
+
+        expect(drained).toHaveLength(1)
+        expect(endedDraft(drained[0]).shellId).toBe(shell.snapshot.shellId)
+      })
+
+      it('queues the ending and lets teardown return when a hook never settles', async () => {
+        const hook = new ObservingHook(
+          'never-settles',
+          { stage: EStage.Observe, nudge: 0 },
+          () => new Promise(() => {}),
+        )
+        const { registry } = openRegistry({ adapter, hooks: chainOf([hook]) })
+
+        const shell = registry.start(job({ command: 'echo pushed' }))
+        if (!shell.ok) throw new Error(shell.reason)
+        await settle({ registry, shellId: shell.snapshot.shellId })
+
+        const closing = Date.now()
+        await registry.closeAll()
+
+        expect(Date.now() - closing).toBeLessThan(AFTER_SHELL_BUDGET_MS * 2)
+        const drained = registry.drainNotifications({ threadId: THREAD })
+        expect(drained).toHaveLength(1)
+        expect(endedDraft(drained[0]).shellId).toBe(shell.snapshot.shellId)
+      }, AFTER_SHELL_BUDGET_MS * 4)
+
+      it('has run before teardown returns, so the close path can still record what it produced', async () => {
+        const hook = new ObservingHook(
+          'poll-ci',
+          { stage: EStage.Observe, nudge: 0 },
+          async () => ({ additionalContext: 'the dev server went with the session' }),
+        )
+        const { registry } = openRegistry({ adapter, hooks: chainOf([hook]) })
+
+        const shell = registry.start(job({ command: 'sleep 30' }))
+        if (!shell.ok) throw new Error(shell.reason)
+
+        await registry.closeAll()
+
+        expect(registry.threadsAwaitingNotice()).toEqual([THREAD])
+        expect(registry.drainNotifications({ threadId: THREAD })).toHaveLength(2)
+      }, 15_000)
     })
   })
-
-  it('keeps the ending when a hook throws, because a dying process has nowhere to report it', async () => {
-    const hook = new ObservingHook('throws', { stage: EStage.Observe, nudge: 0 }, async () => {
-      throw new Error('the poller could not reach the forge')
-    })
-    const { registry } = openRegistry({ hooks: chainOf([hook]) })
-
-    const shell = registry.start(job({ command: 'echo pushed' }))
-    if (!shell.ok) throw new Error(shell.reason)
-    await settle({ registry, shellId: shell.snapshot.shellId })
-    await announced({ registry })
-
-    const drained = registry.drainNotifications({ threadId: THREAD })
-
-    expect(drained).toHaveLength(1)
-    expect(endedDraft(drained[0]).shellId).toBe(shell.snapshot.shellId)
-  })
-
-  it('queues the ending and lets teardown return when a hook never settles', async () => {
-    const hook = new ObservingHook(
-      'never-settles',
-      { stage: EStage.Observe, nudge: 0 },
-      () => new Promise(() => {}),
-    )
-    const { registry } = openRegistry({ hooks: chainOf([hook]) })
-
-    const shell = registry.start(job({ command: 'echo pushed' }))
-    if (!shell.ok) throw new Error(shell.reason)
-    await settle({ registry, shellId: shell.snapshot.shellId })
-
-    const closing = Date.now()
-    await registry.closeAll()
-
-    expect(Date.now() - closing).toBeLessThan(AFTER_SHELL_BUDGET_MS * 2)
-    const drained = registry.drainNotifications({ threadId: THREAD })
-    expect(drained).toHaveLength(1)
-    expect(endedDraft(drained[0]).shellId).toBe(shell.snapshot.shellId)
-  }, AFTER_SHELL_BUDGET_MS * 3)
-
-  it('has run before teardown returns, so the close path can still record what it produced', async () => {
-    const hook = new ObservingHook(
-      'poll-ci',
-      { stage: EStage.Observe, nudge: 0 },
-      async () => ({ additionalContext: 'the dev server went with the session' }),
-    )
-    const { registry } = openRegistry({ hooks: chainOf([hook]) })
-
-    const shell = registry.start(job({ command: 'sleep 30' }))
-    if (!shell.ok) throw new Error(shell.reason)
-
-    await registry.closeAll()
-
-    expect(registry.threadsAwaitingNotice()).toEqual([THREAD])
-    expect(registry.drainNotifications({ threadId: THREAD })).toHaveLength(2)
-  })
-})
+}

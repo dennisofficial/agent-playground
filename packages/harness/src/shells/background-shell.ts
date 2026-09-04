@@ -1,4 +1,11 @@
-import { EKilledBy, EShellStatus, type ClockPort } from '@dltech/atlas-core'
+import {
+  EKilledBy,
+  EShellStatus,
+  type ClockPort,
+  type PortExposure,
+  type ProcessPort,
+  type ThreadId,
+} from '@dltech/atlas-core'
 
 import { createOutputBuffer, type OutputDelta } from './output-buffer'
 import { looksLikePrompt } from './prompt-sniff'
@@ -24,13 +31,14 @@ export type ShellSnapshot = {
   description: string
   status: EShellStatus
   killedBy?: EKilledBy | undefined
-  pid: number
+  pid?: number | undefined
   exitCode?: number | undefined
   startedAt: string
   lastOutputAt: string
   endedAt?: string | undefined
   totalCharacters: number
   awaitingInput: boolean
+  exposure?: PortExposure | undefined
 }
 
 export type BackgroundShell = {
@@ -47,11 +55,27 @@ export type StartedBackgroundShell =
   | { ok: true; shell: BackgroundShell }
   | { ok: false; reason: string }
 
+export type StartShellArgs = {
+  threadId: ThreadId
+  command: string
+  description: string
+  cwd?: string | undefined
+  watch?: string | undefined
+  timeoutMs?: number | undefined
+  checkInMs?: number | undefined
+  exposure?: PortExposure | undefined
+}
+
+export type StartedShellOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
+
+export type ShellKillOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
+
 export type BackgroundShellSpec = {
   shellId: ShellId
   command: string
   description: string
   cwd: string
+  threadId?: ThreadId | undefined
   clock: ClockPort
   retainCharacters: number
   overflowCharacters: number
@@ -61,6 +85,8 @@ export type BackgroundShellSpec = {
   matchedLinesCap: number
   timeoutMs?: number | undefined
   checkInMs?: number | undefined
+  exposure?: PortExposure | undefined
+  processes?: ProcessPort | undefined
   onExit: (shell: BackgroundShell) => void
   onAwaitingInput: (shell: BackgroundShell) => void
   onMatched: (args: { shell: BackgroundShell; matched: MatchedLines }) => void
@@ -80,7 +106,12 @@ async function awaitOutputThrough(args: { shell: Shell; drains: readonly Drain[]
 }
 
 export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgroundShell {
-  const started = startShell({ command: spec.command, cwd: spec.cwd })
+  const started = startShell({
+    command: spec.command,
+    cwd: spec.cwd,
+    processes: spec.processes,
+    threadId: spec.threadId,
+  })
   if (!started.ok) return started
 
   const { shell } = started
@@ -283,6 +314,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
       endedAt,
       totalCharacters: buffer.totalCharacters(),
       awaitingInput: status === EShellStatus.Running && awaitingSettled,
+      exposure: spec.exposure,
     }),
 
     since: (offset) => buffer.since(offset),

@@ -1,7 +1,9 @@
 import {
   ClockPort,
   ECompactionAnchor,
+  EExecutionLocation,
   EForkMode,
+  executionLocationOf,
   IdPort,
   SURVIVES_SUMMARY,
   toThreadId,
@@ -39,6 +41,7 @@ export type ThreadSummary = {
   worktree?: ThreadWorktree | undefined
   /** Set only by `list`, alongside `worktree`; absent when the thread never linked a pull request. */
   pullRequests?: LinkedPullRequest[] | undefined
+  executionLocation?: EExecutionLocation | undefined
 }
 
 export const THREAD_LISTING_LIMIT = 50
@@ -62,6 +65,10 @@ export abstract class ThreadStorePort {
   }): Promise<readonly ThreadSummary[]>
   abstract rename(args: { threadId: ThreadId; title: string }): Promise<void>
   abstract chooseModel(args: { threadId: ThreadId; model: ThreadModel }): Promise<void>
+  abstract chooseExecutionLocation(args: {
+    threadId: ThreadId
+    location: EExecutionLocation
+  }): Promise<void>
   abstract adopt(args: {
     threadId: ThreadId
     workspace: string
@@ -107,6 +114,7 @@ type ThreadRow = {
   repo: string | null
   modelRef: string | null
   modelEffort: string | null
+  executionLocation: string | null
 }
 
 const inProject = (project: string): Prisma.ThreadWhereInput => ({
@@ -209,6 +217,19 @@ export class PrismaThreadStore implements ThreadStorePort {
     await this.prisma.thread.update({
       where: { id: threadId },
       data: { modelRef: model.ref, modelEffort: model.effort },
+    })
+  }
+
+  async chooseExecutionLocation({
+    threadId,
+    location,
+  }: {
+    threadId: ThreadId
+    location: EExecutionLocation
+  }): Promise<void> {
+    await this.prisma.thread.update({
+      where: { id: threadId },
+      data: { executionLocation: location },
     })
   }
 
@@ -372,7 +393,15 @@ function toThreadSummary(row: ThreadRow): ThreadSummary {
     ...forkModeOf(row.forkMode),
     ...supervisedAgentOf(row),
     ...modelOf(row),
+    ...executionLocationFrom(row.executionLocation),
   }
+}
+
+function executionLocationFrom(stored: string | null): {
+  executionLocation?: EExecutionLocation
+} {
+  const location = executionLocationOf(stored)
+  return location === undefined ? {} : { executionLocation: location }
 }
 
 function modelOf(row: {

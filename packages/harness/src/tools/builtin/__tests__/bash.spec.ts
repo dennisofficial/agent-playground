@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
 
-import type { ToolOutcome } from '@dltech/atlas-core'
+import type { ProcessPort, SpawnCommand, ToolOutcome } from '@dltech/atlas-core'
 
 import { HookChain } from '../../../hooks/registry'
 import { BunShellRegistry } from '../../../shells/shell-registry'
@@ -372,5 +372,39 @@ describe('what the tool tells the model about watching', () => {
     expect(description).toContain('silence from a watch is indistinguishable from progress')
     expect(description).toContain('widen the alternation rather than narrow it')
     expect(description).toContain('Traceback')
+  })
+})
+
+describe('routing the spawn by thread', () => {
+  it('carries the calling thread onto the spawn, so a routed port can place it', async () => {
+    const spawned: SpawnCommand[] = []
+    const processes: ProcessPort = {
+      spawn: (args: SpawnCommand) => {
+        spawned.push(args)
+        return {
+          stdout: new ReadableStream({ start: (controller) => controller.close() }),
+          stderr: new ReadableStream({ start: (controller) => controller.close() }),
+          exited: Promise.resolve(0),
+          terminate: () => undefined,
+        }
+      },
+      which: () => null,
+    }
+    const tool = new BashTool(
+      new BunShellRegistry(root, new SystemClock(), noHooks),
+      undefined,
+      processes,
+    )
+
+    const outcome = await tool.invoke({
+      input: { command: 'echo hi', description: 'Probe the spawn' },
+      signal: new AbortController().signal,
+      idempotencyKey: 'bash-thread-routing',
+      projectDirectory: root,
+      threadId: toThreadId('thread-1'),
+    })
+
+    expect(outcome.ok).toBe(true)
+    expect(spawned[0]?.threadId).toBe(toThreadId('thread-1'))
   })
 })

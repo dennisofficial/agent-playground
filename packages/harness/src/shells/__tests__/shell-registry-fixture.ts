@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  ProcessPort,
   toThreadId,
   type ClockPort,
   type EventDraft,
@@ -10,6 +11,15 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
+import { DockerProcessPort } from '../../execution/docker/docker-process'
+import { DockerEngine } from '../../execution/docker/engine'
+import {
+  DEFAULT_DOCKER_SOCKET,
+  DEFAULT_SANDBOX_IMAGE,
+  worktreeLabel,
+  type SandboxConfig,
+} from '../../execution/docker/sandbox'
+import { LocalProcessPort } from '../../execution/local-process'
 import { HookChain, type HookChainSource } from '../../hooks/registry'
 import { EShellStatus } from '../background-shell'
 import { BunShellRegistry, type ShellRegistryPort } from '../shell-registry'
@@ -81,28 +91,83 @@ export function stillRunningDraft(draft: EventDraft | undefined): StillRunningDr
   return draft
 }
 
-const opened: { registry: ShellRegistryPort; root: string }[] = []
+const SOCKET = process.env.ATLAS_DOCKER_SOCKET ?? DEFAULT_DOCKER_SOCKET
+const DOCKER_PREFIX = 'atlas-dev-shells'
+const dockerEngine = new DockerEngine({ socketPath: SOCKET })
+
+export type ShellAdapter = {
+  name: string
+  available: boolean
+  processes(args: { root: string }): ProcessPort
+  sweep(args: { root: string }): Promise<void>
+}
+
+const dockerSandbox = (root: string): SandboxConfig => ({
+  image: DEFAULT_SANDBOX_IMAGE,
+  worktree: root,
+  uid: process.getuid?.() ?? 501,
+  gid: process.getgid?.() ?? 20,
+  home: '/Users/operator',
+  limits: { cpus: 1, memoryBytes: 512 * 1024 ** 2 },
+  dockerSocket: SOCKET,
+  labelPrefix: DOCKER_PREFIX,
+})
+
+export const localShellAdapter: ShellAdapter = {
+  name: 'local',
+  available: true,
+  processes: () => new LocalProcessPort(),
+  sweep: async () => {},
+}
+
+export const dockerShellAdapter: ShellAdapter = {
+  name: 'docker',
+  available: existsSync(SOCKET),
+  processes: ({ root }) =>
+    new DockerProcessPort({ engine: dockerEngine, sandbox: dockerSandbox(root) }),
+  sweep: async ({ root }) => {
+    const stale = await dockerEngine.listContainers({
+      labels: { [worktreeLabel(DOCKER_PREFIX)]: root },
+      all: true,
+    })
+    for (const container of stale) await dockerEngine.removeContainer({ id: container.id })
+  },
+}
+
+export const shellAdapters: readonly ShellAdapter[] = [localShellAdapter, dockerShellAdapter]
+
+const opened: { registry: ShellRegistryPort; root: string; adapter: ShellAdapter }[] = []
 
 export async function closeRegistries(): Promise<void> {
   for (const entry of opened.splice(0)) {
     await entry.registry.closeAll()
+    await entry.adapter.sweep({ root: entry.root })
     rmSync(entry.root, { recursive: true, force: true })
   }
 }
 
 const noHooks: HookChainSource = () => new HookChain({})
 
-export function openRegistry(
-  { hooks }: { hooks?: HookChainSource | undefined } = {},
-): {
+export function openRegistry({
+  adapter = localShellAdapter,
+  hooks,
+}: {
+  adapter?: ShellAdapter
+  hooks?: HookChainSource | undefined
+} = {}): {
   registry: BunShellRegistry
   clock: SteppableClock
   root: string
 } {
-  const root = mkdtempSync(join(tmpdir(), 'atlas-shells-'))
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'atlas-shells-')))
   const clock = new SteppableClock()
-  const registry = new BunShellRegistry(root, clock, hooks ?? noHooks)
-  opened.push({ registry, root })
+  const registry = new BunShellRegistry(
+    root,
+    clock,
+    hooks ?? noHooks,
+    adapter.processes({ root }),
+  )
+  opened.push({ registry, root, adapter })
   return { registry, clock, root }
 }
 
@@ -154,7 +219,7 @@ export const awaitingInputOf = async ({
   registry: ShellRegistryPort
   shellId: string
 }): Promise<boolean> => {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  for (let attempt = 0; attempt < 400; attempt += 1) {
     const snapshot = registry.list({ threadId: THREAD }).find((entry) => entry.shellId === shellId)
     if (snapshot?.awaitingInput === true) return true
     await Bun.sleep(25)

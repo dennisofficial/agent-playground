@@ -1,10 +1,16 @@
-import { ClockPort, EKilledBy, type EventDraft, type ThreadId } from '@dltech/atlas-core'
+import { ClockPort, EKilledBy, ProcessPort, type EventDraft, type ThreadId } from '@dltech/atlas-core'
 
-import {  portToken } from '../container/injection'
-import { HookChainSourceToken, WorkspaceRoot } from '../container/tokens'
+import { LocalProcessPort } from '../execution/local-process'
 import type { HookChainSource } from '../hooks/registry'
 import { afterShellDrafts } from './after-shell'
-import { startBackgroundShell, type BackgroundShell, type ShellSnapshot } from './background-shell'
+import {
+  startBackgroundShell,
+  type BackgroundShell,
+  type ShellKillOutcome,
+  type ShellSnapshot,
+  type StartedShellOutcome,
+  type StartShellArgs,
+} from './background-shell'
 import {
   ENotice,
   ShellNoticeQueue,
@@ -23,13 +29,9 @@ export const PROMPT_SETTLE_MS = 2_000
 export const CHECK_IN_EVERY_MS = 300_000
 export const CHECK_IN_TAIL_CHARACTERS = 1_000
 
-export type StartedShellOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
-
 export type ShellReadOutcome =
   | { ok: true; snapshot: ShellSnapshot; delta: ShellDelta }
   | { ok: false; reason: string }
-
-export type ShellKillOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
 
 /**
  * A shell belongs to the thread that started it. Every read is scoped to an owner so a conversation
@@ -37,15 +39,7 @@ export type ShellKillOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: fal
  * guard and teardown look across all of them, because a process dying kills them all regardless.
  */
 export abstract class ShellRegistryPort {
-  abstract start(args: {
-    threadId: ThreadId
-    command: string
-    description: string
-    cwd?: string | undefined
-    watch?: string | undefined
-    timeoutMs?: number | undefined
-    checkInMs?: number | undefined
-  }): StartedShellOutcome
+  abstract start(args: StartShellArgs): StartedShellOutcome
   abstract read(args: { shellId: string; threadId: ThreadId }): ShellReadOutcome
   abstract peek(args: {
     shellId: string
@@ -84,22 +78,15 @@ export class BunShellRegistry extends ShellRegistryPort {
   private activityTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(
-     private readonly root: string,
-     private readonly clock: ClockPort,
-     private readonly hooks: HookChainSource,
+    private readonly root: string,
+    private readonly clock: ClockPort,
+    private readonly hooks: HookChainSource,
+    private readonly processes: ProcessPort = new LocalProcessPort(),
   ) {
     super()
   }
 
-  start(args: {
-    threadId: ThreadId
-    command: string
-    description: string
-    cwd?: string | undefined
-    watch?: string | undefined
-    timeoutMs?: number | undefined
-    checkInMs?: number | undefined
-  }): StartedShellOutcome {
+  start(args: StartShellArgs): StartedShellOutcome {
     const watch = compileWatch(args.watch)
     if (!watch.ok) return watch
 
@@ -112,6 +99,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       command: args.command,
       description: args.description,
       cwd: args.cwd ?? this.root,
+      threadId: args.threadId,
       clock: this.clock,
       retainCharacters: RETAINED_CHARACTERS,
       overflowCharacters: OVERFLOW_CHARACTERS,
@@ -121,6 +109,8 @@ export class BunShellRegistry extends ShellRegistryPort {
       matchedLinesCap: MATCHED_LINES_CAP,
       timeoutMs: args.timeoutMs,
       checkInMs,
+      exposure: args.exposure,
+      processes: this.processes,
       onExit: (shell) => this.announceExit(shell),
       onAwaitingInput: (shell) => this.announceAwaitingInput(shell),
       onMatched: (matched) => this.announceMatched(matched),

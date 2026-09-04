@@ -33,6 +33,7 @@ export type OpenRequest =
  */
 export type AtlasConfig = {
   model: string | undefined
+  executionLocation: string | undefined
   open: OpenRequest
   cwd: string
 }
@@ -42,6 +43,8 @@ const CONTINUE_FLAGS: readonly string[] = ['--continue', '-c']
 const RESUME_FLAG = '--resume'
 
 const MODEL_FLAG = '--model'
+
+const EXECUTION_LOCATION_FLAG = '--execution-location'
 
 const DIRECTORY_FLAG = '--cwd'
 
@@ -97,6 +100,7 @@ export function resolveConfig(args: {
 }): AtlasConfig {
   return {
     model: modelFromArgv(args.argv),
+    executionLocation: valueAfter({ argv: args.argv, flag: EXECUTION_LOCATION_FLAG }),
     open: openFromArgv(args.argv),
     cwd: directoryFromArgv({ argv: args.argv, cwd: args.cwd, home: args.home }),
   }

@@ -2,6 +2,7 @@ import {
   AfterToolHook,
   BeforeToolHook,
   BeforeTurnHook,
+  FileSystemPort,
   ToolDefinition,
   WorkspaceFactsPort,
 } from '@dltech/atlas-core'
@@ -33,6 +34,7 @@ export function registerBuiltinHooks({ container }: { container: DependencyConta
       new ReadBeforeWriteHook(
         resolver.resolve(portToken(FileReadStatePort)),
         resolver.resolveAll(portToken(ToolDefinition)),
+        resolver.resolve(portToken(FileSystemPort)),
       ),
   })
   registerClassifier({ container })
@@ -48,6 +50,7 @@ export function registerBuiltinHooks({ container }: { container: DependencyConta
       new RecordFileStateHook(
         resolver.resolve(portToken(FileReadStatePort)),
         resolver.resolveAll(portToken(ToolDefinition)),
+        resolver.resolve(portToken(FileSystemPort)),
       ),
   })
   container.register(portToken(AfterToolHook), { useClass: MirrorPlanHook })

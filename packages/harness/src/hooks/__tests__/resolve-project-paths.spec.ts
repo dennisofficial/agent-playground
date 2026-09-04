@@ -8,7 +8,11 @@ import {
   type ToolCall,
 } from '@dltech/atlas-core'
 
-import { closeRegistries, openRegistry } from '../../shells/__tests__/shell-registry-fixture'
+import {
+  closeRegistries,
+  localShellAdapter,
+  openRegistry,
+} from '../../shells/__tests__/shell-registry-fixture'
 import { BashTool } from '../../tools/builtin/bash'
 import { ReadTool } from '../../tools/builtin/read'
 import { ResolveProjectPathsHook } from '../resolve-project-paths'
@@ -16,7 +20,7 @@ import { ResolveProjectPathsHook } from '../resolve-project-paths'
 const ROOT = '/Users/dev/project'
 
 const hook = (): ResolveProjectPathsHook => {
-  const { registry: shells } = openRegistry()
+  const { registry: shells } = openRegistry({ adapter: localShellAdapter })
   return new ResolveProjectPathsHook([new ReadTool(), new BashTool(shells)])
 }
 

@@ -1,4 +1,3 @@
-import { stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 
 import {
@@ -9,13 +8,14 @@ import {
   ToolDefinition,
   type AfterTool,
   type DeclaredPathField,
+  type FileSystemPort,
   type HookOrder,
   type ThreadId,
   type ToolCall,
   type ToolDeclaration,
 } from '@dltech/atlas-core'
 
-import {  portToken } from '../container/injection'
+import { LocalFileSystemPort } from '../execution/local-filesystem'
 import { digestOf } from '../files/digest'
 import { FileReadStatePort } from '../files/read-state'
 import { movedSince } from '../files/staleness'
@@ -27,13 +27,16 @@ export class RecordFileStateHook extends AfterToolHook {
 
   private readonly seen: FileReadStatePort
   private readonly declarations: Map<string, ToolDeclaration>
+  private readonly files: FileSystemPort
 
   constructor(
-     seen: FileReadStatePort,
-     tools: readonly ToolDeclaration[],
+    seen: FileReadStatePort,
+    tools: readonly ToolDeclaration[],
+    files: FileSystemPort = new LocalFileSystemPort(),
   ) {
     super()
     this.seen = seen
+    this.files = files
     this.declarations = new Map(tools.map((tool) => [tool.name, tool]))
   }
 
@@ -69,14 +72,14 @@ export class RecordFileStateHook extends AfterToolHook {
   }): Promise<void> {
     if (!isAbsolute(path)) return
 
-    const stats = await stat(path).catch(() => null)
+    const stats = await this.files.stat({ path }).catch(() => null)
     if (stats === null || !stats.isFile()) return
 
-    const digest = await digestOf({ path })
+    const digest = await digestOf({ path, files: this.files })
     if (digest === undefined) return
 
     const known = this.seen.viewOf({ threadId, path })
-    const wholeFile = known !== undefined && !(await movedSince({ view: known, stats, path })) && known.wholeFile
+    const wholeFile = known !== undefined && !(await movedSince({ view: known, stats, path, files: this.files })) && known.wholeFile
 
     this.seen.record({
       threadId,
@@ -97,10 +100,10 @@ export class RecordFileStateHook extends AfterToolHook {
     const value = inputFieldOf({ input: call.input, field: declared.field })
     if (value === ABSENT || typeof value !== 'string' || !isAbsolute(value)) return
 
-    const stats = await stat(value).catch(() => null)
+    const stats = await this.files.stat({ path: value }).catch(() => null)
     if (stats === null || !stats.isFile()) return
 
-    const digest = await digestOf({ path: value })
+    const digest = await digestOf({ path: value, files: this.files })
     if (digest === undefined) return
 
     this.seen.record({
@@ -142,4 +145,5 @@ export class RecordFileStateHook extends AfterToolHook {
 export const createRecordFileStateHook = (args: {
   seen: FileReadStatePort
   tools: readonly ToolDeclaration[]
-}): AfterToolHook => new RecordFileStateHook(args.seen, args.tools)
+  files?: FileSystemPort | undefined
+}): AfterToolHook => new RecordFileStateHook(args.seen, args.tools, args.files)

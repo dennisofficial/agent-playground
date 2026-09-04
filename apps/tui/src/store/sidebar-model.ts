@@ -1,4 +1,5 @@
 import {
+  EExecutionLocation,
   EPlanStatus,
   eventsOfType,
   grantsFrom,
@@ -9,7 +10,7 @@ import {
   type Grant,
 } from "@dltech/atlas-core";
 
-import type { TurnSpend } from "@dltech/atlas-harness";
+import type { BoundPort, ESandboxState, TurnSpend } from "@dltech/atlas-harness";
 
 import { classifierFold, type ClassifierFold } from "./classifier-fold";
 import { truncateCells } from "../ui/components/sidebar/cells";
@@ -58,6 +59,19 @@ export type SidebarModel = {
   sections?: readonly SidebarSection[];
   classifier?: ClassifierFold;
   grants?: readonly Grant[];
+  container?: SidebarContainer;
+};
+
+/**
+ * What the pill reads: the sandbox's own state off the lifecycle, and the image and bound ports
+ * off the sandbox's configuration. Nothing here ticks — a status line that changed on every read
+ * would earn another read.
+ */
+export type SidebarContainer = {
+  state: ESandboxState;
+  image: string;
+  ports: readonly BoundPort[];
+  reason?: string | undefined;
 };
 
 export const IDLE_SIDEBAR: SidebarModel = {
@@ -192,4 +206,27 @@ export function withSections(args: {
   if (sections.length === 0) return args.model;
 
   return { ...args.model, sections };
+}
+
+/**
+ * The thread's column decides whether there is a pill at all; the sandbox's own state decides what
+ * it says. Host mode gets no pill, whatever the sandbox under it is doing.
+ */
+export function containerPillOf(args: {
+  location: EExecutionLocation;
+  container: SidebarContainer;
+}): SidebarContainer | null {
+  if (args.location === EExecutionLocation.Host) return null;
+
+  const { state, image, ports, reason } = args.container;
+  return { state, image, ports, ...(reason === undefined ? {} : { reason }) };
+}
+
+export function withContainer(args: {
+  model: SidebarModel;
+  container: SidebarContainer | null;
+}): SidebarModel {
+  if (args.container === null) return args.model;
+
+  return { ...args.model, container: args.container };
 }

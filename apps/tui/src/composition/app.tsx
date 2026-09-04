@@ -14,13 +14,15 @@ import React, {
 import {
   contextPressure,
   ECompactionAnchor,
+  launchWorktreeOf,
+  type EExecutionLocation,
   type EUsageWindow,
   type ModelCard,
 } from '@dltech/atlas-core'
 import type { DiscoveredSkill } from '@dltech/atlas-harness'
 
 import { newestExpandableKey } from '../store'
-import { withSections } from '../store/sidebar-model'
+import { withContainer, withSections } from '../store/sidebar-model'
 import { accountMeterSpans } from '../ui/account-meters'
 import { accountOf, type AccountRow } from '../ui/accounts-model'
 import { isWaiting, type BackgroundWork } from '../ui/background-wait'
@@ -89,7 +91,8 @@ import {
   useKeyBindings,
   useKeyRegistry,
 } from '../ui/keys'
-import { commandSpecs, dispatchSubmission, EDispatch, localCommands } from './commands'
+import { commandSpecs, dispatchSubmission, EContainerAsk, EDispatch, localCommands } from './commands'
+import { currentLocationNotice, movedLocationNotice } from './container-notices'
 import { mcpReport } from './mcp-report'
 import { useComposerMenus } from './use-composer-menus'
 import { workspaceFileLoader } from './mentioned-files'
@@ -129,6 +132,8 @@ import { SubagentTranscript } from './subagent-transcript'
 import { useAgentsPicker } from './use-agents-picker'
 import { EModelScope, useSwitcher } from './use-switcher'
 import { useThreadModel } from './use-thread-model'
+import { useContainerPill } from './use-container-pill'
+import { useExecutionLocation } from './use-execution-location'
 import { useThreads } from './use-threads'
 
 const PLACEHOLDER = 'Ask anything'
@@ -262,6 +267,14 @@ function Workspace(props: {
     stored: conversation.threadModel,
     started: conversation.started,
   })
+
+  const execution = useExecutionLocation({
+    app: props.app,
+    threadId: conversation.threadId,
+    stored: conversation.executionLocation,
+    started: conversation.started,
+  })
+  const containerPill = useContainerPill({ app: props.app })
 
   const { selection } = threadModel
 
@@ -659,9 +672,20 @@ function Workspace(props: {
 
   // OpenTUI parses a whole input burst before React re-renders, so a paste — or ⏎ arriving in the
   // same burst as the text — reaches here with `draft.value` still empty. The buffer is the truth.
+  const handleContainer = useCallback(
+    (asked: EExecutionLocation | EContainerAsk): string => {
+      if (asked === EContainerAsk.Current) return currentLocationNotice(execution.location)
+
+      execution.handleSet(asked)
+      return movedLocationNotice(asked)
+    },
+    [execution],
+  )
+
   const commands = useMemo(
     () =>
       localCommands({
+        onContainer: handleContainer,
         onCompact: conversation.handleCompact,
         onRewind: rewind.handleOpen,
         onShortcuts: () => setPanel(EChromePanel.Shortcuts),
@@ -684,6 +708,7 @@ function Workspace(props: {
       agentsPicker.handleOpen,
       conversation.handleCompact,
       conversation.handleRename,
+      handleContainer,
       handleNewConversation,
       handleReloadSkills,
       handleRestart,
@@ -1150,7 +1175,10 @@ function Workspace(props: {
         {sidebarVisible ? (
           <Sidebar
             width={overlay ? floatingSidebarWidth({ width, sidebarWidth }) : sidebarWidth}
-            model={withSections({ model: agents.sidebar, sections: surfaces.sidebarSections })}
+            model={withSections({
+              model: withContainer({ model: agents.sidebar, container: containerPill }),
+              sections: surfaces.sidebarSections,
+            })}
             root={projectRoot}
             worktree={sidebarWorktree}
             overlay={overlay}

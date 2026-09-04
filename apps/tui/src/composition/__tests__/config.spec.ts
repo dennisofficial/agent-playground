@@ -56,7 +56,7 @@ describe('the launch configuration', () => {
     })
   })
 
-  it('takes the model from the command line, the one thing a launch still overrides', () => {
+  it('takes the model from the command line, overriding the remembered pick for one launch', () => {
     expect(resolve({ argv: ['--model', 'claude-sonnet-5'] }).model).toBe('claude-sonnet-5')
   })
 
@@ -66,7 +66,22 @@ describe('the launch configuration', () => {
   })
 
   it('reads nothing out of the environment, because every such knob is a setting', () => {
-    expect(Object.keys(resolve({}))).toEqual(['model', 'open', 'cwd'])
+    expect(Object.keys(resolve({}))).toEqual(['model', 'executionLocation', 'open', 'cwd'])
+  })
+
+  it('names no execution location unless the launch asked for one, so the thread or the default answers', () => {
+    expect(resolve({}).executionLocation).toBeUndefined()
+  })
+
+  it('takes the execution location from the command line, overriding for one launch only', () => {
+    expect(resolve({ argv: ['--execution-location', 'docker'] }).executionLocation).toBe('docker')
+  })
+
+  it('ignores an --execution-location with no location after it', () => {
+    expect(resolve({ argv: ['--execution-location'] }).executionLocation).toBeUndefined()
+    expect(
+      resolve({ argv: ['--execution-location', '--new'] }).executionLocation,
+    ).toBeUndefined()
   })
 
   it('carries the working directory through, because the empty transcript names it', () => {

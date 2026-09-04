@@ -1,5 +1,3 @@
-import { statSync } from 'node:fs'
-
 import { z } from 'zod'
 
 import {
@@ -7,12 +5,14 @@ import {
   EPathForm,
   EPathPresence,
   EToolEffect,
+  FileSystemPort,
   SchemaTool,
   type DeclaredPathField,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
 
+import { LocalFileSystemPort } from '../../execution/local-filesystem'
 import { filePathSchema, resolveToolPath } from './file-text'
 
 const RESULT_LIMIT = 100
@@ -33,12 +33,9 @@ type DatedPath = { path: string; modifiedAt: number }
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error))
 
-function modifiedAt(path: string): number {
-  try {
-    return statSync(path).mtimeMs
-  } catch {
-    return 0
-  }
+async function modifiedAt(args: { path: string; files: FileSystemPort }): Promise<number> {
+  const stats = await args.files.stat({ path: args.path }).catch(() => null)
+  return stats?.mtimeMs ?? 0
 }
 
 function byNewestFirst(left: DatedPath, right: DatedPath): number {
@@ -67,6 +64,10 @@ export class GlobTool extends SchemaTool<typeof inputSchema> {
     { field: 'pattern', presence: EPathPresence.Required, form: EPathForm.RelativeToBase, content: EContentAccess.None },
   ]
 
+  constructor(private readonly files: FileSystemPort = new LocalFileSystemPort()) {
+    super()
+  }
+
   protected override async run({
     input,
     signal,
@@ -75,15 +76,17 @@ export class GlobTool extends SchemaTool<typeof inputSchema> {
     const { pattern, path } = input
     const from = path === undefined ? projectDirectory : resolveToolPath({ projectDirectory, path })
 
-    const found: DatedPath[] = []
+    let matches: readonly string[]
     try {
-      const scan = new Bun.Glob(pattern).scan({ cwd: from, absolute: true, onlyFiles: true })
-      for await (const match of scan) {
-        if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn while scanning for files' }
-        found.push({ path: match, modifiedAt: modifiedAt(match) })
-      }
+      matches = await this.files.glob({ pattern, cwd: from })
     } catch (error) {
       return { ok: false, reason: `could not scan ${from} for "${pattern}": ${messageOf(error)}` }
+    }
+
+    const found: DatedPath[] = []
+    for (const match of matches) {
+      if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn while scanning for files' }
+      found.push({ path: match, modifiedAt: await modifiedAt({ path: match, files: this.files }) })
     }
 
     const paths = found.sort(byNewestFirst).slice(0, RESULT_LIMIT).map((dated) => dated.path)

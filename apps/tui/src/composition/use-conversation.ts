@@ -9,6 +9,7 @@ import {
   type EventDraft,
   type ModelUsage,
   type SaidImage,
+  type EExecutionLocation,
 } from '@dltech/atlas-core'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
@@ -55,6 +56,7 @@ export type Conversation = {
   threadId: ThreadId
   started: boolean
   threadModel: ThreadModel | undefined
+  executionLocation: EExecutionLocation | undefined
   approval: ApprovalControl
   lost: RecoveredAgents | null
   handle: string | null
@@ -344,6 +346,7 @@ export function useConversation(args: {
     threadId,
     started,
     threadModel: opened.model,
+    executionLocation: opened.executionLocation,
     lost: opened.lost ?? null,
     handle: name === null ? null : threadHandle({ threadId, title: name }),
     model,

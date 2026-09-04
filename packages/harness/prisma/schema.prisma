@@ -28,6 +28,7 @@ model Thread {
   repo            String?
   modelRef        String?
   modelEffort     String?
+  executionLocation String?
   parent          Thread?  @relation("ThreadFork", fields: [parentThreadId], references: [id], onDelete: Restrict, onUpdate: NoAction)
   forks           Thread[] @relation("ThreadFork")
   spawner         Thread?  @relation("ThreadSupervision", fields: [spawnerThreadId], references: [id], onDelete: Restrict, onUpdate: NoAction)

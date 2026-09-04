@@ -1,6 +1,7 @@
 import {
   projectOf,
   toThreadId,
+  type EExecutionLocation,
   type IdPort,
   type ThreadId,
   type Event,
@@ -33,6 +34,7 @@ export type OpenedConversation = {
   name: string | null
   started: boolean
   model?: ThreadModel | undefined
+  executionLocation?: EExecutionLocation | undefined
   lost?: RecoveredAgents | undefined
 }
 
@@ -149,6 +151,7 @@ export async function openConversation(args: Opening): Promise<OpenOutcome> {
       name: thread.title ?? null,
       started: true,
       model: thread.model,
+      executionLocation: thread.executionLocation,
       lost,
     },
   }

@@ -74,7 +74,7 @@ const benchApp = (args: {
   let active: ActiveConversation | null = null
 
   return {
-    config: { model: undefined, open: { mode: EOpenMode.New }, cwd: args.root },
+    config: { model: undefined, open: { mode: EOpenMode.New }, cwd: args.root, executionLocation: undefined },
     workspace: { workspace: args.root, repo: null },
     markActiveThread: (next) => {
       active = next

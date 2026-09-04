@@ -5,6 +5,7 @@ import {
   planDelivery,
   planRegion,
   regionSaving,
+  type FileSystemPort,
   type ImageRegion,
   type ImageSize,
   type ModelPart,
@@ -149,12 +150,13 @@ export async function readImage(args: {
   mediaType: SupportedImageMediaType
   byteLength: number
   head: Uint8Array
+  files: FileSystemPort
   region?: ImageRegion | undefined
 }): Promise<ToolOutcome> {
   const { path, mediaType, byteLength } = args
 
   const readable =
-    byteLength <= MAX_INLINE_BYTES ? new Uint8Array(await Bun.file(path).arrayBuffer()) : args.head
+    byteLength <= MAX_INLINE_BYTES ? await args.files.readBytes({ path }) : args.head
 
   const size = imageSize({ bytes: readable, mediaType })
 

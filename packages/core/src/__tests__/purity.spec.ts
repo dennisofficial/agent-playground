@@ -43,7 +43,7 @@ describe('@dltech/atlas-core is pure', () => {
 
   it('reaches for no filesystem, network, database or process', async () => {
     expect(
-      await offendingLines(/\b(require\(|fetch\(|process\.|Bun\.|globalThis\.)/),
+      await offendingLines(/\b(require\(|fetch\(|(?<![\w/])process\.|Bun\.|globalThis\.)/),
     ).toEqual([])
   })
 

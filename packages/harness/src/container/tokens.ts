@@ -10,6 +10,7 @@ import type {
 import type { PrismaClient } from '../../prisma/generated/client'
 import type { ClaudeCodeSource } from '../credentials/claude-code-source'
 import type { KeychainReader } from '../credentials/keychain-reader'
+import type { DockerEngine } from '../execution/docker/engine'
 import type { OnHookMishap } from '../hooks/budget'
 import type { HookChain, HookChainSource } from '../hooks/registry'
 import type { ModelCardSource } from '../model/ai-sdk-model-port'
@@ -54,6 +55,8 @@ export const WebSearchBackendToken: InjectionToken<() => EWebSearchBackend> = Sy
 )
 
 export const SecretsStoreToken: InjectionToken<SecretsPort> = Symbol('atlas.SecretsStore')
+
+export const DockerEngineToken: InjectionToken<DockerEngine> = Symbol('atlas.DockerEngine')
 
 export const ClassifierPolicyToken: InjectionToken<() => ClassifierPolicy> = Symbol(
   'atlas.ClassifierPolicy',

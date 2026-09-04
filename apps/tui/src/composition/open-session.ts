@@ -1,4 +1,14 @@
+import { existsSync } from 'node:fs'
+
+import {
+  DEFAULT_DOCKER_SOCKET,
+  DockerEngine,
+  listWorktrees,
+  sweepSandboxes,
+} from '@dltech/atlas-harness'
+
 import { registerGrammars } from '../ui/markdown/grammars/index'
+import { ENoticeTone, notify } from '../ui/notice-store'
 import { EBootStep, type BootProgress } from './boot-progress'
 import { composeAtlas, type AtlasApp } from './compose'
 import type { AtlasConfig } from './config'
@@ -36,6 +46,31 @@ async function credentialRefusal(app: AtlasApp): Promise<CredentialDiagnosis | n
   }
 }
 
+/**
+ * The safety net for sessions that died hard: a container labelled for a worktree that is neither
+ * in this repository's worktree list nor on disk is orphaned, and removing it is what keeps `docker
+ * ps` honest. Never awaited — boot does not wait on a daemon.
+ */
+async function sweepOrphanedSandboxes(args: { cwd: string }): Promise<void> {
+  const socketPath = process.env.ATLAS_DOCKER_SOCKET ?? DEFAULT_DOCKER_SOCKET
+  if (!existsSync(socketPath)) return
+
+  const listing = await listWorktrees({ cwd: args.cwd })
+  if (!listing.ok) return
+
+  const removed = await sweepSandboxes({
+    engine: new DockerEngine({ socketPath }),
+    worktrees: listing.worktrees.map((worktree) => worktree.path),
+  })
+  if (removed.length === 0) return
+
+  notify({
+    key: 'sandbox-sweep',
+    tone: ENoticeTone.Info,
+    text: `Removed ${removed.length} sandbox ${removed.length === 1 ? 'container' : 'containers'} whose ${removed.length === 1 ? 'worktree is' : 'worktrees are'} gone: ${removed.join(', ')}`,
+  })
+}
+
 async function startSession(args: {
   config: AtlasConfig
   env: Record<string, string | undefined>
@@ -49,6 +84,8 @@ async function startSession(args: {
     state: stateOfDirectory(config.cwd),
   })
   if (unusable !== null) return { type: ESession.Refused, message: unusable, exitCode: REFUSED }
+
+  void sweepOrphanedSandboxes({ cwd: config.cwd }).catch(() => undefined)
 
   progress.report(EBootStep.Composing)
   const app = await composeAtlas({ config, env: args.env, settings: args.settings })

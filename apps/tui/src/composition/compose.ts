@@ -32,7 +32,6 @@ import {
   PromptFragment,
   promptContextFor,
   promptModelOf,
-  rangeValueOf,
   textValueOf,
   toggleValueOf,
   toThreadId,
@@ -75,6 +74,7 @@ import {
   createSecurityKeychainReader,
   createUrlOpener,
   disposeAll,
+  DockerEngineToken,
   HaikuJudge,
   HookChainToken,
   HookMishapReporterToken,
@@ -136,6 +136,11 @@ import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, modelPinned } from './model-preference'
+import { executionPinned, resolveExecutionLocation } from './execution-preference'
+import {
+  createExecutionLocationState,
+  type ExecutionLocationState,
+} from './execution-location-state'
 import { faultInjected } from './fault-injection'
 import { mcpBootNotice } from './mcp-report'
 import { selectableModel, type ModelChoice } from './model-selection'
@@ -148,11 +153,16 @@ import type { ContributedProjection } from '../plugins/projection'
 import type { ContributedSurface } from '../plugins/surface'
 import { instructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
+import { teardownSession } from './session-teardown'
+import { bindSandbox, type SandboxControl } from './sandbox-binding'
+import type { SandboxStatusState } from './sandbox-status-state'
 import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
 import { userSaidDraft } from './user-said'
 import { createWarpReporter, WarpThreadOpenHook } from './warp-reporter'
 
 export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
+
+export type { SandboxControl } from './sandbox-binding'
 
 const SESSION_CLAIM_LABEL = 'session'
 
@@ -252,9 +262,13 @@ export type AtlasApp = {
   shells: ShellRegistryPort
   agents: AgentRegistryPort
   services: ServiceRegistryPort
+  sandbox: SandboxControl
+  containerStatus: SandboxStatusState
   model: ModelChoice
   modelPinned: boolean
   models: ModelCatalogue
+  executionLocation: ExecutionLocationState
+  executionPinned: boolean
   settings: SettingsService
   secrets: SecretsPort
   usage: AccountUsageService
@@ -447,6 +461,30 @@ export async function composeAtlas(args: {
 
   const pinnedByFlag = modelPinned({ requested: { model: config.model }, catalogue: models })
 
+  const executionLocation = createExecutionLocationState({
+    initial: resolveExecutionLocation({
+      requested: config.executionLocation,
+      stored: undefined,
+      settled,
+    }),
+  })
+  const pinnedLocationByFlag = executionPinned({ requested: config.executionLocation })
+
+  /**
+   * Registered before anything resolves the hook chain, which is cached on first resolve: the
+   * model port below is what resolves it, so this block cannot move past it. Binding the routed
+   * process port here also precedes the first ProcessPort resolution, which the shell registry's
+   * cached factory performs.
+   */
+  const engine = container.resolve(DockerEngineToken)
+  const { sandbox, containerStatus } = await bindSandbox({
+    container,
+    engine,
+    cwd: config.cwd,
+    settings,
+    executionLocation,
+  })
+
   const answeringCard = () => models.cardFor(model.choice().ref)
 
   const cardPinnedTo = (pinned: string | undefined) => {
@@ -582,23 +620,13 @@ export async function composeAtlas(args: {
     return compaction.type === ECompaction.Compacted
   }
 
-  /**
-   * Teardown kills every background shell, and those endings are worth keeping: reopening the
-   * conversation should say where the dev server went. Nothing is left running to drain them, so the
-   * close path appends what teardown produced before the database goes — each ending to the thread
-   * that started the shell, which is not necessarily the one on screen when the session ended.
-   */
   const recordTeardownEndings = async (): Promise<void> => {
-    await Promise.all([shells.closeAll(), agents.closeAll(), services.closeAll()])
-
-    for (const source of [shells, agents, services]) {
-      for (const threadId of source.threadsAwaitingNotice()) {
-        const drafts = source.drainNotifications({ threadId })
-        if (drafts.length === 0) continue
-
-        await log.append({ threadId, runId: ids.nextRunId(), drafts })
-      }
-    }
+    await teardownSession({
+      sources: [shells, agents, services],
+      log,
+      ids,
+      stopSandbox: sandbox.stop,
+    })
   }
 
   const runningShells = ({ threadId }: { threadId: ThreadId }) =>
@@ -655,6 +683,7 @@ export async function composeAtlas(args: {
       runningShells,
       runningAgents,
       runningServices,
+      executionLocation: () => ({ location: executionLocation.current(), mounts: [] }),
     }),
     launchDirectory: workspace.workspace,
     tools,
@@ -754,6 +783,8 @@ export async function composeAtlas(args: {
     shells,
     agents,
     services,
+    sandbox,
+    containerStatus,
     mcp: () => mcp.servers(),
     /**
      * Drafts append only to a thread the store already knows: a conversation nobody has spoken in
@@ -772,6 +803,8 @@ export async function composeAtlas(args: {
     model,
     modelPinned: pinnedByFlag,
     models,
+    executionLocation,
+    executionPinned: pinnedLocationByFlag,
     close: async () => {
       usage.dispose()
       await recordTeardownEndings().catch(() => undefined)

@@ -1,5 +1,9 @@
-import { readIdling } from '@dltech/atlas-core'
+import { readIdling, type PortExposure } from '@dltech/atlas-core'
 
+import {
+  EXPOSED_PORT_COUNT,
+  EXPOSED_PORT_FIRST,
+} from '../../execution/docker/ports'
 import { MATCHED_LINES_CAP } from '../../shells/shell-watch'
 
 export function bashDescription({
@@ -40,8 +44,28 @@ export function bashDescription({
     `After ${MATCHED_LINES_CAP} matched lines the watch disarms and says so; the shell keeps running and still delivers its ending.`,
     'So never wait on one: no sleeping, no polling, no idle loop, and no do-nothing call to tick the time away - ticking only spins the turn. Move on to other work, or end the turn and be woken.',
     'shell_output reads a shell that will not end on its own, shell_list shows what is running, and shell_kill stops one.',
+    'exposePort publishes the port a background server listens on so the operator can open it from this machine; it requires runInBackground.',
+    `In a container sandbox only container ports ${EXPOSED_PORT_FIRST} through ${EXPOSED_PORT_FIRST + EXPOSED_PORT_COUNT - 1} are published, fixed when the container is created - have the server listen on one of them and pass that port as exposePort, never a port outside the block.`,
   ].join(' ')
 }
+
+export function exposureClause({ exposure }: { exposure: PortExposure | undefined }): readonly string[] {
+  if (exposure === undefined) return []
+  if (exposure.hostPort === exposure.containerPort) {
+    return [`It is reachable from this machine at ${exposure.url}.`]
+  }
+
+  return [
+    `It is reachable from this machine at ${exposure.url} - container port ${exposure.containerPort} is published as host port ${exposure.hostPort},`,
+    `so localhost:${exposure.containerPort} answers only inside the container and the URL to hand the operator is ${exposure.url}.`,
+  ]
+}
+
+export const exposureNeedsBackground = (): string =>
+  'exposePort publishes the port of a server that keeps running, so it needs runInBackground: true; a foreground command ends before anyone could open the URL'
+
+export const exposureUnsupported = (): string =>
+  'this execution mode cannot publish ports, so exposePort has nothing to bind'
 
 export function watchClause({ watch }: { watch: string | undefined }): readonly string[] {
   if (watch === undefined) return []

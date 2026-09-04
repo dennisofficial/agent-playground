@@ -11,6 +11,7 @@ import type { SidebarModel } from "../../store";
 import type { SidebarCrewFold } from "../../store/subagent-row";
 import { SIDEBAR_GUTTER, SIDEBAR_PADDING, sidebarCells } from "./sidebar/cells";
 import { ESidebarPlace } from "../sidebar-section";
+import { ContainerSection } from "./sidebar/container";
 import { ContributedSections } from "./sidebar/contributed";
 import { SubagentsSection, TeammatesSection } from "./sidebar/crew";
 import { GrantsSection } from "./sidebar/grants";
@@ -132,6 +133,9 @@ export function Sidebar(props: {
         >
           <box flexDirection="column" flexShrink={0} gap={1}>
             <HeadSection model={model} cells={cells} />
+            {model.container === undefined ? null : (
+              <ContainerSection container={model.container} cells={cells} />
+            )}
             <ContributedSections
               sections={model.sections ?? []}
               place={ESidebarPlace.Facts}

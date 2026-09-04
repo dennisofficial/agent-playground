@@ -1,6 +1,9 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, mkdir, open, rename, unlink } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+
+import type { FileSystemPort } from '@dltech/atlas-core'
+
+import { LocalFileSystemPort } from '../execution/local-filesystem'
 
 const DEFAULT_FILE_MODE = 0o644
 
@@ -13,25 +16,19 @@ export async function writeFileAtomically(args: {
   path: string
   content: string
   mode?: number | undefined
+  files?: FileSystemPort | undefined
 }): Promise<number> {
-  await mkdir(dirname(args.path), { recursive: true })
+  const files = args.files ?? new LocalFileSystemPort()
+  await files.mkdir({ path: dirname(args.path) })
 
   const temporary = temporaryBeside(args.path)
   const mode = args.mode === undefined ? DEFAULT_FILE_MODE : args.mode & PERMISSION_BITS
 
   try {
-    const handle = await open(temporary, 'wx', mode)
-    try {
-      await handle.writeFile(args.content, 'utf8')
-      await handle.sync()
-    } finally {
-      await handle.close()
-    }
-
-    await chmod(temporary, mode)
-    await rename(temporary, args.path)
+    await files.writeFile({ path: temporary, content: args.content, mode })
+    await files.rename({ from: temporary, to: args.path })
   } catch (error) {
-    await unlink(temporary).catch(() => undefined)
+    await files.removeFile({ path: temporary }).catch(() => undefined)
     throw error
   }
 

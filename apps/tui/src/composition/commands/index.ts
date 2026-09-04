@@ -14,7 +14,14 @@ export {
   agentStateLabel,
   type AgentChoice,
 } from './agent-choices'
-export { agentsAskOfArgument, EAgentsAsk, localCommands, type LocalCommandHandlers } from './registry'
+export {
+  agentsAskOfArgument,
+  containerAskOfArgument,
+  EAgentsAsk,
+  EContainerAsk,
+  localCommands,
+  type LocalCommandHandlers,
+} from './registry'
 export {
   commandSpecs,
   dispatchSubmission,

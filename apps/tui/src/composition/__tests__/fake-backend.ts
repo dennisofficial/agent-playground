@@ -6,6 +6,7 @@ import {
   toCallId,
   toEventId,
   toRunId,
+  type EExecutionLocation,
   type IdPort,
   type ThreadId,
   type Event,
@@ -44,6 +45,7 @@ export type FakeThreadStore = ThreadStorePort & {
   }[]
   readonly renames: readonly { threadId: ThreadId; title: string }[]
   readonly chosenModels: readonly { threadId: ThreadId; model: ThreadModel }[]
+  readonly chosenLocations: readonly { threadId: ThreadId; location: EExecutionLocation }[]
 }
 
 export function fakeThreadStore(
@@ -74,6 +76,7 @@ export function fakeThreadStore(
   }[] = []
   const renames: { threadId: ThreadId; title: string }[] = []
   const chosenModels: { threadId: ThreadId; model: ThreadModel }[] = []
+  const chosenLocations: { threadId: ThreadId; location: EExecutionLocation }[] = []
 
   return {
     get created() {
@@ -86,6 +89,10 @@ export function fakeThreadStore(
 
     get chosenModels() {
       return chosenModels
+    },
+
+    get chosenLocations() {
+      return chosenLocations
     },
 
     get renames() {
@@ -130,6 +137,9 @@ export function fakeThreadStore(
         forkMode: mode,
         workspace: source?.workspace ?? workspaceOf,
         repo: source?.repo ?? null,
+        ...(source?.executionLocation === undefined
+          ? {}
+          : { executionLocation: source.executionLocation }),
         ...(title === undefined ? {} : { title }),
       }
       rows.push(row)
@@ -227,6 +237,12 @@ export function fakeThreadStore(
       chosenModels.push({ threadId, model })
       const row = rows.find((held) => held.id === threadId)
       if (row !== undefined) row.model = model
+    },
+
+    async chooseExecutionLocation({ threadId, location }) {
+      chosenLocations.push({ threadId, location })
+      const row = rows.find((held) => held.id === threadId)
+      if (row !== undefined) row.executionLocation = location
     },
 
     async rewind({ threadId, toSeq }) {

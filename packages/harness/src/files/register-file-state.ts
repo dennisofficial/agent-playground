@@ -1,3 +1,5 @@
+import { FileSystemPort } from '@dltech/atlas-core'
+
 import { instanceCachingFactory, portToken, type DependencyContainer } from '../container/injection'
 import { FileReadStatePort, InMemoryFileReadState } from './read-state'
 import { FileWriteGuardPort, VerifyingWriteGuard } from './write-guard'
@@ -8,7 +10,11 @@ export function registerFileState({ container }: { container: DependencyContaine
   })
   container.register(portToken(FileWriteGuardPort), {
     useFactory: instanceCachingFactory(
-      (resolver) => new VerifyingWriteGuard(resolver.resolve(portToken(FileReadStatePort))),
+      (resolver) =>
+        new VerifyingWriteGuard(
+          resolver.resolve(portToken(FileReadStatePort)),
+          resolver.resolve(portToken(FileSystemPort)),
+        ),
     ),
   })
 }

@@ -1,5 +1,3 @@
-import { stat } from 'node:fs/promises'
-
 import { z } from 'zod'
 
 import {
@@ -7,32 +5,44 @@ import {
   EPathForm,
   EPathPresence,
   EToolEffect,
+  FileSystemPort,
+  ProcessPort,
   SchemaTool,
   doesNothing,
   waitsBySleeping,
   type DeclaredPathField,
+  type PortExposure,
   type ThreadId,
   type ToolOutcome,
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import {  portToken } from '../../container/injection'
+import { LocalFileSystemPort } from '../../execution/local-filesystem'
+import { LocalProcessPort } from '../../execution/local-process'
 import {
-  countLineBreaks,
   messageOf,
   readShell,
   render,
   startShell,
   terminatorFor,
   type ShellOutput,
-  type Tail,
 } from '../../shells/shell-process'
 import { CHECK_IN_EVERY_MS, ShellRegistryPort } from '../../shells/shell-registry'
-import { bashDescription, ceilingClause, checkInClause, idlingRefusal, noOpRefusal, watchClause } from './bash-prose'
+import { MAXIMUM_OUTPUT_CHARACTERS, mergeStreams, renderModelText } from './bash-output'
+import {
+  bashDescription,
+  ceilingClause,
+  checkInClause,
+  exposureClause,
+  exposureNeedsBackground,
+  exposureUnsupported,
+  idlingRefusal,
+  noOpRefusal,
+  watchClause,
+} from './bash-prose'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 600_000
-const MAXIMUM_OUTPUT_CHARACTERS = 30_000
 
 const inputSchema = z.strictObject({
   command: z.string().min(1),
@@ -42,6 +52,7 @@ const inputSchema = z.strictObject({
   runInBackground: z.boolean().optional(),
   watch: z.string().min(1).optional(),
   checkInMs: z.number().int().positive().optional(),
+  exposePort: z.number().int().min(1).max(65_535).optional(),
 })
 
 const description = bashDescription({
@@ -49,80 +60,6 @@ const description = bashDescription({
   maximumTimeoutMs: MAXIMUM_TIMEOUT_MS,
   defaultCheckInMs: CHECK_IN_EVERY_MS,
 })
-
-const HALF_OUTPUT_CHARACTERS = Math.floor(MAXIMUM_OUTPUT_CHARACTERS / 2)
-
-/**
- * Each stream is budgeted rather than the joined text: keeping the last N characters of stdout
- * followed by stderr throws stdout away first, so a command loud on both showed only stderr.
- */
-function budgetsFor(args: { stdout: number; stderr: number }): { stdout: number; stderr: number } {
-  if (args.stdout + args.stderr <= MAXIMUM_OUTPUT_CHARACTERS) return args
-  if (args.stdout <= HALF_OUTPUT_CHARACTERS) {
-    return { stdout: args.stdout, stderr: MAXIMUM_OUTPUT_CHARACTERS - args.stdout }
-  }
-  if (args.stderr <= HALF_OUTPUT_CHARACTERS) {
-    return { stdout: MAXIMUM_OUTPUT_CHARACTERS - args.stderr, stderr: args.stderr }
-  }
-
-  return {
-    stdout: HALF_OUTPUT_CHARACTERS,
-    stderr: MAXIMUM_OUTPUT_CHARACTERS - HALF_OUTPUT_CHARACTERS,
-  }
-}
-
-const withoutTrailingBreaks = (text: string): string => text.replace(/\n+$/, '')
-
-function clampTail(args: { tail: Tail; budget: number }): Tail {
-  const text = withoutTrailingBreaks(args.tail.text)
-  if (text.length <= args.budget) return { ...args.tail, text }
-
-  const kept = text.slice(-args.budget)
-  return {
-    text: kept,
-    droppedLines: args.tail.droppedLines + countLineBreaks(text.slice(0, text.length - kept.length)),
-    truncated: true,
-  }
-}
-
-function mergeStreams(args: { stdout: Tail; stderr: Tail }): { text: string; truncated: boolean } {
-  const budgets = budgetsFor({
-    stdout: withoutTrailingBreaks(args.stdout.text).length,
-    stderr: withoutTrailingBreaks(args.stderr.text).length,
-  })
-
-  const streams = [
-    clampTail({ tail: args.stdout, budget: budgets.stdout }),
-    clampTail({ tail: args.stderr, budget: budgets.stderr }),
-  ]
-
-  const text = streams
-    .filter((stream) => stream.text.length > 0)
-    .map(render)
-    .join('\n')
-    .replace(/^(?:[^\S\n]*\n)+/, '')
-    .trimEnd()
-
-  return { text, truncated: streams.some((stream) => stream.truncated) }
-}
-
-function renderModelText(args: {
-  merged: string
-  exitCode: number
-  timedOut: boolean
-  timeoutMs: number
-}): string {
-  const sections: string[] = []
-  if (args.merged.length > 0) sections.push(args.merged)
-  if (args.timedOut) {
-    sections.push(
-      `The command was killed after exceeding its ${args.timeoutMs} ms timeout. If it needs longer than ${MAXIMUM_TIMEOUT_MS} ms, start it again with runInBackground and its ending will be delivered to you whenever it lands.`,
-    )
-  }
-  if (args.exitCode !== 0) sections.push(`Exit code: ${args.exitCode}`)
-  if (sections.length === 0) return 'The command completed with no output.'
-  return sections.join('\n\n')
-}
 
 export class BashTool extends SchemaTool<typeof inputSchema> {
   readonly name = 'bash'
@@ -138,8 +75,27 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     },
   ]
 
-  constructor( private readonly shells: ShellRegistryPort) {
+  constructor(
+    private readonly shells: ShellRegistryPort,
+    private readonly files: FileSystemPort = new LocalFileSystemPort(),
+    private readonly processes: ProcessPort = new LocalProcessPort(),
+  ) {
     super()
+  }
+
+  private async resolveExposure(args: {
+    containerPort: number | undefined
+    threadId: ThreadId
+  }): Promise<{ ok: true; exposure: PortExposure | undefined } | { ok: false; reason: string }> {
+    if (args.containerPort === undefined) return { ok: true, exposure: undefined }
+    if (this.processes.exposePort === undefined) {
+      return { ok: false, reason: exposureUnsupported() }
+    }
+
+    return await this.processes.exposePort({
+      containerPort: args.containerPort,
+      threadId: args.threadId,
+    })
   }
 
   private startInBackground(args: {
@@ -150,6 +106,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     watch?: string | undefined
     timeoutMs?: number | undefined
     checkInMs?: number | undefined
+    exposure?: PortExposure | undefined
   }): ToolOutcome {
     const started = this.shells.start(args)
     if (!started.ok) return started
@@ -168,6 +125,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         checkInMs,
         ...(args.watch === undefined ? {} : { watch: args.watch }),
         ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
+        ...(args.exposure === undefined ? {} : { exposure: args.exposure }),
       },
       modelText: [
         `Started in the background as shell ${shellId}, and it outlives this turn.`,
@@ -178,6 +136,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         ...watchClause({ watch: args.watch }),
         ...ceilingClause({ timeoutMs: args.timeoutMs }),
         ...checkInClause({ checkInMs }),
+        ...exposureClause({ exposure: args.exposure }),
         'So do not wait on it: no sleeping, no polling, no idle loop, and no do-nothing command to pass the time - a tick only spins the turn. Take up other work, or end the turn and be woken.',
         `Use shell_output({ shellId: "${shellId}" }) only for a shell that will not end on its own, such as a dev server`,
         `whose startup log you need, and shell_kill({ shellId: "${shellId}" }) to stop it.`,
@@ -212,8 +171,12 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
       }
     }
 
+    if (input.exposePort !== undefined && input.runInBackground !== true) {
+      return { ok: false, reason: exposureNeedsBackground() }
+    }
+
     if (input.workdir !== undefined) {
-      const directory = await stat(input.workdir).catch(() => undefined)
+      const directory = await this.files.stat({ path: input.workdir }).catch(() => undefined)
       if (directory === undefined) {
         return { ok: false, reason: `workdir ${input.workdir} does not exist, so there is nowhere to run the command` }
       }
@@ -223,6 +186,12 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     }
 
     if (input.runInBackground === true) {
+      const exposure = await this.resolveExposure({
+        containerPort: input.exposePort,
+        threadId,
+      })
+      if (!exposure.ok) return exposure
+
       return this.startInBackground({
         threadId,
         command,
@@ -231,6 +200,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         watch: input.watch,
         timeoutMs,
         checkInMs: input.checkInMs,
+        exposure: exposure.exposure,
       })
     }
 
@@ -244,7 +214,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
       return { ok: false, reason: idlingRefusal({ command, timeoutMs: timeout }) }
     }
 
-    const started = startShell({ command, cwd })
+    const started = startShell({ command, cwd, processes: this.processes, threadId })
     if (!started.ok) return started
 
     const { shell } = started
@@ -288,6 +258,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         exitCode: read.exitCode,
         timedOut,
         timeoutMs: timeout,
+        maximumTimeoutMs: MAXIMUM_TIMEOUT_MS,
       }),
     }
   }

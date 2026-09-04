@@ -3,6 +3,7 @@ import {
   EStage,
   type BeforeTurn,
   type EventDraft,
+  type FileSystemPort,
   type HookOrder,
 } from '@dltech/atlas-core'
 
@@ -16,11 +17,13 @@ export class LoadInstructionsHook extends BeforeTurnHook {
   readonly order: HookOrder = { stage: EStage.Observe, nudge: 0 }
 
   private readonly source: InstructionSource
+  private readonly files: FileSystemPort | undefined
   private readonly seen = new Set<string>()
 
-  constructor(args: { source: InstructionSource }) {
+  constructor(args: { source: InstructionSource; files?: FileSystemPort | undefined }) {
     super()
     this.source = args.source
+    this.files = args.files
   }
 
   readonly run: BeforeTurn = async ({ threadId, projectDirectory }) => {
@@ -29,7 +32,10 @@ export class LoadInstructionsHook extends BeforeTurnHook {
     if (!plan.reload && this.seen.has(key)) return {}
 
     this.seen.add(key)
-    const instructions = await readInstructionFiles(plan.request)
+    const instructions = await readInstructionFiles({
+      ...plan.request,
+      files: plan.request.files ?? this.files,
+    })
     if (instructions.length === 0) return {}
 
     const drafts: readonly EventDraft[] = instructions.map((instruction) => ({

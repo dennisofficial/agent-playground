@@ -29,6 +29,7 @@ export type ForkedThreadRow = {
   repo: string | null
   modelRef: string | null
   modelEffort: string | null
+  executionLocation: string | null
 }
 
 export async function forkThread({
@@ -52,7 +53,14 @@ export async function forkThread({
 }): Promise<ForkedThreadRow> {
   const source = await tx.thread.findUnique({
     where: { id: from },
-    select: { head: true, workspace: true, repo: true, modelRef: true, modelEffort: true },
+    select: {
+      head: true,
+      workspace: true,
+      repo: true,
+      modelRef: true,
+      modelEffort: true,
+      executionLocation: true,
+    },
   })
   if (source === null) throw new ForkSourceMissing({ from })
   if (seq < 0 || seq > source.head) throw new ForkSeqOutOfRange({ from, seq, head: source.head })
@@ -70,6 +78,7 @@ export async function forkThread({
       repo: source.repo,
       modelRef: source.modelRef,
       modelEffort: source.modelEffort,
+      executionLocation: source.executionLocation,
       ...(title === undefined ? {} : { title }),
     },
   })
