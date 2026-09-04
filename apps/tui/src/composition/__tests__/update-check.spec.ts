@@ -130,4 +130,23 @@ describe('createSourceStaleness', () => {
     await staleness.check()
     expect(posted).toEqual([SOURCE_STALE_NOTICE])
   })
+
+  it('reports movement through stale() without announcing it', async () => {
+    const { posted, announce } = recorder()
+    let stamp: string | null = 'a'
+    const staleness = createSourceStaleness({
+      launchStamp: 'a',
+      readStamp: async () => stamp,
+      announce,
+    })
+
+    expect(await staleness.stale()).toBe(false)
+
+    stamp = 'b'
+    expect(await staleness.stale()).toBe(true)
+    expect(posted).toEqual([])
+
+    stamp = null
+    expect(await staleness.stale()).toBe(false)
+  })
 })

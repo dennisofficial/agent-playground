@@ -77,6 +77,7 @@ export type SourceBehind = {
 
 export type SourceStaleness = {
   readonly check: () => Promise<void>
+  readonly stale: () => Promise<boolean>
 }
 
 export const SOURCE_STALE_NOTICE =
@@ -89,12 +90,16 @@ export function createSourceStaleness(args: {
 }): SourceStaleness {
   let announced = false
 
+  const moved = async (): Promise<boolean> => {
+    const stamp = await args.readStamp()
+    return stamp !== null && stamp !== args.launchStamp
+  }
+
   return {
+    stale: moved,
     check: async () => {
       if (announced) return
-
-      const stamp = await args.readStamp()
-      if (stamp === null || stamp === args.launchStamp) return
+      if (!(await moved())) return
 
       announced = true
       args.announce(SOURCE_STALE_NOTICE)

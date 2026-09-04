@@ -100,6 +100,7 @@ import { globalBindings } from './global-bindings'
 import { applyTranscriptCovered } from '../ui/covered-store'
 import { OverlayStack } from './overlay-stack'
 import { unmeasuredWindowWarning } from './providers'
+import { settleStaleness } from './auto-restart'
 import { checkForUpdate, sourceStalenessProbe, type SourceStaleness } from './update-check'
 import type { OpenedConversation } from './open-conversation'
 import { useConversation } from './use-conversation'
@@ -304,8 +305,8 @@ function Workspace(props: {
   /**
    * Ambient and off the boot path: a stale-build or release-available notice may arrive a beat
    * after the curtain lifts, and a probe that cannot reach its ground truth says nothing. The
-   * staleness probe stamps the source tree at launch and re-checks on a slow timer; the falling
-   * edge of `working` is a turn ending, which is when a working session is told it went stale.
+   * staleness probe stamps the source tree at launch and re-checks on a slow timer; the turn-end
+   * edge below is what acts on it.
    */
   const staleness = useRef<SourceStaleness | null>(null)
   useEffect(() => {
@@ -325,13 +326,6 @@ function Workspace(props: {
 
   const { usage } = props.app
   const working = conversation.working
-
-  const wasWorking = useRef(false)
-  useEffect(() => {
-    const turnEnded = wasWorking.current && !working
-    wasWorking.current = working
-    if (turnEnded) void staleness.current?.check()
-  }, [working])
 
   useEffect(() => {
     if (working) {
@@ -608,6 +602,45 @@ function Workspace(props: {
   useEffect(() => {
     if (exitGuard.state === null) restarting.current = false
   }, [exitGuard.state])
+
+  /**
+   * The falling edge of `working` is a turn ending — the one moment a stale atlas-dev session may
+   * swap itself out without taking anything with it. The safety snapshot is read after the stamp
+   * check resolves rather than captured at the edge, so a keystroke that lands in between still
+   * holds the restart off. Anything less than clean falls back to the sticky notice.
+   */
+  const wasWorking = useRef(false)
+  useEffect(() => {
+    const turnEnded = wasWorking.current && !working
+    wasWorking.current = working
+    if (!turnEnded) return
+
+    void settleStaleness({
+      staleness: staleness.current,
+      autoRestart: settings.autoRestart,
+      restart: props.onRestart,
+      readSafety: () => ({
+        interrupting: conversation.turn.interrupting,
+        compacting: conversation.compacting !== null,
+        approvalOpen: conversation.approval.state !== null,
+        exitGuardOpen: exitGuard.state !== null,
+        queuedMessages: props.app.pending.getSnapshot().length,
+        runningTasks: shells.running + agents.running + services.running,
+        draftEmpty: (draft.editor.current?.plainText ?? draft.value).length === 0,
+      }),
+    })
+  }, [
+    working,
+    settings.autoRestart,
+    props.onRestart,
+    props.app.pending,
+    conversation,
+    exitGuard.state,
+    shells.running,
+    agents.running,
+    services.running,
+    draft,
+  ])
 
   // OpenTUI parses a whole input burst before React re-renders, so a paste — or ⏎ arriving in the
   // same burst as the text — reaches here with `draft.value` still empty. The buffer is the truth.
