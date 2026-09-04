@@ -126,7 +126,13 @@ classes only.
 
 ## Git
 
-- **Commit directly to `main`.** Never branch, never force-push, never `--no-verify`.
+- **Work in a worktree; the main checkout is read-only between merges.** Cut a worktree under
+  `.claude/worktrees/<slug>` from `origin/main`, do the work there, and merge back into `main`
+  locally when done — no PR, no review gate. Remove the worktree after the merge. This is
+  load-bearing, not hygiene: `atlas-dev` runs from the main tree and flags every running terminal
+  as stale the moment the tree moves, so direct edits in the main checkout turn that notice into
+  noise.
+- Never force-push, never `--no-verify`.
 - **Never use `git stash`** unless explicitly asked.
 - Conventional commits: `<type>(<scope>): <description>` — imperative, lowercase.
 - No `Co-Authored-By` or "Generated with Claude" trailers.

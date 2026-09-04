@@ -98,7 +98,7 @@ import { globalBindings } from './global-bindings'
 import { applyTranscriptCovered } from '../ui/covered-store'
 import { OverlayStack } from './overlay-stack'
 import { unmeasuredWindowWarning } from './providers'
-import { checkForUpdate } from './update-check'
+import { checkForUpdate, sourceStalenessProbe, type SourceStaleness } from './update-check'
 import type { OpenedConversation } from './open-conversation'
 import { useConversation } from './use-conversation'
 import { useExitGuard } from './use-exit-guard'
@@ -298,14 +298,32 @@ function Workspace(props: {
 
   /**
    * Ambient and off the boot path: a stale-build or release-available notice may arrive a beat
-   * after the curtain lifts, and a probe that cannot reach its ground truth says nothing.
+   * after the curtain lifts, and a probe that cannot reach its ground truth says nothing. The
+   * staleness probe stamps the source tree at launch; the falling edge of `working` is a turn
+   * ending, which is when a stale session is told so.
    */
+  const staleness = useRef<SourceStaleness | null>(null)
   useEffect(() => {
     void checkForUpdate()
+
+    let mounted = true
+    void sourceStalenessProbe().then((probe) => {
+      if (mounted) staleness.current = probe
+    })
+    return () => {
+      mounted = false
+    }
   }, [])
 
   const { usage } = props.app
   const working = conversation.working
+
+  const wasWorking = useRef(false)
+  useEffect(() => {
+    const turnEnded = wasWorking.current && !working
+    wasWorking.current = working
+    if (turnEnded) void staleness.current?.check()
+  }, [working])
 
   useEffect(() => {
     if (working) {

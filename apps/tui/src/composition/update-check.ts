@@ -75,6 +75,50 @@ export type SourceBehind = {
   readonly upstream: string
 }
 
+export type SourceStaleness = {
+  readonly check: () => Promise<void>
+}
+
+export const SOURCE_STALE_NOTICE =
+  'this atlas-dev session is stale — the source tree has moved; /restart to pick it up'
+
+export function createSourceStaleness(args: {
+  launchStamp: string
+  readStamp: () => Promise<string | null>
+  announce: (text: string) => void
+}): SourceStaleness {
+  let announced = false
+
+  return {
+    check: async () => {
+      if (announced) return
+
+      const stamp = await args.readStamp()
+      if (stamp === null || stamp === args.launchStamp) return
+
+      announced = true
+      args.announce(SOURCE_STALE_NOTICE)
+    },
+  }
+}
+
+export async function sourceStalenessProbe(): Promise<SourceStaleness | null> {
+  if (buildInfo().kind !== EBuildKind.Source) return null
+  if (process.env.ATLAS_DEV !== '1') return null
+
+  const repo = await repoRootOf(import.meta.dir)
+  if (repo === null) return null
+
+  const launchStamp = await sourceStateStamp({ repo })
+  if (launchStamp === null) return null
+
+  return createSourceStaleness({
+    launchStamp,
+    readStamp: () => sourceStateStamp({ repo }),
+    announce: (text) => notify({ key: 'source-stale', tone: ENoticeTone.Info, sticky: true, text }),
+  })
+}
+
 async function probeSourceBehind(repo: string): Promise<SourceBehind | null> {
   await run(['git', '-C', repo, 'fetch', '--quiet'])
 

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'bun:test'
 
-import { latestRelease, releaseNotice, RELEASE_TAG_PREFIX, sourceBehindNotice } from '../update-check'
+import {
+  createSourceStaleness,
+  latestRelease,
+  releaseNotice,
+  RELEASE_TAG_PREFIX,
+  SOURCE_STALE_NOTICE,
+  sourceBehindNotice,
+} from '../update-check'
 
 describe('latestRelease', () => {
   it('picks the newest tag in the tui series and ignores the other apps', () => {
@@ -57,5 +64,70 @@ describe('sourceBehindNotice', () => {
 
     expect(text).toContain('4 commits behind origin/main')
     expect(text).toContain('git pull')
+  })
+})
+
+describe('createSourceStaleness', () => {
+  const recorder = (): { posted: string[]; announce: (text: string) => void } => {
+    const posted: string[] = []
+    return { posted, announce: (text) => posted.push(text) }
+  }
+
+  it('stays quiet while the tree matches the launch stamp', async () => {
+    const { posted, announce } = recorder()
+    const staleness = createSourceStaleness({
+      launchStamp: 'a',
+      readStamp: async () => 'a',
+      announce,
+    })
+
+    await staleness.check()
+
+    expect(posted).toEqual([])
+  })
+
+  it('announces once the tree moves off the launch stamp', async () => {
+    const { posted, announce } = recorder()
+    const staleness = createSourceStaleness({
+      launchStamp: 'a',
+      readStamp: async () => 'b',
+      announce,
+    })
+
+    await staleness.check()
+
+    expect(posted).toEqual([SOURCE_STALE_NOTICE])
+  })
+
+  it('announces once however many turns end', async () => {
+    const { posted, announce } = recorder()
+    const staleness = createSourceStaleness({
+      launchStamp: 'a',
+      readStamp: async () => 'b',
+      announce,
+    })
+
+    await staleness.check()
+    await staleness.check()
+    await staleness.check()
+
+    expect(posted).toHaveLength(1)
+  })
+
+  it('says nothing while the stamp cannot be read, and still announces once it can', async () => {
+    const { posted, announce } = recorder()
+    let stamp: string | null = null
+    const staleness = createSourceStaleness({
+      launchStamp: 'a',
+      readStamp: async () => stamp,
+      announce,
+    })
+
+    await staleness.check()
+    expect(posted).toEqual([])
+
+    stamp = 'b'
+    await staleness.check()
+    expect(posted).toEqual([SOURCE_STALE_NOTICE])
   })
 })
