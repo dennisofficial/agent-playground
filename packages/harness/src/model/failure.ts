@@ -2,7 +2,7 @@ import { APICallError } from '@ai-sdk/provider'
 
 import type { ModelFailure } from '@dltech/atlas-core'
 
-import { ModelStreamError } from './errors'
+import { ModelStreamError, StreamStallError } from './errors'
 
 const DROPPED_CONNECTION = [
   'fetch failed',
@@ -33,6 +33,8 @@ const looksLikeDroppedConnection = (message: string): boolean =>
   DROPPED_CONNECTION.some((needle) => message.includes(needle))
 
 export function modelFailureOf(error: unknown): ModelFailure | null {
+  if (error instanceof StreamStallError) return DROPPED
+
   if (error instanceof ModelStreamError) return modelFailureOf(error.cause)
 
   if (APICallError.isInstance(error)) {

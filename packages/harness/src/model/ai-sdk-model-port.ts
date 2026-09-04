@@ -19,7 +19,7 @@ import type { HookChain } from '../hooks/registry'
 import { NO_RAW_TAPE, type RawTape } from './raw-tape'
 import { createPartAccumulator } from './accumulator'
 import { toCoreChunk } from './chunk-conversion'
-import { ModelStreamError } from './errors'
+import { ModelStreamError, StreamStallError } from './errors'
 import { toInstructions } from './instructions'
 import { providerIdentityOf } from './provider-identity'
 import { toModelMessages } from './message-conversion'
@@ -36,6 +36,17 @@ const reportNothing = () => {}
 // pass no notice to the retry policy above and the operator sees an idle spinner for as long as
 // they take. https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text
 const RETRIES_BELONG_TO_THE_POLICY = 0
+
+export type StreamTimeout = { firstChunkMs: number; chunkMs: number }
+
+// streamText arms no timeout unless one is passed, and Bun's fetch has no default idle timeout —
+// so a provider that holds the connection open but goes silent would block the for-await below
+// until esc. The first chunk gets a longer grace because prefill of a large context is legitimately
+// slow. https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text#timeout
+const DEFAULT_STREAM_TIMEOUT: StreamTimeout = {
+  firstChunkMs: 180_000,
+  chunkMs: 120_000,
+}
 
 async function keptChunk(args: {
   chunk: Chunk
@@ -57,6 +68,7 @@ export async function runModelStream(args: {
   onChunk?: ChunkFilter
   hooks?: HookChain | undefined
   tape?: RawTape | undefined
+  streamTimeout?: StreamTimeout | undefined
 }): Promise<ModelStepResult> {
   const instructions = toInstructions(args.prompt.instructions)
   const tape = args.tape ?? NO_RAW_TAPE
@@ -69,6 +81,7 @@ export async function runModelStream(args: {
     stopWhen: stepCountIs(1),
     abortSignal: args.signal,
     maxRetries: RETRIES_BELONG_TO_THE_POLICY,
+    timeout: args.streamTimeout ?? DEFAULT_STREAM_TIMEOUT,
     onError: reportNothing,
   })
 
@@ -77,6 +90,13 @@ export async function runModelStream(args: {
   try {
     for await (const part of stream.fullStream) {
       tape.tap(part)
+
+      // The SDK answers its own stream timeout with a graceful `abort` part, indistinguishable
+      // from an esc interrupt except that our signal was never aborted. Turn it back into the
+      // failure it is, or a stall would surface as a silently truncated step.
+      if (part.type === 'abort' && !args.signal.aborted) {
+        throw new StreamStallError('the model stream went silent past its timeout')
+      }
 
       const chunk = toCoreChunk(part)
       if (chunk === null) continue

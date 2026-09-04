@@ -2,7 +2,7 @@
   "name": "@dltech/atlas",
   "version": "0.1.0",
   "private": true,
-  "description": "Atlas \u2014 a coding-agent harness in the shape of Claude Code.",
+  "description": "Atlas — a coding-agent harness in the shape of Claude Code.",
   "type": "module",
   "bin": {
     "atlas": "./bin/atlas",
@@ -42,6 +42,6 @@
   "devDependencies": {
     "@types/bun": "latest",
     "@types/react": "^19",
-    "ai": "^7.0.77"
+    "ai": "^7.0.92"
   }
 }
