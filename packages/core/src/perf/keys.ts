@@ -11,6 +11,7 @@ export enum EPerfCounter {
   HarnessChunk = 'harnessChunk',
   HarnessChunkMs = 'harnessChunkMs',
   PartWaitMs = 'partWaitMs',
+  RenderFrames = 'renderFrames',
 }
 
 export enum EPerfGauge {
@@ -18,6 +19,8 @@ export enum EPerfGauge {
   HarnessTurnDepth = 'harnessTurnDepth',
   ModelStreamDepth = 'modelStreamDepth',
   ActiveShells = 'activeShells',
+  RenderAvgFrameMs = 'renderAvgFrameMs',
+  RenderMaxFrameMs = 'renderMaxFrameMs',
 }
 
 export enum EPerfModelRole {
