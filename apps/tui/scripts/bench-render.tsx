@@ -119,7 +119,6 @@ const benchApp = (args: {
     pullRequests: null,
     mcp: () => [],
     threadOpened: async () => {},
-    warp: null,
     close: async () => {},
   }
 }
