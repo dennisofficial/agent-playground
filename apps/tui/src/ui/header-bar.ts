@@ -65,9 +65,9 @@ export function headerBarModel(args: {
 
   return {
     left: [
-      { text: place, fg: theme.dim },
+      { text: place, fg: theme.accent },
       { text: ' ' },
-      { text: label, fg: theme.hover },
+      { text: label, fg: theme.accent },
     ],
     right,
   }

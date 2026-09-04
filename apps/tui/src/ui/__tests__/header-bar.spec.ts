@@ -88,6 +88,8 @@ describe('headerBarModel', () => {
     expect(model.left.map((span) => span.text).join('')).toBe(
       '⑂ .claude/worktrees/transcript-header',
     )
+    expect(model.left[0]?.fg).toBe(theme.accent)
+    expect(model.left[2]?.fg).toBe(theme.accent)
     expect(model.right.map((span) => span.text).join('')).toBe('+12  -4')
     expect(model.right[0]?.fg).toBe(theme.okBright)
     expect(model.right[2]?.fg).toBe(theme.error)
