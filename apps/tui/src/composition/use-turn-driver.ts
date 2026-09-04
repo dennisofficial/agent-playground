@@ -15,7 +15,6 @@ import { MID_TURN } from './commands/dispatch'
 import type { AtlasApp } from './compose'
 import { discardInterrupted, EDiscard } from './resume-turn'
 import { EUndo, undoTurn } from './undo-turn'
-import { reportWarpOutcome } from './warp-reporter'
 import type { ThreadView } from './use-thread-view'
 import {
   IDLE_PROGRESS,
@@ -165,13 +164,6 @@ export function useTurnDriver(args: {
           const asked = await pausedOnApproval({ log: app.log, threadId, outcome })
           if (asked === null) setFailure(stoppageOf(outcome))
           else openApproval(asked)
-          await reportWarpOutcome({
-            reporter: app.warp,
-            log: app.log,
-            threadId,
-            outcome,
-            asked,
-          }).catch(() => undefined)
           if (committedNothing(outcome)) await undo()
         } catch (error) {
           setFailure(messageOf(error))
