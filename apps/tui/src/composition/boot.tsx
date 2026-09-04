@@ -6,6 +6,7 @@ import React from "react";
 import { appearanceOf, applyAppearance } from "../ui/appearance";
 import { createBootProgress } from "./boot-progress";
 import { BootScreen } from "./boot-screen";
+import { CrashBoundary } from "./crash-boundary";
 import { classifyRequestOf } from "./classify";
 import { runClassify } from "./classify-run";
 import { resolveConfig } from "./config";
@@ -91,23 +92,25 @@ export async function bootAtlas(args: {
 
   const root = createRoot(renderer);
   root.render(
-    <BootScreen
-      session={session}
-      progress={progress}
-      cwd={config.cwd}
-      onAbandon={() => {
-        takeDown({ root, renderer });
-        process.exit(ABANDONED);
-      }}
-      {...(restartFile === undefined
-        ? {}
-        : {
-            onRestart: () => {
-              restartRequested = true;
-              renderer.destroy();
-            },
-          })}
-    />,
+    <CrashBoundary>
+      <BootScreen
+        session={session}
+        progress={progress}
+        cwd={config.cwd}
+        onAbandon={() => {
+          takeDown({ root, renderer });
+          process.exit(ABANDONED);
+        }}
+        {...(restartFile === undefined
+          ? {}
+          : {
+              onRestart: () => {
+                restartRequested = true;
+                renderer.destroy();
+              },
+            })}
+      />
+    </CrashBoundary>,
   );
 
   const settled = await session;
