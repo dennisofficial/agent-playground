@@ -228,7 +228,7 @@ describe('messagesFromEvents pairing every call with a result', () => {
     }
   })
 
-  it('projects one tool_use per call id however many times the log repeats it', () => {
+  it('renames a call id the log repeats within a step rather than dropping the call', () => {
     const events = log([
       { type: 'user-said', text: 'go' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'working' }] },
@@ -242,12 +242,62 @@ describe('messagesFromEvents pairing every call with a result', () => {
     const calls = assembled.messages.flatMap((entry) =>
       entry.message.content.flatMap((part) => (part.type === 'tool-call' ? [part] : [])),
     )
-    expect(calls).toHaveLength(1)
+    expect(calls).toHaveLength(2)
     expect(calls[0]).toMatchObject({ toolCallId: 'call-0', input: { path: 'a' } })
+    expect(calls[1]).toMatchObject({ toolCallId: 'call-0~2', input: { path: 'b' } })
+
+    const results = assembled.messages.flatMap((entry) =>
+      entry.message.content.flatMap((part) => (part.type === 'tool-result' ? [part] : [])),
+    )
+    expect(results.map((part) => part.toolCallId)).toEqual(['call-0', 'call-0~2'])
+    expect(results[1]?.output).toEqual({ type: 'text', value: 'a' })
     expect(exchangeFaults(assembled)).toEqual([])
   })
 
-  it('keeps a repeated call in the assistant turn that first emitted it', () => {
+  it('keeps both calls when a compacted thread calls the same id again, settling each in turn', () => {
+    const events = log([
+      { type: 'user-said', text: 'clean up' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'on it' }] },
+      { type: 'tool-called', callId: toCallId('bash_419'), name: 'bash', input: { command: 'first' }, ordinal: 0 },
+      { type: 'tool-result', callId: toCallId('bash_419'), name: 'bash', output: 'first done', modelText: 'first done' },
+      { type: 'assistant-said', parts: [{ type: 'text', text: 'finishing the cleanup' }] },
+      { type: 'tool-called', callId: toCallId('bash_419'), name: 'bash', input: { command: 'second' }, ordinal: 0 },
+      { type: 'tool-result', callId: toCallId('bash_419'), name: 'bash', output: 'second done', modelText: 'second done' },
+    ])
+
+    const assembled = messagesFromEvents()(empty, contextFor({ events }))
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'assistant',
+      'tool',
+    ])
+    expect(assembled.messages[1]?.message.content).toContainEqual({
+      type: 'tool-call',
+      toolCallId: 'bash_419',
+      toolName: 'bash',
+      input: { command: 'first' },
+    })
+    expect(assembled.messages[3]?.message.content).toContainEqual({
+      type: 'tool-call',
+      toolCallId: 'bash_419~2',
+      toolName: 'bash',
+      input: { command: 'second' },
+    })
+    expect(assembled.messages[2]?.message.content[0]).toMatchObject({
+      toolCallId: 'bash_419',
+      output: { type: 'text', value: 'first done' },
+    })
+    expect(assembled.messages[4]?.message.content[0]).toMatchObject({
+      toolCallId: 'bash_419~2',
+      output: { type: 'text', value: 'second done' },
+    })
+    expect(exchangeFaults(assembled)).toEqual([])
+  })
+
+  it('renames the later call when the log repeats an id across turns', () => {
     const events = log([
       { type: 'user-said', text: 'go' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'first' }] },
@@ -265,9 +315,18 @@ describe('messagesFromEvents pairing every call with a result', () => {
       'assistant',
       'tool',
       'assistant',
+      'tool',
       'user',
     ])
-    expect(assembled.messages[3]?.message.content).toEqual([{ type: 'text', text: 'second' }])
+    expect(assembled.messages[3]?.message.content).toEqual([
+      { type: 'text', text: 'second' },
+      { type: 'tool-call', toolCallId: 'call-0~2', toolName: 'read', input: { path: 'a' } },
+    ])
+    expect(assembled.messages[4]?.message.content[0]).toMatchObject({
+      type: 'tool-result',
+      toolCallId: 'call-0~2',
+      output: { type: 'error-text', value: 'This tool call did not complete and produced no result.' },
+    })
     expect(exchangeFaults(assembled)).toEqual([])
   })
 

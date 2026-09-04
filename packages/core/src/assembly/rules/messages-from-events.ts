@@ -1,6 +1,7 @@
 import { contextBlock } from '../../context/render'
 import { currentContextEvents } from '../../context/supersede'
 import type { AssistantPart } from '../../events/body'
+import { callIdsIn, freshCallId } from '../../events/dedupe-call-ids'
 import type { Event, EventOfType, EventRef } from '../../events/envelope'
 import { liveNudgeIds } from '../../events/nudges'
 import { imagePathLine, inlinable } from '../../images/attached'
@@ -43,8 +44,8 @@ function renderOutput(output: unknown): string {
   }
 }
 
-function toolCallPart(event: EventOfType<'tool-called'>): ToolCallPart {
-  return { type: 'tool-call', toolCallId: event.callId, toolName: event.name, input: event.input }
+function toolCallPart(event: EventOfType<'tool-called'>, callId: string): ToolCallPart {
+  return { type: 'tool-call', toolCallId: callId, toolName: event.name, input: event.input }
 }
 
 type Settlement = EventOfType<'tool-result'> | EventOfType<'tool-denied'>
@@ -72,17 +73,27 @@ function settlementOutput(event: Settlement): ToolResultPart['output'] {
   return { type: 'text', value: renderOutput(event.output) }
 }
 
-function toolResultPart(event: Settlement): ToolResultPart {
+function toolResultPart(event: Settlement, callId: string): ToolResultPart {
   return {
     type: 'tool-result',
-    toolCallId: event.callId,
+    toolCallId: callId,
     toolName: event.name,
     output: settlementOutput(event),
   }
 }
 
-function appendCall({ groups, event, open }: { groups: Group[]; event: EventOfType<'tool-called'>; open: Group | undefined }): Group {
-  const part = toolCallPart(event)
+function appendCall({
+  groups,
+  event,
+  open,
+  callId,
+}: {
+  groups: Group[]
+  event: EventOfType<'tool-called'>
+  open: Group | undefined
+  callId: string
+}): Group {
+  const part = toolCallPart(event, callId)
 
   if (open !== undefined && open.message.role === 'assistant') {
     open.message.content.push(part)
@@ -127,6 +138,8 @@ function walkEvents(events: readonly Event[]): Walk {
   const groups: Group[] = []
   const settlements = new Map<string, SettledCall>()
   const claimedCallIds = new Set<string>()
+  const unavailableCallIds = new Set<string>(callIdsIn(events))
+  const openCallIds = new Map<string, string[]>()
   const current = new Set(currentContextEvents(events).map((event) => event.id))
   const nudging = liveNudgeIds(events)
   let openAssistant: Group | undefined
@@ -220,14 +233,24 @@ function walkEvents(events: readonly Event[]): Walk {
     }
 
     if (event.type === 'tool-called') {
-      if (claimedCallIds.has(event.callId)) continue
-      claimedCallIds.add(event.callId)
-      openAssistant = appendCall({ groups, event, open: openAssistant })
+      const emittedId = claimedCallIds.has(event.callId)
+        ? freshCallId({ oldId: event.callId, taken: unavailableCallIds })
+        : event.callId
+      claimedCallIds.add(emittedId)
+      unavailableCallIds.add(emittedId)
+      const open = openCallIds.get(event.callId) ?? []
+      open.push(emittedId)
+      openCallIds.set(event.callId, open)
+      openAssistant = appendCall({ groups, event, open: openAssistant, callId: emittedId })
       continue
     }
 
     if (event.type === 'tool-result' || event.type === 'tool-denied') {
-      settlements.set(event.callId, { part: toolResultPart(event), origin: originOf(event) })
+      const open = openCallIds.get(event.callId) ?? []
+      const latest = open.at(-1)
+      if (latest !== undefined) open.pop()
+      const settledId = latest ?? event.callId
+      settlements.set(settledId, { part: toolResultPart(event, settledId), origin: originOf(event) })
       openAssistant = undefined
     }
   }
