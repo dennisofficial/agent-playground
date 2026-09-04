@@ -39,9 +39,8 @@ export function headerLocation(args: {
   return { inPlace: false, label: collapseHome({ cwd: projectDirectory, home: args.home }) }
 }
 
-export function diffVisible(stat: DiffStat | null): stat is DiffStat {
-  return stat !== null && (stat.added > 0 || stat.removed > 0)
-}
+const addedTone = (added: number): string => (added > 0 ? theme.okBright : theme.dim)
+const removedTone = (removed: number): string => (removed > 0 ? theme.error : theme.dim)
 
 export function headerBarModel(args: {
   location: HeaderLocation
@@ -49,13 +48,14 @@ export function headerBarModel(args: {
   cells: number
 }): { left: Span[]; right: Span[] } {
   const diff = args.diff
-  const right: Span[] = diffVisible(diff)
-    ? [
-        { text: `+${diff.added}`, fg: theme.okBright },
-        { text: '  ' },
-        { text: `-${diff.removed}`, fg: theme.error },
-      ]
-    : []
+  const right: Span[] =
+    diff === null
+      ? []
+      : [
+          { text: `+${diff.added}`, fg: addedTone(diff.added) },
+          { text: '  ' },
+          { text: `-${diff.removed}`, fg: removedTone(diff.removed) },
+        ]
 
   const rightCells = right.reduce((total, span) => total + cellsOf(span.text), 0)
   const place = args.location.inPlace ? glyph.home : glyph.worktree

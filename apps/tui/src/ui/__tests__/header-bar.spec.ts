@@ -2,7 +2,6 @@ import { describe, expect, it } from 'bun:test'
 
 import { theme } from '../theme'
 import {
-  diffVisible,
   headerBarModel,
   headerLocation,
   parseShortStat,
@@ -67,14 +66,6 @@ describe('headerLocation', () => {
   })
 })
 
-describe('diffVisible', () => {
-  it('hides a clean tree and an unknown one', () => {
-    expect(diffVisible(null)).toBe(false)
-    expect(diffVisible({ added: 0, removed: 0 })).toBe(false)
-    expect(diffVisible({ added: 1, removed: 0 })).toBe(true)
-  })
-})
-
 describe('headerBarModel', () => {
   const atWorktree = { inPlace: false, label: '.claude/worktrees/transcript-header' }
 
@@ -106,10 +97,33 @@ describe('headerBarModel', () => {
     expect(model.right).toEqual([])
   })
 
-  it('drops the diff entirely for a clean tree', () => {
+  it('shows a grey +0 -0 for a clean tree', () => {
     const model = headerBarModel({
       location: atWorktree,
       diff: { added: 0, removed: 0 },
+      cells: 120,
+    })
+
+    expect(model.right.map((span) => span.text).join('')).toBe('+0  -0')
+    expect(model.right[0]?.fg).toBe(theme.dim)
+    expect(model.right[2]?.fg).toBe(theme.dim)
+  })
+
+  it('greys only the zero side of a one-sided diff', () => {
+    const model = headerBarModel({
+      location: atWorktree,
+      diff: { added: 5, removed: 0 },
+      cells: 120,
+    })
+
+    expect(model.right[0]?.fg).toBe(theme.okBright)
+    expect(model.right[2]?.fg).toBe(theme.dim)
+  })
+
+  it('drops the diff entirely when git has no answer', () => {
+    const model = headerBarModel({
+      location: atWorktree,
+      diff: null,
       cells: 120,
     })
 
