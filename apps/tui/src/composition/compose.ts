@@ -1,4 +1,4 @@
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 
 import {
   ANTHROPIC_PROVIDER_ID,
@@ -28,6 +28,7 @@ import {
   IdPort,
   JudgePort,
   ModelPort,
+  OnThreadOpenHook,
   parseRef,
   PromptFragment,
   promptContextFor,
@@ -153,6 +154,11 @@ import { instructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
 import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
 import { userSaidDraft } from './user-said'
+import {
+  createWarpReporter,
+  WarpThreadOpenHook,
+  type WarpReporter,
+} from './warp-reporter'
 
 export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
 
@@ -270,6 +276,7 @@ export type AtlasApp = {
   pullRequests: PullRequestPort | null
   mcp: () => readonly McpServerStatus[]
   threadOpened: (args: { threadId: ThreadId; projectDirectory: string }) => Promise<void>
+  warp: WarpReporter | null
   close: () => Promise<void>
 }
 
@@ -416,6 +423,17 @@ export async function composeAtlas(args: {
       clock: container.resolve(portToken(ClockPort)),
     }),
   })
+
+  const warp = createWarpReporter({
+    env: args.env,
+    write: (sequence) => process.stdout.write(sequence),
+    host: args.env.HOSTNAME ?? hostname(),
+  })
+  if (warp !== null) {
+    container.register(portToken(OnThreadOpenHook), {
+      useValue: new WarpThreadOpenHook(warp),
+    })
+  }
 
   const models = modelCatalogue({
     adapters: [
@@ -762,6 +780,7 @@ export async function composeAtlas(args: {
     agents,
     services,
     mcp: () => mcp.servers(),
+    warp,
     /**
      * Drafts append only to a thread the store already knows: a conversation nobody has spoken in
      * is opened by its first turn, and an OnThreadOpen draft must not open it early.
