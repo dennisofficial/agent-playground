@@ -58,13 +58,50 @@ const settledCache = new Map<string, readonly MarkdownSegment[]>()
  * after it. Streamed growth re-lexes only the tail; the settled prefix is cached by its own text.
  */
 export function growingSegments(args: { source: string }): readonly MarkdownSegment[] {
-  const boundary = stableBoundary(args.source)
-  if (boundary === 0) return segmentMarkdown(args.source)
+  const scan = scanBoundaries(args.source)
+  if (scan.openFenceAt !== null) {
+    return joinSeam({
+      settled: scan.boundary === 0 ? [] : settledSegments(args.source.slice(0, scan.boundary)),
+      live: [
+        ...(scan.boundary === scan.openFenceAt
+          ? []
+          : segmentMarkdown(args.source.slice(scan.boundary, scan.openFenceAt))),
+        openFenceSegment(args.source.slice(scan.openFenceAt)),
+      ],
+    })
+  }
+  if (scan.boundary === 0) return segmentMarkdown(args.source)
 
   return joinSeam({
-    settled: settledSegments(args.source.slice(0, boundary)),
-    live: segmentMarkdown(args.source.slice(boundary)),
+    settled: settledSegments(args.source.slice(0, scan.boundary)),
+    live: segmentMarkdown(args.source.slice(scan.boundary)),
   })
+}
+
+/**
+ * marked's fence rule consumes to end of input when no closer arrives, so a tail that is one
+ * unclosed fence is a single token by construction — building it directly skips the block
+ * tokenizer's paragraph regexes over the whole fence body on every streamed chunk.
+ */
+function openFenceSegment(raw: string): MarkdownSegment {
+  const lineEnd = raw.indexOf('\n')
+  const openerLine = lineEnd === -1 ? raw : raw.slice(0, lineEnd)
+  const marker = FENCE_OPENER.exec(openerLine)?.[1] ?? ''
+  const info = openerLine
+    .slice(openerLine.indexOf(marker) + marker.length)
+    .trim()
+    .split(/\s+/)
+
+  return {
+    kind: 'fence',
+    language: info[0]?.toLowerCase() ?? '',
+    filename: info[1] ?? '',
+    // marked drops one trailing newline from an unclosed fence's text and fenceSegment drops
+    // another, so the hand-built segment drops both to match.
+    source: (lineEnd === -1 ? '' : raw.slice(lineEnd + 1)).replace(/\n{1,2}$/, ''),
+    raw,
+    state: fenceState(raw),
+  }
 }
 
 function settledSegments(prefix: string): readonly MarkdownSegment[] {
@@ -93,32 +130,52 @@ function joinSeam(args: {
   ]
 }
 
-function stableBoundary(source: string): number {
+function scanBoundaries(source: string): { boundary: number; openFenceAt: number | null } {
   let boundary = 0
   let open: string | null = null
+  let openFenceAt: number | null = null
   let offset = 0
 
   const lines = source.split('\n')
   for (const line of lines.slice(0, -1)) {
+    const lineStart = offset
     offset += line.length + 1
 
     const marker = FENCE_OPENER.exec(line)?.[1]
     if (marker !== undefined) {
       if (open === null) {
         open = marker
+        openFenceAt = lineStart
       } else if (
         marker.charAt(0) === open.charAt(0) &&
         marker.length >= open.length &&
         line.trim() === marker
       ) {
         open = null
+        openFenceAt = null
       }
       continue
     }
 
     if (open === null && line.trim().length === 0) boundary = offset
   }
-  return boundary
+
+  // The scan never examines the last line (it cannot settle a boundary), but the last line can
+  // close the fence — and then the tail is not one unclosed token and marked must lex it.
+  if (open !== null) {
+    const lastLine = lines.at(-1) ?? ''
+    const marker = FENCE_OPENER.exec(lastLine)?.[1]
+    if (
+      marker !== undefined &&
+      marker.charAt(0) === open.charAt(0) &&
+      marker.length >= open.length &&
+      lastLine.trim() === marker
+    ) {
+      return { boundary, openFenceAt: null }
+    }
+  }
+
+  return { boundary, openFenceAt }
 }
 
 /**
