@@ -1,5 +1,6 @@
 export { agentEndedLine, agentEndingFailed, type AgentEndingRow } from './agent-ended-line'
 export { createConversationStore, type ConversationStore } from './conversation-store'
+export { sameEvents } from './same-log'
 export {
   agentSpendOf,
   ESpendReading,

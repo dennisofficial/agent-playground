@@ -32,6 +32,7 @@ import { tailOfPath } from '../../paths'
 import { spinnerFrame, theme, TRANSCRIPT_INSET } from '../../theme'
 import { markPaint, SHIPPED_MARK, type EMark } from '../../tool-marks'
 import { ToolDetail } from './tool-detail'
+import { moreKey, sentenceKey } from './tool-run-expansion'
 
 const HANG = '  '
 
@@ -42,8 +43,6 @@ const STREAM_TAIL = 3
 const LANE = 8
 
 const NARROWEST_BAND = 24
-
-const moreKey = (callId: string): string => `more:${callId}`
 
 /**
  * A row of the list under a sentence.
@@ -259,7 +258,7 @@ function AloneBlock(props: {
 const rowsOf = (segment: Segment, opened: ReadonlySet<string>): number => {
   if (segment.kind === 'alone') return settled(segment.read.call) ? 2 : 2 + STREAM_TAIL
   if (segment.reads.some((read) => !settled(read.call))) return 2 + STREAM_TAIL
-  return 2 + (opened.has(`sentence:${segment.key}`) ? segment.reads.length : 0)
+  return 2 + (opened.has(sentenceKey(segment.key)) ? segment.reads.length : 0)
 }
 
 export function ToolRunBlock(props: {
@@ -299,7 +298,7 @@ export function ToolRunBlock(props: {
             now={now}
             mark={mark}
             opensCluster={index === 0 && props.continues !== true}
-            blockKey={`sentence:${segment.key}`}
+            blockKey={sentenceKey(segment.key)}
             opened={opened}
             onToggle={onToggle}
           />

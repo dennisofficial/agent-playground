@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 
-import type { Event } from '@dltech/atlas-core'
-import { createDeltaChannel, EStepEnd, type DeltaChannel } from '@dltech/atlas-harness'
+import { toRunId, type Event } from '@dltech/atlas-core'
+import {
+  createDeltaChannel,
+  EStepEnd,
+  type DeltaChannel,
+  type TurnSpend,
+} from '@dltech/atlas-harness'
 
 import { createConversationStore, type ConversationStore } from '../conversation-store'
 import { EEntryKind } from '../transcript-model'
@@ -203,5 +208,82 @@ describe('the store lets the composition root fold the same log', () => {
     opened.setEvents({ events })
 
     expect(projected.at(-1)).toBe(events)
+  })
+})
+
+describe('a refresh that re-read the same log', () => {
+  let channel: DeltaChannel
+  let store: ConversationStore
+
+  const spend: TurnSpend = {
+    runId: toRunId('run-1'),
+    threadId: fixtureThreadId,
+    status: 'completed',
+    providerId: 'anthropic',
+    modelId: 'claude-opus-5',
+    steps: 2,
+    inputTokens: 1_000,
+    outputTokens: 200,
+    cacheReadTokens: 50,
+    cacheWriteTokens: 10,
+    startedAt: '2026-01-01T00:00:00.000Z',
+    endedAt: '2026-01-01T00:01:00.000Z',
+    durationMs: 60_000,
+  }
+
+  beforeEach(() => {
+    channel = createDeltaChannel()
+    store = createConversationStore({ channel, threadId: fixtureThreadId })
+  })
+
+  it('wakes nobody when the read returns the same rows in a fresh array', () => {
+    const events = log([{ type: 'user-said', text: 'hello' }])
+    store.setEvents({ events })
+    const before = store.getSnapshot()
+
+    let notices = 0
+    store.subscribe(() => void (notices += 1))
+    store.setEvents({ events: [...events] })
+
+    expect(notices).toBe(0)
+    expect(store.getSnapshot()).toBe(before)
+  })
+
+  it('wakes nobody when the spend comes back as fresh rows saying the same thing', () => {
+    const events = log([{ type: 'user-said', text: 'hello' }])
+    store.setEvents({ events, turns: [spend] })
+
+    let notices = 0
+    store.subscribe(() => void (notices += 1))
+    store.setEvents({ events: [...events], turns: [{ ...spend }] })
+
+    expect(notices).toBe(0)
+  })
+
+  it('wakes the view when the spend moved', () => {
+    const events = log([{ type: 'user-said', text: 'hello' }])
+    store.setEvents({ events, turns: [spend] })
+
+    let notices = 0
+    store.subscribe(() => void (notices += 1))
+    store.setEvents({
+      events: [...events],
+      turns: [{ ...spend, outputTokens: spend.outputTokens + 50 }],
+    })
+
+    expect(notices).toBe(1)
+  })
+
+  it('still wakes the view the moment a row actually lands', () => {
+    const events = log([{ type: 'user-said', text: 'hello' }])
+    store.setEvents({ events })
+
+    let notices = 0
+    store.subscribe(() => void (notices += 1))
+    store.setEvents({
+      events: [...events, ...log([{ type: 'user-said', text: 'again' }])],
+    })
+
+    expect(notices).toBe(1)
   })
 })

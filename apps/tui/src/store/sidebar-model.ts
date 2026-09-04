@@ -103,6 +103,29 @@ const todoOf = (events: readonly Event[]): readonly SidebarTask[] =>
     ...(task.activeForm === undefined ? {} : { activeForm: task.activeForm }),
   }));
 
+const sameSpend = (left: SidebarSpend, right: SidebarSpend): boolean =>
+  left.costUsd === right.costUsd &&
+  left.totals.turns === right.totals.turns &&
+  left.totals.steps === right.totals.steps &&
+  left.totals.inputTokens === right.totals.inputTokens &&
+  left.totals.outputTokens === right.totals.outputTokens &&
+  left.totals.cacheReadTokens === right.totals.cacheReadTokens &&
+  left.totals.cacheWriteTokens === right.totals.cacheWriteTokens
+
+export const sameSidebar = (left: SidebarModel, right: SidebarModel): boolean =>
+  left.title === right.title &&
+  left.turnCount === right.turnCount &&
+  sameSpend(left.spend, right.spend) &&
+  left.approvals === right.approvals &&
+  left.lastActivity === right.lastActivity &&
+  left.todo === right.todo &&
+  left.subagents === right.subagents &&
+  left.crewFold === right.crewFold &&
+  left.teammates === right.teammates &&
+  left.sections === right.sections &&
+  left.classifier === right.classifier &&
+  left.grants === right.grants
+
 export type SidebarEventFold = {
   opening: string | null;
   turnCount: number;
