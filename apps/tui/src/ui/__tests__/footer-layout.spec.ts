@@ -36,8 +36,8 @@ const innerOf = (width: number): number => Math.max(0, width - FOOTER_GUTTER * 2
 const WIDTHS = Array.from({ length: 181 }, (unused, index) => 20 + index)
 
 const widthWhereLost = (present: (layout: FooterLayout) => boolean): number => {
-  for (let width = 200; width >= 20; width -= 1) if (!present(at(width))) return width
-  return 0
+  for (let width = 200; width >= 0; width -= 1) if (!present(at(width))) return width
+  return -1
 }
 
 const hasTail = (layout: FooterLayout): boolean =>
@@ -157,13 +157,13 @@ describe('footerLayout under pressure', () => {
   })
 
   it('goes silent rather than overrunning a terminal too narrow for even a percentage', () => {
-    expect(at(6).instruments).toEqual({
+    expect(at(4).instruments).toEqual({
       model: null,
       effort: null,
       items: [],
       context: null,
     })
-    expect(at(6).instrumentCells).toBe(0)
+    expect(at(4).instrumentCells).toBe(0)
   })
 
   it('keeps the warning sentence after every other instrument has left', () => {
@@ -277,7 +277,7 @@ describe('footerLayout carrying items', () => {
   })
 
   it('still goes silent on a terminal too narrow for anything', () => {
-    expect(withItems(6).instruments).toEqual({
+    expect(withItems(4).instruments).toEqual({
       model: null,
       effort: null,
       items: [],

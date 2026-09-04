@@ -9,6 +9,7 @@ import { EEffort } from '@dltech/atlas-core'
 import { Footer } from '../components/footer'
 import { hoverGround } from '../components/footer-strip'
 import { EFooterItemReach, type FooterItem } from '../footer-item'
+import { FOOTER_GUTTER } from '../footer-layout'
 import { cellsOf } from '../hint-layout'
 import { teardown } from '../markdown/__tests__/harness'
 import { theme } from '../theme'
@@ -101,11 +102,11 @@ describe('the pills under the composer', () => {
     const frame = await frameOf(footer({ width: 140, items: [PR, SHELLS] }), 140)
     const row = rowOf(frame)
     expect(row).toEndWith('124.0k 62%')
-    expect(cellsOf(row)).toBe(140 - 3)
+    expect(cellsOf(row)).toBe(140 - FOOTER_GUTTER)
   })
 
   it('says nothing at a width the ladder sheds them at', async () => {
-    const frame = await frameOf(footer({ width: 32, items: [PR, SHELLS] }), 32)
+    const frame = await frameOf(footer({ width: 28, items: [PR, SHELLS] }), 28)
     expect(frame).not.toContain('#123')
     expect(frame).not.toContain('2 shells')
   })

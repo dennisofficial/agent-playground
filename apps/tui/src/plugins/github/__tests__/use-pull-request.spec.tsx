@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import React, { act } from 'react'
 
+import type { LinkedPullRequest } from '@dltech/atlas-core'
+
 import type { SidebarSection } from '../../surface'
 import { settle, teardown } from '../../../ui/markdown/__tests__/harness'
 import { createPullRequestService, type PullRequestService } from '../pull-request-service'
@@ -66,6 +68,9 @@ const answering = (reading: PullRequestReading): PullRequestPort =>
     async read(): Promise<PullRequestReading> {
       return reading
     }
+    async readLinked(): Promise<PullRequestReading> {
+      return reading
+    }
   })()
 
 const NEVER = (): void => undefined
@@ -76,16 +81,18 @@ function Watcher(props: {
   probe: Probe
   service: PullRequestService
   projectDirectory: string
+  linked: readonly LinkedPullRequest[]
 }): React.ReactNode {
   const control = usePullRequest({
     service: props.service,
     projectDirectory: props.projectDirectory,
     working: false,
+    linked: props.linked,
     onOpen: NEVER,
   })
   props.probe.control = control
 
-  return <text>{control.badge === null ? 'no pull request' : control.badge.label}</text>
+  return <text>{control.footer === null ? 'no pull request' : control.footer.label}</text>
 }
 
 const RENDER_MS = 60
@@ -95,7 +102,11 @@ const textOf = (section: SidebarSection | null, id: string): string | null => {
   return row === undefined ? null : spansOf({ row: row, cells: WIDE }).map((span) => span.text).join('')
 }
 
-async function mounted(args: { reading: PullRequestReading; branch?: string }): Promise<{
+async function mounted(args: {
+  reading: PullRequestReading
+  branch?: string
+  linked?: readonly LinkedPullRequest[]
+}): Promise<{
   probe: Probe
   section: () => SidebarSection | null
   done: () => Promise<void>
@@ -105,7 +116,12 @@ async function mounted(args: { reading: PullRequestReading; branch?: string }): 
   const probe: Probe = { control: null }
 
   const setup = await testRender(
-    <Watcher probe={probe} service={service} projectDirectory={projectDirectory} />,
+    <Watcher
+      probe={probe}
+      service={service}
+      projectDirectory={projectDirectory}
+      linked={args.linked ?? []}
+    />,
     { width: 60, height: 4 },
   )
   await act(async () => {
@@ -132,14 +148,15 @@ describe('usePullRequest', () => {
     const { probe, section, done } = await mounted({ reading: FOUND })
 
     try {
-      expect(probe.control?.badge?.label).toBe('#123')
-      expect(probe.control?.badge?.checks).toBe(EChecksState.Running)
+      expect(probe.control?.footer?.badge?.label).toBe('#123')
+      expect(probe.control?.footer?.badge?.checks).toBe(EChecksState.Running)
+      expect(probe.control?.footer?.overflow).toBe(0)
 
       const rows = section()
       expect(textOf(rows, 'branch')).toBe('feature-x')
-      expect(textOf(rows, 'pull-request')).toContain(`#123 ${EPullRequestState.Open}`)
-      expect(textOf(rows, 'pull-request')).toContain('1 running')
-      expect(textOf(rows, 'pull-request')).toContain('4 ✓')
+      expect(textOf(rows, 'pull-request-current')).toContain(`#123 ${EPullRequestState.Open}`)
+      expect(textOf(rows, 'pull-request-current')).toContain('1 running')
+      expect(textOf(rows, 'pull-request-current')).toContain('4 ✓')
     } finally {
       await done()
     }
@@ -149,11 +166,41 @@ describe('usePullRequest', () => {
     const { probe, section, done } = await mounted({ reading: ABSENT, branch: 'main' })
 
     try {
-      expect(probe.control?.badge).toBeNull()
+      expect(probe.control?.footer).toBeNull()
 
       const rows = section()
       expect(textOf(rows, 'branch')).toBe('main')
-      expect(textOf(rows, 'pull-request')).toBeNull()
+      expect(textOf(rows, 'pull-request-current')).toBeNull()
+    } finally {
+      await done()
+    }
+  })
+
+  it('rows the linked pull requests oldest first, ahead of the one the checkout stands on', async () => {
+    const { probe, section, done } = await mounted({
+      reading: FOUND,
+      linked: [
+        {
+          number: 100,
+          url: 'https://github.com/dennisofficial/atlas/pull/100',
+          repo: 'github.com/dennisofficial/atlas',
+          branch: 'dennis/earlier',
+        },
+      ],
+    })
+
+    try {
+      const rows = section()
+      expect(rows?.rows.map((row) => row.id)).toEqual([
+        'branch',
+        'pull-request-github.com/dennisofficial/atlas#100',
+        'pull-request-current',
+      ])
+      expect(textOf(rows, 'pull-request-github.com/dennisofficial/atlas#100')).toContain(
+        '#100 dennis/earlier',
+      )
+      expect(probe.control?.footer?.label).toBe('#123')
+      expect(probe.control?.footer?.overflow).toBe(1)
     } finally {
       await done()
     }

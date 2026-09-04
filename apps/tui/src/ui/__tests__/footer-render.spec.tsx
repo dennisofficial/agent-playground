@@ -4,6 +4,7 @@ import React from 'react'
 import { EEffort, EMeterBand } from '@dltech/atlas-core'
 
 import { Footer } from '../components/footer'
+import { FOOTER_GUTTER } from '../footer-layout'
 import { cellsOf } from '../hint-layout'
 import { frameOf } from './transcript-fixture'
 
@@ -66,7 +67,7 @@ describe('the footer', () => {
     const width = 140
     const frame = await frameOf(footer({ width, percent: 62, tokensUsed: 124_000 }), width)
     const row = rowsOf(frame)[0] ?? ''
-    expect(cellsOf(row)).toBe(width - 3)
+    expect(cellsOf(row)).toBe(width - FOOTER_GUTTER)
   })
 
   it('reports the account windows alongside the context one', async () => {

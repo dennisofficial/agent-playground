@@ -50,6 +50,12 @@ export function FencedBlock(props: {
 }): React.ReactNode {
   const [pointerInside, setPointerInside] = useState(false)
 
+  // CodeRenderable's `streaming` setter discards its highlight, so moving the flag under a
+  // mounted block redraws it as plain text for the round trip the replacement highlight takes —
+  // the flash a streamed fence showed when prose arrived behind it or the message ended. The
+  // mount-time value stands for the life of the block.
+  const [streaming] = useState(() => props.streaming === true)
+
   const available = Math.max(4, props.width - RIGHT_MARGIN)
   const gutter = gutterWidth(props.source)
 
@@ -59,9 +65,9 @@ export function FencedBlock(props: {
         source: props.source,
         language: props.language,
         width: Math.max(1, available - CHROME - gutter),
-        streaming: props.streaming === true,
+        streaming,
       }),
-    [props.language, props.source, available, gutter, props.streaming],
+    [props.language, props.source, available, gutter, streaming],
   )
 
   const numbered = view.numbered !== false

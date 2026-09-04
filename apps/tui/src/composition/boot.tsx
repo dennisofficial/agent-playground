@@ -13,6 +13,7 @@ import { ESession, openSession } from "./open-session";
 import { RESTART_EXIT_CODE, restartResumeHandle } from "./restart";
 import { resumeHint } from "./resume-hint";
 import { loadSettings } from "./settings-binding";
+import { trackTerminalFocus } from "./terminal-focus";
 import { readTerminalSize, settleTerminalSize } from "./terminal-size";
 
 const TARGET_FPS = 120;
@@ -60,6 +61,12 @@ export async function bootAtlas(args: {
     exitOnCtrlC: false,
     targetFps: TARGET_FPS,
   });
+
+  const untrackFocus = trackTerminalFocus({
+    source: renderer,
+    write: (sequence) => process.stdout.write(sequence),
+  });
+  renderer.once("destroy", untrackFocus);
 
   const stopSettling = settleTerminalSize({
     read: () => readTerminalSize(process.stdout),

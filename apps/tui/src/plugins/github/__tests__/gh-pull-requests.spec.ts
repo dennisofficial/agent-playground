@@ -165,3 +165,69 @@ describe('GhPullRequestPort', () => {
     expect(run.calls).toHaveLength(1)
   })
 })
+
+describe('GhPullRequestPort.readLinked', () => {
+  const LINK = { repo: 'github.com/dennisofficial/atlas', number: 42 }
+
+  it('asks gh by number and repo, from the process directory rather than a checkout', async () => {
+    const run = ghAnswering({ stdout: PAYLOAD })
+    const port = new GhPullRequestPort({ run })
+
+    const reading = await port.readLinked(LINK)
+
+    expect(run.calls).toEqual([
+      {
+        argv: [
+          'gh',
+          'pr',
+          'view',
+          '42',
+          '--repo',
+          'github.com/dennisofficial/atlas',
+          '--json',
+          'number,state,isDraft,url,statusCheckRollup,title',
+        ],
+        cwd: process.cwd(),
+        timeoutMs: GH_TIMEOUT_MS,
+      },
+    ])
+    expect(reading.lookup).toBe(EPullRequestLookup.Found)
+    if (reading.lookup !== EPullRequestLookup.Found) return
+    expect(reading.pullRequest.number).toBe(42)
+  })
+
+  it('is absent when gh says there is no such pull request', async () => {
+    const port = new GhPullRequestPort({
+      run: ghAnswering({ code: 1, stderr: 'no pull requests found\n' }),
+    })
+
+    expect((await port.readLinked(LINK)).lookup).toBe(EPullRequestLookup.Absent)
+  })
+
+  it('maps failures exactly as read does', async () => {
+    const unauthenticated = new GhPullRequestPort({
+      run: ghAnswering({ code: 4, stderr: 'gh auth login required' }),
+    })
+    expect(await unauthenticated.readLinked(LINK)).toEqual({
+      lookup: EPullRequestLookup.Unavailable,
+      retryable: false,
+    })
+
+    const garbage = new GhPullRequestPort({ run: ghAnswering({ stdout: '<html>login</html>' }) })
+    expect(await garbage.readLinked(LINK)).toEqual({
+      lookup: EPullRequestLookup.Unavailable,
+      retryable: true,
+    })
+  })
+
+  it('shares the missing-binary latch with read', async () => {
+    const run = ghAnswering(ghSpawnFailure({ failure: ESpawnFailure.BinaryMissing }))
+    const port = new GhPullRequestPort({ run })
+
+    await port.readLinked(LINK)
+    const after = await port.read({ checkout: aCheckout() })
+
+    expect(after).toEqual({ lookup: EPullRequestLookup.Unavailable, retryable: false })
+    expect(run.calls).toHaveLength(1)
+  })
+})

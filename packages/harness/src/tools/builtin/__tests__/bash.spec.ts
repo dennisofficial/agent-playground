@@ -306,6 +306,36 @@ describe('giving a background shell a ceiling', () => {
   })
 })
 
+describe('pacing a background shell check-in', () => {
+  it('refuses checkInMs on a foreground command, and says what it needs', async () => {
+    const outcome = await invoke({ command: 'echo hi', checkInMs: 5_000 })
+
+    expect(outcome.ok).toBe(false)
+    expect(!outcome.ok && outcome.reason).toContain('runInBackground')
+  })
+
+  it('reports the default cadence when none is asked for', async () => {
+    const outcome = await invoke({ command: 'sleep 30', runInBackground: true })
+
+    expect(outputOf(outcome)).toMatchObject({ checkInMs: 300_000 })
+    expect(outcome.ok && outcome.modelText).toContain('a check-in reaches you every 300000 ms')
+  })
+
+  it('takes a checkInMs rather than refusing it', async () => {
+    const outcome = await invoke({ command: 'sleep 30', runInBackground: true, checkInMs: 10_000 })
+
+    expect(outputOf(outcome)).toMatchObject({ checkInMs: 10_000 })
+    expect(outcome.ok && outcome.modelText).toContain('a check-in reaches you every 10000 ms')
+  })
+
+  it('teaches the cadence in the description, as a heartbeat rather than a kill', () => {
+    const { description } = new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks))
+
+    expect(description).toContain('checkInMs')
+    expect(description).toContain('a check-in kills nothing')
+  })
+})
+
 describe('what the tool tells the model about watching', () => {
   it('warns that a watch on the success marker alone is silent through a crash', () => {
     const { description } = new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks))

@@ -5,9 +5,11 @@ import { MATCHED_LINES_CAP } from '../../shells/shell-watch'
 export function bashDescription({
   defaultTimeoutMs,
   maximumTimeoutMs,
+  defaultCheckInMs,
 }: {
   defaultTimeoutMs: number
   maximumTimeoutMs: number
+  defaultCheckInMs: number
 }): string {
   return [
     'Run a command in bash.',
@@ -29,6 +31,7 @@ export function bashDescription({
     'Its ending wakes you wherever you are, however it ends, carrying everything it printed - whether or not a turn is running when it lands.',
     'Its stdin is closed, so a command that stops to ask something can never be answered and will never end; that too is delivered to you, so a prompt is reported rather than waited out.',
     'timeoutMs on a background shell is a ceiling rather than a wait: the shell is killed if it outlives it, that killing reaches you as an ending like any other, and a background ceiling is not held to the foreground cap.',
+    `checkInMs paces the check-ins of a background shell: every checkInMs ms that it is still running you are woken with how long it has been up, when it last printed, and its latest output, so a shell that neither ends nor reports is never waited on indefinitely - the default is ${defaultCheckInMs} ms, a check-in kills nothing, and output never postpones one, since a poll loop printing a line a minute is exactly the shell nobody is watching.`,
     'watch takes a regular expression, tested against every line the shell prints, and hands you the matching lines as they arrive instead of only at the end; it requires runInBackground.',
     'Match what would end the wait either way, not only the ending you are hoping for: a watch set to the success marker alone stays silent through a crash, and silence from a watch is indistinguishable from progress.',
     'So widen the alternation rather than narrow it - completed|ERROR|Traceback|FAILED|panic|Killed - and a failure wakes you as fast as a pass does.',
@@ -53,6 +56,13 @@ export function ceilingClause({ timeoutMs }: { timeoutMs: number | undefined }):
   if (timeoutMs === undefined) return []
 
   return [`It is killed if it outlives ${timeoutMs} ms, and the killing reaches you as its ending.`]
+}
+
+export function checkInClause({ checkInMs }: { checkInMs: number }): readonly string[] {
+  return [
+    `While it runs, a check-in reaches you every ${checkInMs} ms with how long it has been up and its latest output,`,
+    'so it can never sit running unnoticed - if that cadence would only nag, it belongs on service_start.',
+  ]
 }
 
 const NATIVE_WAITS = 'gh run watch --exit-status, gh pr checks --watch'

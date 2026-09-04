@@ -82,7 +82,7 @@ export function OverlayStack(props: {
       )}
       {threads.state === null ? null : (
         <Threads
-          width={sidebarWidth}
+          width={Math.min(props.contentWidth, props.width)}
           state={threads.state}
           overlay
           onPick={threads.handlePick}

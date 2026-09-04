@@ -26,8 +26,8 @@ import {
   type ShellOutput,
   type Tail,
 } from '../../shells/shell-process'
-import { ShellRegistryPort } from '../../shells/shell-registry'
-import { bashDescription, ceilingClause, idlingRefusal, watchClause } from './bash-prose'
+import { CHECK_IN_EVERY_MS, ShellRegistryPort } from '../../shells/shell-registry'
+import { bashDescription, ceilingClause, checkInClause, idlingRefusal, watchClause } from './bash-prose'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 600_000
@@ -40,11 +40,13 @@ const inputSchema = z.strictObject({
   description: z.string().min(1),
   runInBackground: z.boolean().optional(),
   watch: z.string().min(1).optional(),
+  checkInMs: z.number().int().positive().optional(),
 })
 
 const description = bashDescription({
   defaultTimeoutMs: DEFAULT_TIMEOUT_MS,
   maximumTimeoutMs: MAXIMUM_TIMEOUT_MS,
+  defaultCheckInMs: CHECK_IN_EVERY_MS,
 })
 
 const HALF_OUTPUT_CHARACTERS = Math.floor(MAXIMUM_OUTPUT_CHARACTERS / 2)
@@ -146,11 +148,13 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     cwd: string
     watch?: string | undefined
     timeoutMs?: number | undefined
+    checkInMs?: number | undefined
   }): ToolOutcome {
     const started = this.shells.start(args)
     if (!started.ok) return started
 
     const { shellId } = started.snapshot
+    const checkInMs = args.checkInMs ?? CHECK_IN_EVERY_MS
 
     return {
       ok: true,
@@ -160,6 +164,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         shellId,
         status: started.snapshot.status,
         pid: started.snapshot.pid,
+        checkInMs,
         ...(args.watch === undefined ? {} : { watch: args.watch }),
         ...(args.timeoutMs === undefined ? {} : { timeoutMs: args.timeoutMs }),
       },
@@ -171,6 +176,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         'and so will a prompt it stops on, since its stdin is closed and no ending would ever follow.',
         ...watchClause({ watch: args.watch }),
         ...ceilingClause({ timeoutMs: args.timeoutMs }),
+        ...checkInClause({ checkInMs }),
         'So do not wait on it: no sleeping, no polling, no idle loop. Take up other work, or end the turn and be woken.',
         `Use shell_output({ shellId: "${shellId}" }) only for a shell that will not end on its own, such as a dev server`,
         `whose startup log you need, and shell_kill({ shellId: "${shellId}" }) to stop it.`,
@@ -197,6 +203,14 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
       }
     }
 
+    if (input.checkInMs !== undefined && input.runInBackground !== true) {
+      return {
+        ok: false,
+        reason:
+          'checkInMs paces the check-ins of a shell that outlives the call, so it needs runInBackground: true; a foreground command is already bounded by timeoutMs and hands you its ending when it returns',
+      }
+    }
+
     if (input.workdir !== undefined) {
       const directory = await stat(input.workdir).catch(() => undefined)
       if (directory === undefined) {
@@ -215,6 +229,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         cwd,
         watch: input.watch,
         timeoutMs,
+        checkInMs: input.checkInMs,
       })
     }
 

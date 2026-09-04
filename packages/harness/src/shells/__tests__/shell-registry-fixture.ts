@@ -67,6 +67,20 @@ export function matchedDraft(draft: EventDraft | undefined): MatchedDraft {
   return draft
 }
 
+type StillRunningDraft = Omit<
+  EventOfType<'background-shell-still-running'>,
+  keyof { id: 0; seq: 0; threadId: 0; runId: 0; depth: 0; at: 0 }
+>
+
+export function stillRunningDraft(draft: EventDraft | undefined): StillRunningDraft {
+  if (draft?.type !== 'background-shell-still-running') {
+    throw new Error(
+      `expected a background-shell-still-running draft, got ${draft?.type ?? 'nothing'}`,
+    )
+  }
+  return draft
+}
+
 const opened: { registry: ShellRegistryPort; root: string }[] = []
 
 export async function closeRegistries(): Promise<void> {

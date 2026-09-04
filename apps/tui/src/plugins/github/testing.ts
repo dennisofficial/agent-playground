@@ -1,4 +1,7 @@
+import type { LinkedPullRequest } from '@dltech/atlas-core'
+
 import {
+  checkoutKey,
   EChecksState,
   EForge,
   EPullRequestLookup,
@@ -50,7 +53,10 @@ export const ghSpawnFailure = (args: {
   failure: args.failure,
 })
 
-export type ScriptedPullRequests = PullRequestPort & { readonly asked: readonly string[] }
+export type ScriptedPullRequests = PullRequestPort & {
+  readonly asked: readonly string[]
+  readonly askedLinked: readonly string[]
+}
 
 export const pullRequestsAnswering = (
   ...readings: readonly PullRequestReading[]
@@ -58,13 +64,55 @@ export const pullRequestsAnswering = (
   new (class extends PullRequestPort {
     readonly pushes = false
     readonly asked: string[] = []
+    readonly askedLinked: string[] = []
     private handed = 0
 
     async read({ checkout }: { checkout: RepositoryCheckout }): Promise<PullRequestReading> {
       this.asked.push(checkout.directory)
+      return this.next()
+    }
+
+    async readLinked({
+      repo,
+      number,
+    }: {
+      repo: string
+      number: number
+    }): Promise<PullRequestReading> {
+      this.askedLinked.push(`${repo}#${number}`)
+      return this.next()
+    }
+
+    private next(): PullRequestReading {
       const reading = readings[Math.min(this.handed, readings.length - 1)]
       this.handed += 1
       return reading ?? { lookup: EPullRequestLookup.Unavailable, retryable: true }
+    }
+  })()
+
+export const pullRequestsByKey = (
+  readings: Readonly<Record<string, PullRequestReading>>,
+): ScriptedPullRequests =>
+  new (class extends PullRequestPort {
+    readonly pushes = false
+    readonly asked: string[] = []
+    readonly askedLinked: string[] = []
+
+    async read({ checkout }: { checkout: RepositoryCheckout }): Promise<PullRequestReading> {
+      this.asked.push(checkoutKey(checkout))
+      return readings[checkoutKey(checkout)] ?? WAS_ABSENT
+    }
+
+    async readLinked({
+      repo,
+      number,
+    }: {
+      repo: string
+      number: number
+    }): Promise<PullRequestReading> {
+      const key = `${repo}#${number}`
+      this.askedLinked.push(key)
+      return readings[key] ?? WAS_ABSENT
     }
   })()
 
@@ -84,6 +132,20 @@ export const aCheckout = (args?: {
     repo: args?.repo ?? 'atlas',
   },
 })
+
+export const aLink = (args?: {
+  number?: number
+  repo?: string
+  branch?: string
+}): LinkedPullRequest => {
+  const number = args?.number ?? 42
+  return {
+    number,
+    url: `https://github.com/dennisofficial/atlas/pull/${number}`,
+    repo: args?.repo ?? 'github.com/dennisofficial/atlas',
+    branch: args?.branch ?? 'feature-x',
+  }
+}
 
 export type PullRequestShape = { number?: number; checks?: EChecksState; tally?: ChecksTally }
 
@@ -128,6 +190,10 @@ export const countingPort = (args: { pushes: boolean; reading: PullRequestReadin
       this.calls += 1
       return args.reading
     }
+    async readLinked(): Promise<PullRequestReading> {
+      this.calls += 1
+      return args.reading
+    }
   })()
 
 export const rejectingPort = () =>
@@ -135,6 +201,10 @@ export const rejectingPort = () =>
     readonly pushes = false
     calls = 0
     async read(): Promise<PullRequestReading> {
+      this.calls += 1
+      throw new Error('the socket went away')
+    }
+    async readLinked(): Promise<PullRequestReading> {
       this.calls += 1
       throw new Error('the socket went away')
     }
@@ -146,6 +216,12 @@ export const suspendedPort = () => {
     readonly pushes = false
     calls = 0
     async read(): Promise<PullRequestReading> {
+      return this.hold()
+    }
+    async readLinked(): Promise<PullRequestReading> {
+      return this.hold()
+    }
+    private hold(): Promise<PullRequestReading> {
       this.calls += 1
       return new Promise<PullRequestReading>((resolve) => {
         gate.settle = resolve

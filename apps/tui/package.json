@@ -17,6 +17,7 @@
     "proto:settings": "bun prototype/settings.tsx",
     "proto:footer": "bun prototype/footer-pills.tsx",
     "proto:attachments": "bun prototype/user-attachments.tsx",
+    "proto:focus": "bun prototype/terminal-focus.tsx",
     "probe:size": "bun scripts/probe-size.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun scripts/test-shards.ts",

@@ -20,14 +20,16 @@ const TLDR_INSTRUCTION = [
   'Say the outcome, not the itinerary — never enumerate more than two paths or symbols.',
   'Name exact paths, symbols and outcomes — never invent them.',
   'The status says how the turn ended:',
-  '- "done": the operator\u2019s ask is answered, the requested work complete;',
+  '- "done": the operator\u2019s ask is answered, the requested work complete, and nothing at all',
+  'remains outstanding;',
   '- "needs-operator": the turn ended on a question, a plan or a decision for the operator —',
   'their reply is the next move;',
-  '- "waiting": the turn handed off to background work (a background shell, a sub-agent) that',
-  'will wake Atlas — the operator need not act.',
-  'When both could hold — background work still running and something asked of the operator —',
-  'choose "needs-operator": the wake will arrive on its own, but an unanswered ask sits with',
-  'the operator forever.',
+  '- "waiting": background work (a background shell, a sub-agent) is the sole thing outstanding,',
+  'it will wake Atlas on its own, and nothing was asked of the operator.',
+  '"needs-operator" is the default whenever the ending is ambiguous or mixed — background work',
+  'still running AND something asked of the operator, a review invited, a choice implied. The',
+  'wake arrives on its own; an unanswered ask sits with the operator forever. Choose "done" or',
+  '"waiting" only when the ending is plainly that and nothing else.',
 ].join(' ')
 
 const tldrSchema = z.object({

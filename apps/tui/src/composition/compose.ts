@@ -17,6 +17,7 @@ import {
   EPromptAgent,
   DEFAULT_WORKTREE_DIRECTORY,
   EServiceStatus,
+  EPerfModelRole,
   ESettingId,
   EWebSearchBackend,
   backendOf,
@@ -128,9 +129,12 @@ import {
   type DiscoveredSkill,
   type McpServerStatus,
   type SettingsService,
+  createPerfSampler,
 } from '@dltech/atlas-harness'
 
 import { createPendingQueue, type PendingQueue } from '../store'
+import { countModelTraffic } from './counting-model'
+import { atlasRevision } from './atlas-revision'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
@@ -140,6 +144,7 @@ import { mcpBootNotice } from './mcp-report'
 import { selectableModel, type ModelChoice } from './model-selection'
 import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
 import { assemblePlugins } from '../plugins/assemble'
+import { PullRequestPort } from '../plugins/github/pure'
 import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { tldrFeed } from '../ui/tldr-feed-store'
 import type { ContributedProjection } from '../plugins/projection'
@@ -262,6 +267,7 @@ export type AtlasApp = {
   agentTypes: AgentTypeCatalog
   pluginProjections: readonly ContributedProjection[]
   pluginSurfaces: readonly ContributedSurface[]
+  pullRequests: PullRequestPort | null
   mcp: () => readonly McpServerStatus[]
   threadOpened: (args: { threadId: ThreadId; projectDirectory: string }) => Promise<void>
   close: () => Promise<void>
@@ -452,6 +458,13 @@ export async function composeAtlas(args: {
   container.register(PrismaClientToken, { useValue: database.prisma })
   registerDisposable({ container, close: database.close })
 
+  const perfSampler = createPerfSampler({
+    prisma: database.prisma,
+    workspace: config.cwd,
+    revision: atlasRevision(),
+  })
+  registerDisposable({ container, close: perfSampler.dispose })
+
   const skillRegistry = bindSkillRegistry({
     container,
     registry: await liveSkillRegistry({
@@ -505,6 +518,19 @@ export async function composeAtlas(args: {
     })
   }
 
+  /**
+   * The github plugin is a native but still a plugin: a repo plugin may shadow it, and then nobody
+   * bound the port. The conversation lister's pills are the only consumer, and they are decoration
+   * worth dropping rather than a wiring error worth throwing.
+   */
+  const pullRequests = ((): PullRequestPort | null => {
+    try {
+      return container.resolve(portToken(PullRequestPort))
+    } catch {
+      return null
+    }
+  })()
+
   const tools = () => container.resolve(portToken(ToolRegistry)).declarations()
   const modelPort = faultInjected(container.resolve(portToken(ModelPort)))
   const prompts = container.resolve(portToken(PromptRegistry))
@@ -526,9 +552,18 @@ export async function composeAtlas(args: {
 
   let activeThread: ActiveConversation | null = null
 
-  const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
-  const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
-  const tldrModel = createAnthropicOauthModel({ credentials, modelId: TLDR_MODEL_ID })
+  const titlerModel = countModelTraffic({
+    model: createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID }),
+    role: EPerfModelRole.Titler,
+  })
+  const summariserModel = countModelTraffic({
+    model: createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID }),
+    role: EPerfModelRole.Summariser,
+  })
+  const tldrModel = countModelTraffic({
+    model: createAnthropicOauthModel({ credentials, modelId: TLDR_MODEL_ID }),
+    role: EPerfModelRole.Tldr,
+  })
 
   const summarise: Summariser = ({ events, fromSeq, throughSeq, signal }) =>
     summaryFor({
@@ -711,6 +746,7 @@ export async function composeAtlas(args: {
     agentTypes,
     pluginProjections: plugins.projections,
     pluginSurfaces: plugins.surfaces,
+    pullRequests,
     files: new FileBrowser({ root: config.cwd }),
     openUrl: createUrlOpener(),
     credentials,

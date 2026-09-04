@@ -1,17 +1,33 @@
-import { ClockPort, EKilledBy, type EventDraft, type ThreadId } from '@dltech/atlas-core'
+import {
+  adjustPerfGauge,
+  ClockPort,
+  EKilledBy,
+  EPerfGauge,
+  type EventDraft,
+  type ThreadId,
+} from '@dltech/atlas-core'
 
 import {  portToken } from '../container/injection'
 import { HookChainSourceToken, WorkspaceRoot } from '../container/tokens'
 import type { HookChainSource } from '../hooks/registry'
 import { afterShellDrafts } from './after-shell'
 import { startBackgroundShell, type BackgroundShell, type ShellSnapshot } from './background-shell'
-import { ENotice, ShellNoticeQueue, take, type ShellDelta, type Tracked } from './notice-queue'
+import {
+  ENotice,
+  ShellNoticeQueue,
+  take,
+  type PendingShellNotice,
+  type ShellDelta,
+  type Tracked,
+} from './notice-queue'
 import { toShellId, type ShellId } from './shell-id'
 import { compileWatch, MATCH_SETTLE_MS, MATCHED_LINES_CAP, type MatchedLines } from './shell-watch'
 
 export const RETAINED_CHARACTERS = 400_000
 export const OVERFLOW_CHARACTERS = 50_000_000
 export const PROMPT_SETTLE_MS = 2_000
+export const CHECK_IN_EVERY_MS = 300_000
+export const CHECK_IN_TAIL_CHARACTERS = 1_000
 
 export type StartedShellOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
 
@@ -34,6 +50,7 @@ export abstract class ShellRegistryPort {
     cwd?: string | undefined
     watch?: string | undefined
     timeoutMs?: number | undefined
+    checkInMs?: number | undefined
   }): StartedShellOutcome
   abstract read(args: { shellId: string; threadId: ThreadId }): ShellReadOutcome
   abstract peek(args: {
@@ -45,7 +62,7 @@ export abstract class ShellRegistryPort {
   abstract list(args: { threadId: ThreadId }): readonly ShellSnapshot[]
   abstract listEverywhere(): readonly ShellSnapshot[]
   abstract drainNotifications(args: { threadId: ThreadId }): readonly EventDraft[]
-  abstract pendingNotices(args: { threadId: ThreadId }): readonly ShellSnapshot[]
+  abstract pendingNotices(args: { threadId: ThreadId }): readonly PendingShellNotice[]
   abstract threadsAwaitingNotice(): readonly ThreadId[]
   abstract onNotice(listener: () => void): () => void
   abstract forgetNotices(args: { threadId: ThreadId }): void
@@ -80,12 +97,14 @@ export class BunShellRegistry extends ShellRegistryPort {
     cwd?: string | undefined
     watch?: string | undefined
     timeoutMs?: number | undefined
+    checkInMs?: number | undefined
   }): StartedShellOutcome {
     const watch = compileWatch(args.watch)
     if (!watch.ok) return watch
 
     this.started += 1
     const shellId = toShellId(`bash_${this.started}`)
+    const checkInMs = args.checkInMs ?? CHECK_IN_EVERY_MS
 
     const opened = startBackgroundShell({
       shellId,
@@ -100,9 +119,11 @@ export class BunShellRegistry extends ShellRegistryPort {
       matchSettleMs: MATCH_SETTLE_MS,
       matchedLinesCap: MATCHED_LINES_CAP,
       timeoutMs: args.timeoutMs,
+      checkInMs,
       onExit: (shell) => this.announceExit(shell),
       onAwaitingInput: (shell) => this.announceAwaitingInput(shell),
       onMatched: (matched) => this.announceMatched(matched),
+      onStillRunning: (shell) => this.announceStillRunning({ shell, checkInMs }),
     })
     if (!opened.ok) return opened
 
@@ -113,6 +134,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       threadId: args.threadId,
       pattern: args.watch,
     })
+    adjustPerfGauge({ key: EPerfGauge.ActiveShells, delta: 1 })
 
     return { ok: true, snapshot: opened.shell.snapshot() }
   }
@@ -174,7 +196,7 @@ export class BunShellRegistry extends ShellRegistryPort {
     return this.notices.drain({ threadId })
   }
 
-  pendingNotices({ threadId }: { threadId: ThreadId }): readonly ShellSnapshot[] {
+  pendingNotices({ threadId }: { threadId: ThreadId }): readonly PendingShellNotice[] {
     return this.notices.pending({ threadId })
   }
 
@@ -232,6 +254,7 @@ export class BunShellRegistry extends ShellRegistryPort {
     if (entry === undefined || entry.announced) return
 
     entry.announced = true
+    adjustPerfGauge({ key: EPerfGauge.ActiveShells, delta: -1 })
 
     const settling = this.queueEnding({ entry, shell })
     this.settling.add(settling)
@@ -256,6 +279,24 @@ export class BunShellRegistry extends ShellRegistryPort {
     if (entry === undefined || entry.announced) return
 
     this.queue({ kind: ENotice.AwaitingInput, entry, shell })
+  }
+
+  private announceStillRunning(args: { shell: BackgroundShell; checkInMs: number }): void {
+    const entry = this.tracked.get(args.shell.shellId)
+    if (entry === undefined || entry.announced) return
+
+    const snapshot = args.shell.snapshot()
+    const now = Date.parse(this.clock.now())
+
+    this.notices.queue({
+      kind: ENotice.StillRunning,
+      snapshot,
+      threadId: entry.threadId,
+      peek: () => args.shell.tail(CHECK_IN_TAIL_CHARACTERS),
+      runningForMs: Math.max(now - Date.parse(snapshot.startedAt), 0),
+      silentForMs: Math.max(now - Date.parse(snapshot.lastOutputAt), 0),
+      checkInMs: args.checkInMs,
+    })
   }
 
   /**

@@ -45,13 +45,17 @@ import {
   SkillRegistryPort,
   SystemClock,
   EMPTY_AGENT_TYPE_CATALOG,
+  ENotice,
   type AgentTypeCatalog,
   type DeltaChannel,
   type DiscoveredSkill,
+  type PendingShellNotice,
   type ShellSnapshot,
 } from '@dltech/atlas-harness'
 
 import { FileBrowser } from '@dltech/atlas-harness'
+
+import type { PullRequestPort } from '../../plugins/github/pure'
 
 import { createPendingQueue } from '../../store'
 import { userSaidDraft } from '../user-said'
@@ -266,7 +270,7 @@ export type FakeShells = ShellRegistryPort & {
   readonly killed: readonly string[]
 }
 
-const NO_NOTICES: readonly ShellSnapshot[] = Object.freeze([])
+const NO_NOTICES: readonly PendingShellNotice[] = Object.freeze([])
 
 export const FAKE_SHELL_OWNER = toThreadId('opened-thread')
 
@@ -284,9 +288,11 @@ export function fakeShellRegistry(): FakeShells {
     for (const listener of [...listeners]) listener()
   }
 
-  const noticedBy = new Map<ThreadId, readonly ShellSnapshot[]>()
-  const notices = (threadId: ThreadId): readonly ShellSnapshot[] => {
-    const mine = ended.filter((one) => one.threadId === threadId).map((one) => one.snapshot)
+  const noticedBy = new Map<ThreadId, readonly PendingShellNotice[]>()
+  const notices = (threadId: ThreadId): readonly PendingShellNotice[] => {
+    const mine = ended
+      .filter((one) => one.threadId === threadId)
+      .map((one) => ({ kind: ENotice.Ended, snapshot: one.snapshot }))
     if (mine.length === 0) {
       noticedBy.delete(threadId)
       return NO_NOTICES
@@ -296,7 +302,7 @@ export function fakeShellRegistry(): FakeShells {
     if (
       held !== undefined &&
       held.length === mine.length &&
-      held.every((snapshot, at) => snapshot === mine[at])
+      held.every((notice, at) => notice.snapshot === mine[at]?.snapshot)
     ) {
       return held
     }
@@ -494,6 +500,7 @@ export function fakeApp(args: {
   workspaceRoot?: string
   cwd?: string
   workspace?: WorkspaceIdentity
+  pullRequests?: PullRequestPort | null
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
@@ -529,6 +536,7 @@ export function fakeApp(args: {
     agentTypes: args.agentTypes ?? EMPTY_AGENT_TYPE_CATALOG,
     pluginProjections: [],
     pluginSurfaces: [],
+    pullRequests: args.pullRequests ?? null,
     mcp: () => [],
     threadOpened: async ({ projectDirectory }) => {
       openedDirectories.push(projectDirectory)

@@ -1,4 +1,5 @@
 import type { EventOfType } from '../../events/envelope'
+import { elapsedPhrase } from '../../shells/elapsed'
 import { shellLabel } from '../../shells/label'
 import { EKilledBy, shellEnding } from '../../shells/status'
 
@@ -91,4 +92,35 @@ export function backgroundShellMatchedBlock(
   if (event.watchDisarmed === true) sections.push(WATCH_DISARMED)
 
   return [MATCHED_OPEN, sections.join('\n\n'), MATCHED_CLOSE].join('\n')
+}
+
+const STILL_RUNNING_OPEN = '<background-shell-still-running>'
+const STILL_RUNNING_CLOSE = '</background-shell-still-running>'
+
+const STILL_RUNNING_NOT_ENDED =
+  'This is a scheduled check-in, not an ending: the shell is still running, and when it ends you will be told, along with everything it printed.'
+
+const stillRunningExits = (shellId: string): string =>
+  `Three ways out: read it with shell_output({ shellId: "${shellId}" }) to see how it is doing, stop it with shell_kill({ shellId: "${shellId}" }), or - if it is meant to stay up, like a dev server or a watcher - kill it and start it again with service_start, which never times out and never asks for attention. If it is making progress and simply needs the time, do nothing.`
+
+export function backgroundShellStillRunningBlock(
+  event: EventOfType<'background-shell-still-running'>,
+): string {
+  const headline = `Background shell ${event.shellId} ${shellLabel(event)} has been running for ${elapsedPhrase(event.runningForMs)} and has not ended. ${STILL_RUNNING_NOT_ENDED}`
+
+  const sections = [headline]
+
+  if (event.silentForMs >= event.runningForMs) {
+    sections.push('It has printed nothing in all that time.')
+  } else {
+    sections.push(`It last printed ${elapsedPhrase(event.silentForMs)} ago.`)
+  }
+
+  const tail = event.tail.trimEnd()
+  if (tail !== '') sections.push(`Its most recent output:\n${tail}`)
+
+  sections.push(stillRunningExits(event.shellId))
+  sections.push(`These check-ins repeat every ${elapsedPhrase(event.checkInMs)} for as long as the shell runs.`)
+
+  return [STILL_RUNNING_OPEN, sections.join('\n\n'), STILL_RUNNING_CLOSE].join('\n')
 }

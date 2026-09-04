@@ -1,7 +1,7 @@
 import type { KeyEvent } from '@opentui/core'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import type { ThreadId } from '@dltech/atlas-core'
+import { EPerfCounter, measurePerf, type ThreadId } from '@dltech/atlas-core'
 import { EKilledBy, type ShellSnapshot } from '@dltech/atlas-harness'
 
 import { DEFAULT_CREW_CAP } from '../store/crew-fold'
@@ -91,14 +91,18 @@ function useShellSnapshots(read: () => ShellLists): ShellLists {
    */
   useEffect(() => {
     const poll = (): void =>
-      setLists((current) => {
-        const latest = read()
-        const own = keptIfSame(current.own, latest.own)
-        const everywhere = keptIfSame(current.everywhere, latest.everywhere)
+      measurePerf({
+        key: EPerfCounter.PollShellsMs,
+        run: () =>
+          setLists((current) => {
+            const latest = read()
+            const own = keptIfSame(current.own, latest.own)
+            const everywhere = keptIfSame(current.everywhere, latest.everywhere)
 
-        return own === current.own && everywhere === current.everywhere
-          ? current
-          : { own, everywhere }
+            return own === current.own && everywhere === current.everywhere
+              ? current
+              : { own, everywhere }
+          }),
       })
 
     poll()

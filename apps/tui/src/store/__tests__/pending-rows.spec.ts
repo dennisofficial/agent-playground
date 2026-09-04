@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EAgentStatus, EKilledBy, EServiceStatus, EShellStatus, toThreadId } from '@dltech/atlas-core'
-import { toShellId, type AgentSnapshot, type ServiceSnapshot, type ShellSnapshot } from '@dltech/atlas-harness'
+import {
+  ENotice,
+  toShellId,
+  type AgentSnapshot,
+  type PendingShellNotice,
+  type ServiceSnapshot,
+  type ShellSnapshot,
+} from '@dltech/atlas-harness'
 
 import { EPendingKind, pendingRows } from '../pending-rows'
 
@@ -35,6 +42,11 @@ const snapshot = (over: Partial<ShellSnapshot> = {}): ShellSnapshot =>
     ...over,
   }) as ShellSnapshot
 
+const notice = (
+  over: Partial<ShellSnapshot> = {},
+  kind: ENotice = ENotice.Ended,
+): PendingShellNotice => ({ kind, snapshot: snapshot(over) })
+
 const child = (over: Partial<AgentSnapshot> = {}): AgentSnapshot => ({
   agentId: toThreadId('thread-child'),
   spawnedBy: toThreadId('thread-parent'),
@@ -57,7 +69,7 @@ describe('what waits under the working indicator', () => {
   it('queues a shell ending behind the messages a human typed', () => {
     const rows = pendingRows({
       messages: [typed('p1', 'and the fixtures')],
-      notices: [snapshot()],
+      notices: [notice()],
       agents: [],
       services: [],
     })
@@ -69,7 +81,7 @@ describe('what waits under the working indicator', () => {
   })
 
   it('reads a queued ending the same way the transcript will', () => {
-    const rows = pendingRows({ messages: [], notices: [snapshot()], agents: [], services: [] })
+    const rows = pendingRows({ messages: [], notices: [notice()], agents: [], services: [] })
 
     expect(rows[0]).toEqual({
       kind: EPendingKind.BackgroundShell,
@@ -80,7 +92,7 @@ describe('what waits under the working indicator', () => {
   })
 
   it('carries no take-back or taken flag, because nobody sent it', () => {
-    const row = pendingRows({ messages: [], notices: [snapshot()], agents: [], services: [] })[0]
+    const row = pendingRows({ messages: [], notices: [notice()], agents: [], services: [] })[0]
 
     expect(row === undefined ? null : 'taken' in row).toBe(false)
   })
@@ -88,7 +100,7 @@ describe('what waits under the working indicator', () => {
   it('marks a failure so the queued line is not read as good news', () => {
     const rows = pendingRows({
       messages: [],
-      notices: [snapshot({ exitCode: 2 })],
+      notices: [notice({ exitCode: 2 })],
       agents: [],
       services: [],
     })
@@ -99,7 +111,7 @@ describe('what waits under the working indicator', () => {
   it('queues a sub-agent ending behind the shells and the messages alike', () => {
     const rows = pendingRows({
       messages: [typed('p1', 'and the fixtures')],
-      notices: [snapshot()],
+      notices: [notice()],
       agents: [child()],
       services: [],
     })
@@ -154,12 +166,44 @@ describe('what waits under the working indicator', () => {
   it('keys each ending by its shell, so two waiting endings stay distinct', () => {
     const rows = pendingRows({
       messages: [],
-      notices: [snapshot(), snapshot({ shellId: toShellId('bash_2'), description: 'Watch the docs' })],
+      notices: [notice(), notice({ shellId: toShellId('bash_2'), description: 'Watch the docs' })],
       agents: [],
       services: [],
     })
 
     expect(rows.map((row) => row.id)).toEqual(['shell-ended-bash_1', 'shell-ended-bash_2'])
+  })
+
+  it('reads a queued check-in as a shell still running, never as a prompt to answer', () => {
+    const rows = pendingRows({
+      messages: [],
+      notices: [notice({ status: EShellStatus.Running }, ENotice.StillRunning)],
+      agents: [],
+      services: [],
+    })
+
+    expect(rows[0]).toEqual({
+      kind: EPendingKind.BackgroundShell,
+      id: 'shell-still-running-bash_1',
+      text: 'Background shell "Run full TUI suite" is still running - a scheduled check-in, not an ending',
+      failed: false,
+    })
+  })
+
+  it('reads a queued watch match as progress, not as a prompt to answer', () => {
+    const rows = pendingRows({
+      messages: [],
+      notices: [notice({ status: EShellStatus.Running }, ENotice.Matched)],
+      agents: [],
+      services: [],
+    })
+
+    expect(rows[0]).toEqual({
+      kind: EPendingKind.BackgroundShell,
+      id: 'shell-matched-bash_1',
+      text: 'Background shell "Run full TUI suite" matched its watch and is still running',
+      failed: false,
+    })
   })
 
   it('queues a service ending behind everything else and reads it the way the transcript will', () => {

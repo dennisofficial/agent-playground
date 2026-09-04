@@ -1,14 +1,21 @@
 import {
+  ENotice,
   EShellStatus,
   type AgentSnapshot,
+  type PendingShellNotice,
   type ServiceSnapshot,
-  type ShellSnapshot,
 } from '@dltech/atlas-harness'
 
 import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
 import type { PendingMessage } from './pending-queue'
 import { serviceEndedLine, serviceEndingFailed } from './service-ended-line'
-import { shellAwaitingInputLine, shellEndedLine, shellEndingFailed } from './shell-ended-line'
+import {
+  shellAwaitingInputLine,
+  shellEndedLine,
+  shellEndingFailed,
+  shellMatchedNoticeLine,
+  shellStillRunningLine,
+} from './shell-ended-line'
 
 export enum EPendingKind {
   Operator = 'operator',
@@ -30,24 +37,45 @@ const NOTHING_PENDING: readonly PendingRow[] = Object.freeze([])
  * cannot be edited or taken back, and the take-back affordance must never land on it.
  */
 /**
- * A notice queued while the shell is still running is a prompt it cannot be answered out of, not
- * an ending: reading it as one would announce that a shell nobody stopped had finished.
+ * A notice queued while the shell is still running is a prompt it cannot be answered out of, or a
+ * check-in that needs no answer at all - never an ending: reading one as one would announce that a
+ * shell nobody stopped had finished.
  */
-function pendingShellRow(notice: ShellSnapshot): PendingRow {
-  if (notice.status === EShellStatus.Running) {
+function pendingShellRow(notice: PendingShellNotice): PendingRow {
+  const { snapshot } = notice
+
+  if (notice.kind === ENotice.StillRunning) {
     return {
       kind: EPendingKind.BackgroundShell,
-      id: `shell-awaiting-${notice.shellId}`,
-      text: shellAwaitingInputLine(notice),
+      id: `shell-still-running-${snapshot.shellId}`,
+      text: shellStillRunningLine(snapshot),
+      failed: false,
+    }
+  }
+
+  if (notice.kind === ENotice.Matched) {
+    return {
+      kind: EPendingKind.BackgroundShell,
+      id: `shell-matched-${snapshot.shellId}`,
+      text: shellMatchedNoticeLine(snapshot),
+      failed: false,
+    }
+  }
+
+  if (snapshot.status === EShellStatus.Running) {
+    return {
+      kind: EPendingKind.BackgroundShell,
+      id: `shell-awaiting-${snapshot.shellId}`,
+      text: shellAwaitingInputLine(snapshot),
       failed: true,
     }
   }
 
   return {
     kind: EPendingKind.BackgroundShell,
-    id: `shell-ended-${notice.shellId}`,
-    text: shellEndedLine(notice),
-    failed: shellEndingFailed(notice),
+    id: `shell-ended-${snapshot.shellId}`,
+    text: shellEndedLine(snapshot),
+    failed: shellEndingFailed(snapshot),
   }
 }
 
@@ -71,7 +99,7 @@ function pendingServiceRow(notice: ServiceSnapshot): PendingRow {
 
 export function pendingRows(args: {
   messages: readonly PendingMessage[]
-  notices: readonly ShellSnapshot[]
+  notices: readonly PendingShellNotice[]
   agents: readonly AgentSnapshot[]
   services: readonly ServiceSnapshot[]
 }): readonly PendingRow[] {

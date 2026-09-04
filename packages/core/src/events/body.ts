@@ -76,6 +76,13 @@ export type EventBody =
     }
   | { type: 'worktree-exited'; path: string; action: EWorktreeExit; returnTo?: string | undefined }
   | {
+      type: 'pull-request-linked'
+      number: number
+      url: string
+      repo: string
+      branch: string
+    }
+  | {
       type: 'background-shell-ended'
       shellId: string
       command: string
@@ -105,6 +112,16 @@ export type EventBody =
       lines: string
       matchCount: number
       watchDisarmed?: boolean | undefined
+    }
+  | {
+      type: 'background-shell-still-running'
+      shellId: string
+      command: string
+      description?: string | undefined
+      runningForMs: number
+      silentForMs: number
+      checkInMs: number
+      tail: string
     }
   | {
       type: 'service-ended'
@@ -187,6 +204,7 @@ export const SURVIVES_SUMMARY: readonly EventType[] = [
   'context-loaded',
   'permission-granted',
   'permission-revoked',
+  'pull-request-linked',
 ]
 
 export const survivesSummary = (type: EventType): boolean => SURVIVES_SUMMARY.includes(type)

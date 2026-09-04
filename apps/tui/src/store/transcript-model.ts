@@ -17,6 +17,7 @@ export enum EEntryKind {
   BackgroundShellEnded = 'background-shell-ended',
   BackgroundShellAwaitingInput = 'background-shell-awaiting-input',
   BackgroundShellMatched = 'background-shell-matched',
+  BackgroundShellStillRunning = 'background-shell-still-running',
   ServiceEnded = 'service-ended',
   AgentEnded = 'agent-ended',
   TldrWritten = 'tldr-written',
@@ -110,6 +111,15 @@ export type BackgroundShellMatchedEntry = {
   output: string
 }
 
+export type BackgroundShellStillRunningEntry = {
+  kind: EEntryKind.BackgroundShellStillRunning
+  author: EAuthor.Model
+  key: string
+  text: string
+  shellId: string
+  output: string
+}
+
 export type ServiceEndedEntry = {
   kind: EEntryKind.ServiceEnded
   author: EAuthor.Model
@@ -161,6 +171,7 @@ export type TranscriptEntry =
   | BackgroundShellEndedEntry
   | BackgroundShellAwaitingInputEntry
   | BackgroundShellMatchedEntry
+  | BackgroundShellStillRunningEntry
   | ServiceEndedEntry
   | AgentEndedEntry
   | TldrWrittenEntry

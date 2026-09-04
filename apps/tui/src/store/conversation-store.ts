@@ -1,4 +1,10 @@
-import type { ThreadId, Event } from "@dltech/atlas-core";
+import {
+  addPerfCounter,
+  EPerfCounter,
+  measurePerf,
+  type ThreadId,
+  type Event,
+} from "@dltech/atlas-core";
 import type {
   ChannelSignal,
   DeltaChannel,
@@ -157,24 +163,30 @@ export function createConversationStore(args: {
   };
 
   const republish = () => {
-    tracker.pruneSuperseded(events);
-    model = settled(
-      assembleTranscript({
-        durable: durableNow(),
-        live: tracker.live(events),
-        reveal: gate,
-        thinking,
-        pendingTldr,
-        tldrStatus,
-      }),
-    )
-    const nextSidebar = sidebarNow()
-    if (!sameSidebar(sidebar, nextSidebar)) sidebar = nextSidebar
-    if (projected !== events) {
-      args.projectEvents?.({ events });
-      projected = events;
-    }
-    wake();
+    addPerfCounter({ key: EPerfCounter.TranscriptRepublish });
+    measurePerf({
+      key: EPerfCounter.RepublishMs,
+      run: () => {
+        tracker.pruneSuperseded(events);
+        model = settled(
+          assembleTranscript({
+            durable: durableNow(),
+            live: tracker.live(events),
+            reveal: gate,
+            thinking,
+            pendingTldr,
+            tldrStatus,
+          }),
+        )
+        const nextSidebar = sidebarNow()
+        if (!sameSidebar(sidebar, nextSidebar)) sidebar = nextSidebar
+        if (projected !== events) {
+          args.projectEvents?.({ events });
+          projected = events;
+        }
+        wake();
+      },
+    });
   };
 
   const scheduleFrame = () => {
@@ -199,6 +211,7 @@ export function createConversationStore(args: {
     }
 
     tracker.absorb(signal);
+    if (signal.type === "chunk") addPerfCounter({ key: EPerfCounter.ChannelChunk });
 
     if (!paceReveal || signal.type !== "chunk") {
       gate = null;

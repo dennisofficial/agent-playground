@@ -1,3 +1,5 @@
+import type { LinkedPullRequest } from '@dltech/atlas-core'
+
 export const THREAD_ROWS = 8
 
 export const UNTITLED_LABEL = 'untitled'
@@ -7,7 +9,11 @@ export type ThreadListing = {
   title?: string | undefined
   updatedAt: string
   agent?: { spawnedBy: string; type: string } | undefined
+  worktree?: { path: string; branch: string } | undefined
+  pullRequests?: readonly LinkedPullRequest[] | undefined
 }
+
+export type ThreadChip = { label: string; ground: string; ink: string }
 
 export type ThreadRow = {
   threadId: string
@@ -15,6 +21,9 @@ export type ThreadRow = {
   titled: boolean
   updatedAt: string
   active: boolean
+  worktree?: { path: string; branch: string } | undefined
+  pullRequests?: readonly LinkedPullRequest[] | undefined
+  chips?: readonly ThreadChip[] | undefined
 }
 
 export type ThreadsState = {
@@ -65,6 +74,8 @@ export function threadRows(args: {
       titled: thread.title !== undefined && thread.title.length > 0,
       updatedAt: thread.updatedAt,
       active: thread.id === args.activeThreadId,
+      ...(thread.worktree === undefined ? {} : { worktree: thread.worktree }),
+      ...(thread.pullRequests === undefined ? {} : { pullRequests: thread.pullRequests }),
     }))
 }
 
@@ -92,6 +103,60 @@ export function withThreads(args: {
   const next = { ...args.state, rows: args.rows, loading: false, failure: null }
 
   return { ...next, index: clamped({ value: active, count: matchingThreads(next).length }) }
+}
+
+/**
+ * Badges land after the rows do — the listing is a local read, a pull request is a network call —
+ * so they attach in a second pass keyed by thread. Rows a badge says nothing about keep their
+ * identity, and the selection is untouched because the row count cannot change here.
+ */
+export function withChips(args: {
+  state: ThreadsState
+  chips: ReadonlyMap<string, readonly ThreadChip[]>
+}): ThreadsState {
+  if (args.chips.size === 0) return args.state
+
+  return {
+    ...args.state,
+    rows: args.state.rows.map((row) => {
+      const chips = args.chips.get(row.threadId)
+      return chips === undefined || chips.length === 0 ? row : { ...row, chips }
+    }),
+  }
+}
+
+const CHIP_PAD = 2
+
+const CHIP_GAP = 2
+
+const chipCells = (chip: ThreadChip): number => chip.label.length + CHIP_PAD
+
+const rowOf = (chips: readonly ThreadChip[]): number =>
+  chips.reduce((total, chip, index) => total + chipCells(chip) + (index === 0 ? 0 : CHIP_GAP), 0)
+
+const overflowCells = (count: number): number => `+${count}`.length + CHIP_PAD
+
+/**
+ * As many chips as the row can hold, then a `+N` counting the rest. The counter stands in for
+ * chips the width denied, so it must fit where they could not: it is tried at every cut rather
+ * than assumed.
+ */
+export function visibleChips(args: {
+  chips: readonly ThreadChip[]
+  cells: number
+}): { shown: readonly ThreadChip[]; overflow: number } {
+  const { chips, cells } = args
+  if (rowOf(chips) <= cells) return { shown: chips, overflow: 0 }
+
+  for (let keep = chips.length - 1; keep >= 0; keep -= 1) {
+    const shown = chips.slice(0, keep)
+    const gap = shown.length === 0 ? 0 : CHIP_GAP
+    if (rowOf(shown) + gap + overflowCells(chips.length - keep) <= cells) {
+      return { shown, overflow: chips.length - keep }
+    }
+  }
+
+  return { shown: [], overflow: chips.length }
 }
 
 export function failedToList(args: { state: ThreadsState; reason: string }): ThreadsState {

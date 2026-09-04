@@ -37,8 +37,10 @@ export function TldrBlock(props: {
 
   const heading = generating ? GENERATING : HEADING
   const chip = status === null ? '' : ` ${status} `
-  const room = Math.max(0, inner - heading.length - chip.length - (generating ? 3 : 1))
-  const before = Math.floor(room / 2)
+  const prefixWidth = (generating ? 2 : 0) + heading.length + 1
+  const chipStart = Math.floor((inner - chip.length) / 2)
+  const before = Math.max(0, chipStart - prefixWidth)
+  const after = Math.max(0, inner - prefixWidth - before - chip.length)
 
   return (
     <box flexDirection="column" marginBottom={1} flexShrink={0}>
@@ -54,7 +56,7 @@ export function TldrBlock(props: {
             {chip}
           </span>
         )}
-        <span fg={theme.rule}>{RULE_CHARACTER.repeat(room - before)}</span>
+        <span fg={theme.rule}>{RULE_CHARACTER.repeat(after)}</span>
       </text>
       {props.text.trim() === '' ? null : (
         <box flexDirection="column" width={inner} flexShrink={0} paddingLeft={BODY_INDENT}>

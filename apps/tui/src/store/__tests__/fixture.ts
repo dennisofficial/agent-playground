@@ -100,6 +100,7 @@ export const fromTheModel = (model: TranscriptModel) =>
       | { kind: EEntryKind.BackgroundShellEnded }
       | { kind: EEntryKind.BackgroundShellAwaitingInput }
       | { kind: EEntryKind.BackgroundShellMatched }
+      | { kind: EEntryKind.BackgroundShellStillRunning }
       | { kind: EEntryKind.ServiceEnded }
       | { kind: EEntryKind.AgentEnded }
       | { kind: EEntryKind.TldrWritten }
@@ -110,6 +111,7 @@ export const fromTheModel = (model: TranscriptModel) =>
       entry.kind !== EEntryKind.BackgroundShellEnded &&
       entry.kind !== EEntryKind.BackgroundShellAwaitingInput &&
       entry.kind !== EEntryKind.BackgroundShellMatched &&
+      entry.kind !== EEntryKind.BackgroundShellStillRunning &&
       entry.kind !== EEntryKind.ServiceEnded &&
       entry.kind !== EEntryKind.AgentEnded &&
       entry.kind !== EEntryKind.TldrWritten &&

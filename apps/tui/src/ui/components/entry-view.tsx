@@ -129,6 +129,20 @@ function DerivedEntryView(props: {
         />
       )
 
+    case EEntryKind.BackgroundShellStillRunning:
+      return (
+        <NoticeBlock
+          text={entry.text}
+          body={entry.output}
+          failed={false}
+          width={props.width}
+          openHint={SHELL_OUTPUT_HINT}
+          silentNote={PRINTED_NOTHING}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
+        />
+      )
+
     case EEntryKind.BackgroundShellEnded:
       return (
         <NoticeBlock

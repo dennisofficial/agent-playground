@@ -10,13 +10,20 @@ import { ESpawnFailure, spawnCommand, type CommandRunner } from './run-command'
 
 export const GH_TIMEOUT_MS = 10_000
 
-export const GH_PULL_REQUEST_ARGV = [
+const GH_VIEW_FIELDS = 'number,state,isDraft,url,statusCheckRollup,title'
+
+export const GH_PULL_REQUEST_ARGV = ['gh', 'pr', 'view', '--json', GH_VIEW_FIELDS] as const
+
+const linkedArgv = (args: { repo: string; number: number }): readonly string[] => [
   'gh',
   'pr',
   'view',
+  String(args.number),
+  '--repo',
+  args.repo,
   '--json',
-  'number,state,isDraft,url,statusCheckRollup,title',
-] as const
+  GH_VIEW_FIELDS,
+]
 
 /** `gh help exit-codes`: 0 ok, 1 error, 2 cancelled, 4 authentication required. */
 const GH_AUTH_REQUIRED = 4
@@ -43,13 +50,8 @@ const jsonOf = (text: string): unknown => {
  * "there is no pull request" would be a claim this port cannot make, and `Absent` would also buy a
  * five-minute poll on a repository that can never answer.
  *
- * Never `--repo` and never a branch argument: `gh pr view` with no argument resolves the pull
- * request for the checkout's current branch through its remote-tracking config, which is what makes
- * it right in a fork whose head repository is not `origin`. The probed branch keys the cache, not
- * the call.
- *
  * A pill is decoration: losing one must never take a turn, or opening a thread, down. Nothing
- * throws out of `read`.
+ * throws out of `read` or `readLinked`.
  */
 export class GhPullRequestPort extends PullRequestPort {
   readonly pushes = false
@@ -62,13 +64,42 @@ export class GhPullRequestPort extends PullRequestPort {
     this.run = args?.run ?? spawnCommand
   }
 
+  /**
+   * Never `--repo` and never a branch argument: `gh pr view` with no argument resolves the pull
+   * request for the checkout's current branch through its remote-tracking config, which is what
+   * makes it right in a fork whose head repository is not `origin`. The probed branch keys the
+   * cache, not the call.
+   */
   async read({ checkout }: { checkout: RepositoryCheckout }): Promise<PullRequestReading> {
-    if (!this.installed) return unavailable(false)
     if (checkout.forge === EForge.Other) return unavailable(false)
 
+    return this.ask({ argv: GH_PULL_REQUEST_ARGV, cwd: checkout.directory })
+  }
+
+  /**
+   * `gh pr view <number> --repo HOST/OWNER/REPO` needs no checkout at all, which is the point: a
+   * linked pull request's worktree may be gone. `Bun.spawn` still wants a directory to start in,
+   * so the process's own stands in — gh never consults it once `--repo` is given.
+   */
+  async readLinked({
+    repo,
+    number,
+  }: {
+    repo: string
+    number: number
+  }): Promise<PullRequestReading> {
+    return this.ask({ argv: linkedArgv({ repo, number }), cwd: process.cwd() })
+  }
+
+  private async ask(request: {
+    argv: readonly string[]
+    cwd: string
+  }): Promise<PullRequestReading> {
+    if (!this.installed) return unavailable(false)
+
     const run = await this.run({
-      argv: GH_PULL_REQUEST_ARGV,
-      cwd: checkout.directory,
+      argv: request.argv,
+      cwd: request.cwd,
       timeoutMs: GH_TIMEOUT_MS,
     })
 

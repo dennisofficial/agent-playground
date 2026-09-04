@@ -18,7 +18,7 @@ const PILL = '1 shell'
 
 const SHELLS_OVERLAY = 'SHELL LOG'
 
-const TOO_NARROW_FOR_A_PILL = 40
+const TOO_NARROW_FOR_A_PILL = 36
 
 const running = (shellId: string): ShellSnapshot => ({
   command: 'bun run dev',

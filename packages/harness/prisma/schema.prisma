@@ -61,6 +61,27 @@ model Event {
   @@index([threadId, type])
 }
 
+model PerfSample {
+  id         String  @id
+  pid        Int
+  bootedAt   String
+  workspace  String?
+  startedAt  String
+  endedAt    String
+  cpuUserMs  Int
+  cpuSysMs   Int
+  lagP50Ms   Float
+  lagP95Ms   Float
+  lagMaxMs   Float
+  rssMb      Int
+  heapMb     Int
+  turnActive Boolean
+  counters   String
+
+  @@index([pid, startedAt])
+  @@index([startedAt])
+}
+
 model Turn {
   runId            String @id
   threadId         String

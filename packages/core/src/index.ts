@@ -73,6 +73,7 @@ export * from './context/supersede'
 
 
 export * from './workspace/worktree'
+export * from './workspace/pull-requests'
 export * from './workspace/worktree-lock'
 export * from './workspace/identity'
 export * from './workspace/atlas-home'
@@ -85,6 +86,7 @@ export * from './agents/roster'
 export * from './shells/status'
 export * from './shells/label'
 export * from './shells/idling'
+export * from './shells/elapsed'
 export * from './services/status'
 export * from './services/lifecycle'
 
@@ -186,6 +188,8 @@ export * from './version/semver'
 export * from './secrets/mask'
 export * from './secrets/prompt'
 
+export * from './perf/counters'
+export * from './perf/keys'
 export * from './notices/notice'
 export * from './notices/queue'
 

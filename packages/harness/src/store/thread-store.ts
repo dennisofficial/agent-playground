@@ -8,6 +8,7 @@ import {
   type ThreadId,
   type Event,
   type EventEnvelope,
+  type LinkedPullRequest,
 } from '@dltech/atlas-core'
 
 import type { Prisma, PrismaClient } from '../../prisma/generated/client'
@@ -16,6 +17,7 @@ import { createThreadWithEvents, type OpenThreadArgs } from './create-with-event
 import { toEventRow } from './event-row'
 import { forkThread } from './fork'
 import { retryOnWriteConflict } from './retry'
+import { threadPullRequests, threadWorktree, type ThreadWorktree } from './thread-places'
 
 export type SupervisedAgent = { spawnedBy: ThreadId; type: string }
 
@@ -33,6 +35,10 @@ export type ThreadSummary = {
   workspace: string | null
   repo: string | null
   model?: ThreadModel | undefined
+  /** Set only by `list`, the one read whose caller is picking between threads rather than opening one. */
+  worktree?: ThreadWorktree | undefined
+  /** Set only by `list`, alongside `worktree`; absent when the thread never linked a pull request. */
+  pullRequests?: LinkedPullRequest[] | undefined
 }
 
 export const THREAD_LISTING_LIMIT = 50
@@ -179,7 +185,20 @@ export class PrismaThreadStore implements ThreadStorePort {
       orderBy: { updatedAt: 'desc' },
       take: limit,
     })
-    return rows.map(toThreadSummary)
+    return Promise.all(
+      rows.map(async (row) => {
+        const threadId = toThreadId(row.id)
+        const [worktree, pullRequests] = await Promise.all([
+          threadWorktree({ prisma: this.prisma, threadId }),
+          threadPullRequests({ prisma: this.prisma, threadId }),
+        ])
+        return {
+          ...toThreadSummary(row),
+          ...(worktree === null ? {} : { worktree }),
+          ...(pullRequests.length === 0 ? {} : { pullRequests }),
+        }
+      }),
+    )
   }
 
   async rename({ threadId, title }: { threadId: ThreadId; title: string }): Promise<void> {

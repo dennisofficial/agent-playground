@@ -7,7 +7,7 @@ import { cellsOf, HINT_SEPARATOR } from './hint-layout'
 import { formatTokens, glyph } from './theme'
 import type { FooterMeter } from './usage-meters'
 
-export const FOOTER_GUTTER = 3
+export const FOOTER_GUTTER = 1
 
 export type FooterEffort = EEffort
 

@@ -1,5 +1,5 @@
 import type { ThreadId } from '@dltech/atlas-core'
-import type { ShellRegistryPort, ShellSnapshot } from '@dltech/atlas-harness'
+import type { PendingShellNotice, ShellRegistryPort } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 
 /**
@@ -19,7 +19,7 @@ export function useShellWake(args: {
   working: boolean
   canWake: boolean
   onWake: () => void
-}): readonly ShellSnapshot[] {
+}): readonly PendingShellNotice[] {
   const { shells, threadId, working, canWake, onWake } = args
 
   const subscribe = useCallback((listener: () => void) => shells.onNotice(listener), [shells])
@@ -35,7 +35,7 @@ export function useShellWake(args: {
     }
     if (working || !canWake) return
 
-    const witness = notices.map((notice) => notice.shellId).join(' ')
+    const witness = notices.map((notice) => `${notice.kind}:${notice.snapshot.shellId}`).join(' ')
     if (woken.current === witness) return
 
     woken.current = witness

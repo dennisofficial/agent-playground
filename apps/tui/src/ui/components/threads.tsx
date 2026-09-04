@@ -8,16 +8,18 @@ import {
   threadAge,
   threadsWindow,
   THREAD_ROWS,
+  visibleChips,
   type ThreadRow,
   type ThreadsState,
 } from '../threads-model'
 import {
+  BottomDrawer,
   drawerCells,
+  DrawerGap,
   DrawerHeading,
   DrawerHints,
   DrawerLine,
   DRAWER_INSET,
-  SideDrawer,
 } from './drawer'
 import { clipSpans, spanCells } from './sidebar/cells'
 import { Spans, type Span } from './spans'
@@ -33,6 +35,10 @@ export const NO_THREADS = 'No other conversations here yet.'
 export const NO_MATCHES = 'Nothing matches that.'
 
 export const CURRENT_LABEL = '(current)'
+
+export const MAIN_LABEL = `${glyph.home} main`
+
+const GUTTER = ' '.repeat(2)
 
 const HINTS: readonly Hint[] = [
   { key: '↑↓', label: 'pick' },
@@ -62,7 +68,7 @@ function ThreadLine(props: {
   now: number
   press: PressHandlers
 }): React.ReactNode {
-  const band = props.selected ? { band: theme.hoverBg } : {}
+  const band = props.selected ? theme.hoverBg : undefined
   const age = threadAge({ updatedAt: props.row.updatedAt, now: props.now })
   const trailing = props.row.active ? CURRENT_LABEL : age
 
@@ -79,17 +85,59 @@ function ThreadLine(props: {
   const right: Span = { text: trailing, fg: theme.hint }
   const gap = Math.max(1, props.cells - spanCells([mark, label, right]))
 
+  const place: Span = {
+    text:
+      props.row.worktree === undefined
+        ? MAIN_LABEL
+        : `${glyph.worktree} ${props.row.worktree.branch}`,
+    fg: theme.hint,
+  }
+
+  const chips = props.row.chips ?? []
+  const placeSpans: Span[] = [{ text: GUTTER }, place]
+  const budget = Math.max(0, props.cells - spanCells(placeSpans) - (chips.length === 0 ? 0 : 2))
+  const visible = visibleChips({ chips, cells: budget })
+
+  const chipSpans: Span[] = visible.shown.flatMap((chip, index) => [
+    { text: '  ' },
+    { text: ` ${chip.label} `, fg: chip.ink, bg: chip.ground } as Span,
+    ...(index === visible.shown.length - 1 && visible.overflow > 0
+      ? [{ text: '  ' }, { text: `+${visible.overflow}`, fg: theme.hint } as Span]
+      : []),
+  ])
+  if (visible.shown.length === 0 && visible.overflow > 0) {
+    chipSpans.push({ text: '  ' }, { text: `+${visible.overflow}`, fg: theme.hint })
+  }
+
   return (
-    <DrawerLine {...band} press={props.press}>
-      <text>
-        <Spans
-          spans={clipSpans({
-            spans: [mark, label, { text: ' '.repeat(gap), fg: theme.hint }, right],
-            cells: props.cells,
-          })}
-        />
-      </text>
-    </DrawerLine>
+    <box flexDirection="column" flexShrink={0}>
+      <DrawerLine
+        press={props.press}
+        {...(band === undefined ? {} : { band })}
+      >
+        <text>
+          <Spans
+            spans={clipSpans({
+              spans: [mark, label, { text: ' '.repeat(gap) }, right],
+              cells: props.cells,
+            })}
+          />
+        </text>
+      </DrawerLine>
+      <DrawerLine
+        press={props.press}
+        {...(band === undefined ? {} : { band })}
+      >
+        <text>
+          <Spans
+            spans={clipSpans({
+              spans: [...placeSpans, ...chipSpans],
+              cells: props.cells,
+            })}
+          />
+        </text>
+      </DrawerLine>
+    </box>
   )
 }
 
@@ -108,8 +156,7 @@ export function Threads(props: {
   const filteredOut = !empty && matchingThreads(state).length === 0
 
   return (
-    <SideDrawer
-      width={props.width}
+    <BottomDrawer
       overlay={props.overlay === true}
       footer={<DrawerHints hints={HINTS} cells={cells} onDismiss={props.onDismiss} />}
     >
@@ -124,6 +171,7 @@ export function Threads(props: {
           ]}
           cells={cells}
         />
+        <DrawerGap />
         {state.loading ? (
           <TextLine spans={[{ text: 'listing…', fg: theme.hint }]} cells={cells} />
         ) : null}
@@ -149,10 +197,11 @@ export function Threads(props: {
         {filteredOut ? (
           <TextLine spans={[{ text: NO_MATCHES, fg: theme.hint }]} cells={cells} />
         ) : null}
+        <DrawerGap />
       </box>
       {state.failure === null ? null : (
         <TextLine spans={[{ text: state.failure, fg: theme.warn }]} cells={cells} />
       )}
-    </SideDrawer>
+    </BottomDrawer>
   )
 }

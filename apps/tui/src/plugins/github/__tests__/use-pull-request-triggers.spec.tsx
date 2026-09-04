@@ -32,6 +32,9 @@ const absentPort = (): PullRequestPort =>
     async read(): Promise<PullRequestReading> {
       return { lookup: EPullRequestLookup.Absent }
     }
+    async readLinked(): Promise<PullRequestReading> {
+      return { lookup: EPullRequestLookup.Absent }
+    }
   })()
 
 type Tracked = { directories: string[]; stops: number }
@@ -86,11 +89,12 @@ function Watcher(props: {
     service: props.service,
     projectDirectory: directory,
     working,
+    linked: [],
     onOpen: NEVER,
     probe: props.askGit,
   })
 
-  return <text>{props.probe.control.badge?.label ?? 'no pull request'}</text>
+  return <text>{props.probe.control.footer?.label ?? 'no pull request'}</text>
 }
 
 async function mounted(args: { askGit: CheckoutProbe; directory?: string }): Promise<{
@@ -204,7 +208,7 @@ describe('what makes usePullRequest ask git again', () => {
     try {
       expect(tracked.directories).toEqual([])
       expect(tracked.stops).toBeGreaterThan(0)
-      expect(probe.control?.badge).toBeNull()
+      expect(probe.control?.footer).toBeNull()
     } finally {
       await done()
     }

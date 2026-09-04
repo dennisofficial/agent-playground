@@ -1,14 +1,16 @@
+import type { LinkedPullRequest } from '@dltech/atlas-core'
+
 import {
   checkoutKey,
   EPollDecision,
   EPullRequestLookup,
-  NO_PULL_REQUEST_READING,
   POLL_FLOOR_MS,
   pollDecision,
   type PullRequestPort,
   type PullRequestReading,
   type RepositoryCheckout,
 } from './pure'
+import { createPullRequestReadings } from './pull-request-readings'
 
 export const PULL_REQUEST_TICK_MS = 5_000
 
@@ -26,33 +28,27 @@ export type PullRequestService = {
   subscribe: (listener: () => void) => () => void
   track: (args: { checkout: RepositoryCheckout }) => void
   stopTracking: () => void
+  watch: (args: { links: readonly LinkedPullRequest[] }) => void
+  current: () => { checkout: RepositoryCheckout; reading: PullRequestReading } | null
   expectChecks: () => void
   recheck: () => void
   refresh: (args: { checkout: RepositoryCheckout; force?: boolean }) => Promise<void>
   dispose: () => void
 }
 
-const sameReading = (left: PullRequestReading, right: PullRequestReading): boolean => {
-  if (left.lookup !== EPullRequestLookup.Found || right.lookup !== EPullRequestLookup.Found) {
-    return left.lookup === right.lookup
-  }
-
-  return (
-    left.pullRequest.number === right.pullRequest.number &&
-    left.pullRequest.state === right.pullRequest.state &&
-    left.pullRequest.checks === right.pullRequest.checks &&
-    left.pullRequest.title === right.pullRequest.title &&
-    left.pullRequest.url === right.pullRequest.url &&
-    left.pullRequest.tally.running === right.pullRequest.tally.running &&
-    left.pullRequest.tally.passed === right.pullRequest.tally.passed &&
-    left.pullRequest.tally.failed === right.pullRequest.tally.failed
-  )
-}
+type PullTarget =
+  | { kind: 'checkout'; checkout: RepositoryCheckout }
+  | { kind: 'link'; link: LinkedPullRequest }
 
 const CANNOT_ASK: PullRequestReading = {
   lookup: EPullRequestLookup.Unavailable,
   retryable: true,
 }
+
+const linkKey = (link: { repo: string; number: number }): string => `${link.repo}#${link.number}`
+
+const keyOf = (target: PullTarget): string =>
+  target.kind === 'checkout' ? checkoutKey(target.checkout) : linkKey(target.link)
 
 export function createPullRequestService(args: {
   pullRequests: PullRequestPort
@@ -67,13 +63,11 @@ export function createPullRequestService(args: {
   const expectingMs = args.expectingMs ?? EXPECTING_CHECKS_MS
 
   const listeners = new Set<() => void>()
-  const answers = new Map<string, PullRequestReading>()
-  const shown = new Map<string, PullRequestReading>()
-  const askedAt = new Map<string, number>()
-  const failures = new Map<string, number>()
   const inFlight = new Map<string, Promise<void>>()
+  const watched = new Map<string, LinkedPullRequest>()
 
   let tracked: RepositoryCheckout | null = null
+  let following = false
   let expectingUntil: number | null = null
   let version = 0
   let timer: ReturnType<typeof setInterval> | null = null
@@ -84,85 +78,60 @@ export function createPullRequestService(args: {
     for (const listener of listeners) listener()
   }
 
-  const forget = (key: string): void => {
-    answers.delete(key)
-    shown.delete(key)
-    askedAt.delete(key)
-    failures.delete(key)
-  }
-
-  /**
-   * A reading we could not take must not blank a pill that was right a minute ago, so the schedule
-   * remembers the failure while the screen keeps the last pull request it actually saw.
-   */
-  const record = (request: { key: string; reading: PullRequestReading }): void => {
-    const { key, reading } = request
-    answers.set(key, reading)
-
-    const unavailable = reading.lookup === EPullRequestLookup.Unavailable
-    failures.set(key, unavailable && reading.retryable ? (failures.get(key) ?? 0) + 1 : 0)
-
-    const previous = shown.get(key)
-    const next =
-      unavailable && previous !== undefined && previous.lookup === EPullRequestLookup.Found
-        ? previous
-        : reading
-    if (previous !== undefined && sameReading(previous, next)) return
-
-    shown.set(key, next)
-    notify()
-  }
+  const readings = createPullRequestReadings({ notify })
 
   /**
    * A port is allowed to reject — a pushing one loses its socket by throwing — and a rejection that
    * escaped here would leave the failure uncounted, so the backoff would never start and the tick
    * would ask again every floor.
    */
-  const readingOf = async (checkout: RepositoryCheckout): Promise<PullRequestReading> => {
+  const readingOf = async (target: PullTarget): Promise<PullRequestReading> => {
     try {
-      return await args.pullRequests.read({ checkout })
+      return target.kind === 'checkout'
+        ? await args.pullRequests.read({ checkout: target.checkout })
+        : await args.pullRequests.readLinked({
+            repo: target.link.repo,
+            number: target.link.number,
+          })
     } catch {
       return CANNOT_ASK
     }
   }
 
-  const ask = async (request: { key: string; checkout: RepositoryCheckout }): Promise<void> => {
-    askedAt.set(request.key, now())
+  const ask = async (request: { key: string; target: PullTarget }): Promise<void> => {
+    readings.markAsked({ key: request.key, at: now() })
     try {
-      const reading = await readingOf(request.checkout)
+      const reading = await readingOf(request.target)
       if (disposed) return
+      if (request.target.kind === 'link' && !watched.has(request.key)) return
 
-      record({ key: request.key, reading })
+      readings.record({ key: request.key, reading })
     } finally {
       inFlight.delete(request.key)
     }
   }
 
-  const heldByFloor = (key: string): boolean => {
-    const last = askedAt.get(key)
-    return last !== undefined && now() - last < floorMs
-  }
-
-  const begin = (request: { key: string; checkout: RepositoryCheckout }): Promise<void> => {
+  const begin = (request: { key: string; target: PullTarget }): Promise<void> => {
     const asked = ask(request)
     inFlight.set(request.key, asked)
     return asked
   }
 
-  const refresh = async (request: {
-    checkout: RepositoryCheckout
+  const refreshTarget = async (request: {
+    target: PullTarget
     force?: boolean
   }): Promise<void> => {
     if (disposed) return
 
-    const key = checkoutKey(request.checkout)
+    const key = keyOf(request.target)
     const running = inFlight.get(key)
     if (running !== undefined) return running
 
+    const schedule = readings.scheduleOf({ key })
     const decision = pollDecision({
-      lastAskedAt: askedAt.get(key) ?? null,
-      lastReading: answers.get(key) ?? null,
-      consecutiveFailures: failures.get(key) ?? 0,
+      lastAskedAt: schedule.lastAskedAt,
+      lastReading: schedule.lastReading,
+      consecutiveFailures: schedule.consecutiveFailures,
       now: now(),
       floorMs,
       expectingUntil,
@@ -170,8 +139,17 @@ export function createPullRequestService(args: {
     if (decision === EPollDecision.Hold) return
     if (decision === EPollDecision.Never && request.force !== true) return
 
-    return begin({ key, checkout: request.checkout })
+    return begin({ key, target: request.target })
   }
+
+  const refresh = (request: {
+    checkout: RepositoryCheckout
+    force?: boolean
+  }): Promise<void> =>
+    refreshTarget({
+      target: { kind: 'checkout', checkout: request.checkout },
+      force: request.force === true,
+    })
 
   /**
    * The schedule has nothing useful to say about a key whose answer we have just been told changed,
@@ -183,19 +161,41 @@ export function createPullRequestService(args: {
     const key = checkoutKey(checkout)
     const running = inFlight.get(key)
     if (running !== undefined) return running
-    if (heldByFloor(key)) return
 
-    return begin({ key, checkout })
+    const last = readings.scheduleOf({ key }).lastAskedAt
+    if (last !== null && now() - last < floorMs) return
+
+    return begin({ key, target: { kind: 'checkout', checkout } })
   }
 
-  const untrack = (): void => {
+  const untick = (): void => {
     if (timer === null) return
     clearInterval(timer)
     timer = null
   }
 
+  const tick = (): void => {
+    if (following && tracked !== null) void refresh({ checkout: tracked })
+    for (const link of watched.values()) {
+      void refreshTarget({ target: { kind: 'link', link } })
+    }
+  }
+
+  /**
+   * One interval serves the tracked checkout and every watched link, so it lives while either
+   * does — `stopTracking` alone cannot be what clears it. A pushing port arms nothing, as before.
+   */
+  const syncTimer = (): void => {
+    untick()
+    if (disposed || args.pullRequests.pushes) return
+    if (!(following && tracked !== null) && watched.size === 0) return
+
+    timer = setInterval(tick, tickMs)
+    timer.unref?.()
+  }
+
   return {
-    snapshot: ({ key }) => shown.get(key) ?? NO_PULL_REQUEST_READING,
+    snapshot: readings.snapshot,
     version: () => version,
     subscribe: (listener) => {
       listeners.add(listener)
@@ -207,22 +207,54 @@ export function createPullRequestService(args: {
      * swap cannot leave the last branch's pull request on the footer for a poll interval.
      */
     track: ({ checkout }) => {
-      untrack()
       const key = checkoutKey(checkout)
       const previous = tracked === null ? null : checkoutKey(tracked)
       if (previous !== null && previous !== key) {
-        forget(previous)
+        readings.forget({ key: previous })
         notify()
       }
       tracked = checkout
+      following = true
 
       void refresh({ checkout, force: true })
-      if (args.pullRequests.pushes) return
-
-      timer = setInterval(() => void refresh({ checkout }), tickMs)
-      timer.unref?.()
+      syncTimer()
     },
-    stopTracking: untrack,
+    stopTracking: () => {
+      tracked = null
+      following = false
+      syncTimer()
+    },
+    /**
+     * The durable link set, mirrored: a key the set gains is asked at once, and a key it loses is
+     * forgotten exactly as a hopped-away checkout is — mid-flight reads for it are dropped on
+     * landing rather than resurrecting the key.
+     */
+    watch: ({ links }) => {
+      if (disposed) return
+
+      const next = new Map(links.map((link) => [linkKey(link), link]))
+      let dropped = false
+      for (const key of [...watched.keys()]) {
+        if (next.has(key)) continue
+
+        watched.delete(key)
+        readings.forget({ key })
+        dropped = true
+      }
+      for (const [key, link] of next) {
+        if (watched.has(key)) continue
+
+        watched.set(key, link)
+        void refreshTarget({ target: { kind: 'link', link }, force: true })
+      }
+      if (dropped) notify()
+      syncTimer()
+    },
+    current: () => {
+      if (tracked === null) return null
+
+      return { checkout: tracked, reading: readings.snapshot({ key: checkoutKey(tracked) }) }
+    },
     /**
      * No argument, because the caller cannot honestly name one: the after-tool phase carries the
      * call and its result and no project directory, so the only checkout a push can be about is the
@@ -250,12 +282,12 @@ export function createPullRequestService(args: {
     dispose: () => {
       disposed = true
       expectingUntil = null
-      untrack()
+      tracked = null
+      following = false
+      watched.clear()
+      untick()
       listeners.clear()
-      answers.clear()
-      shown.clear()
-      askedAt.clear()
-      failures.clear()
+      readings.clear()
       inFlight.clear()
     },
   }

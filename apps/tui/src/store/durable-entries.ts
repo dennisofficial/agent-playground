@@ -1,5 +1,7 @@
 import { EContextSlot, latestTldrPerAnchor, quotedShellCommand, type AssistantPart, type CallId, type Event, type EventId, type EventOfType, type SaidImage } from '@dltech/atlas-core'
 
+import { formatElapsed } from '../ui/theme'
+
 
 import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
 import { modelEntries } from './model-entries'
@@ -24,6 +26,11 @@ const shellMatchedLine = (event: EventOfType<'background-shell-matched'>): strin
     ? `Background shell ${named} ${matched}, but stopped watching`
     : `Background shell ${named} ${matched}`
 }
+
+const shellStillRunningEntryLine = (
+  event: EventOfType<'background-shell-still-running'>,
+): string =>
+  `Background shell ${shellName(event)} is still running after ${formatElapsed(event.runningForMs)} - a scheduled check-in, not an ending`
 
 type PartRun = { type: AssistantPart['type']; text: string }
 
@@ -196,6 +203,19 @@ export function durableEntries(args: {
           text: shellMatchedLine(event),
           shellId: event.shellId,
           output: event.lines,
+        },
+      ]
+    }
+
+    if (event.type === 'background-shell-still-running') {
+      return [
+        {
+          kind: EEntryKind.BackgroundShellStillRunning,
+          author: EAuthor.Model,
+          key: event.id,
+          text: shellStillRunningEntryLine(event),
+          shellId: event.shellId,
+          output: event.tail,
         },
       ]
     }

@@ -73,6 +73,7 @@ export {
   type BackgroundShellAwaitingInputEntry,
   type BackgroundShellEndedEntry,
   type BackgroundShellMatchedEntry,
+  type BackgroundShellStillRunningEntry,
   type ModelSaidEntry,
   type ModelThoughtEntry,
   type OperatorSaidEntry,

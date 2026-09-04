@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EKilledBy, EShellStatus } from '../../../shells/status'
-import { backgroundShellBlock, backgroundShellMatchedBlock } from '../background-shell-block'
+import {
+  backgroundShellBlock,
+  backgroundShellMatchedBlock,
+  backgroundShellStillRunningBlock,
+} from '../background-shell-block'
 
 const ended = (over: Partial<Parameters<typeof backgroundShellBlock>[0]> = {}) =>
   ({
@@ -173,5 +177,80 @@ describe('handing a running background shell watch match to the model', () => {
 
     expect(block.startsWith('<background-shell-matched>')).toBe(true)
     expect(block.endsWith('</background-shell-matched>')).toBe(true)
+  })
+})
+
+const stillRunning = (over: Partial<Parameters<typeof backgroundShellStillRunningBlock>[0]> = {}) =>
+  ({
+    id: 'evt_3',
+    seq: 3,
+    threadId: 'br_1',
+    runId: 'run_1',
+    depth: 0,
+    at: '2026-08-27T12:13:26.000Z',
+    type: 'background-shell-still-running',
+    shellId: 'bash_27',
+    command: 'bash /tmp/cubic-poll-371.sh 43',
+    runningForMs: 806_000,
+    silentForMs: 26_000,
+    checkInMs: 300_000,
+    tail: '39 pending no-check\n40 pending no-check',
+    ...over,
+  }) as Parameters<typeof backgroundShellStillRunningBlock>[0]
+
+describe('checking in on a background shell that has not ended', () => {
+  it('names the shell and how long it has been up', () => {
+    const block = backgroundShellStillRunningBlock(
+      stillRunning({ description: 'Poll cubic round on head 43db0f7c' }),
+    )
+
+    expect(block).toContain('bash_27')
+    expect(block).toContain('"Poll cubic round on head 43db0f7c"')
+    expect(block).toContain('`bash /tmp/cubic-poll-371.sh 43`')
+    expect(block).toContain('running for 13m 26s')
+  })
+
+  it('reads as a check-in rather than an ending, so nobody treats the job as done', () => {
+    const block = backgroundShellStillRunningBlock(stillRunning())
+
+    expect(block).toContain('has not ended')
+    expect(block).toContain('scheduled check-in, not an ending')
+    expect(block).toContain('when it ends you will be told')
+  })
+
+  it('shows a chatty shell its own latest output, so a stuck poll loop is visible', () => {
+    const block = backgroundShellStillRunningBlock(stillRunning())
+
+    expect(block).toContain('It last printed 26s ago.')
+    expect(block).toContain('40 pending no-check')
+  })
+
+  it('says a quiet shell has printed nothing, and shows no tail section', () => {
+    const block = backgroundShellStillRunningBlock(
+      stillRunning({ silentForMs: 806_000, tail: '' }),
+    )
+
+    expect(block).toContain('It has printed nothing in all that time.')
+    expect(block).not.toContain('most recent output')
+  })
+
+  it('names the three ways out, including service_start for something meant to stay up', () => {
+    const block = backgroundShellStillRunningBlock(stillRunning())
+
+    expect(block).toContain('shell_output({ shellId: "bash_27" })')
+    expect(block).toContain('shell_kill({ shellId: "bash_27" })')
+    expect(block).toContain('service_start')
+    expect(block).toContain('do nothing')
+  })
+
+  it('says the check-ins repeat and on what cadence', () => {
+    expect(backgroundShellStillRunningBlock(stillRunning())).toContain('repeat every 5m 0s')
+  })
+
+  it('wraps the block so the model can tell it from something a human typed', () => {
+    const block = backgroundShellStillRunningBlock(stillRunning())
+
+    expect(block.startsWith('<background-shell-still-running>')).toBe(true)
+    expect(block.endsWith('</background-shell-still-running>')).toBe(true)
   })
 })

@@ -5,6 +5,7 @@ export {
   type ThreadModel,
   type ThreadSummary,
 } from './thread-store'
+export { threadWorktree, type ThreadWorktree } from './thread-places'
 export {
   compactThread,
   ECompactionFailure,

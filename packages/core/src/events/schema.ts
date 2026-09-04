@@ -142,6 +142,13 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     returnTo: z.string().min(1).optional(),
   }),
   z.object({
+    type: z.literal('pull-request-linked'),
+    number: z.number().int().positive(),
+    url: z.string().min(1),
+    repo: z.string().min(1),
+    branch: z.string().min(1),
+  }),
+  z.object({
     type: z.literal('background-shell-ended'),
     shellId: z.string().min(1),
     command: z.string(),
@@ -171,6 +178,16 @@ export const eventBodySchema: z.ZodType<EventBody> = z.discriminatedUnion('type'
     lines: z.string(),
     matchCount: z.number().int().nonnegative(),
     watchDisarmed: z.boolean().optional(),
+  }),
+  z.object({
+    type: z.literal('background-shell-still-running'),
+    shellId: z.string().min(1),
+    command: z.string(),
+    description: z.string().optional(),
+    runningForMs: z.number().int().nonnegative(),
+    silentForMs: z.number().int().nonnegative(),
+    checkInMs: z.number().int().positive(),
+    tail: z.string(),
   }),
   z.object({
     type: z.literal('service-ended'),

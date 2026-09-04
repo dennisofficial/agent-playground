@@ -56,3 +56,24 @@ export function matchedDraft(args: {
     watchDisarmed: matched.disarmed ? true : undefined,
   }
 }
+
+export function stillRunningDraft(args: {
+  snapshot: ShellSnapshot
+  tail: string
+  runningForMs: number
+  silentForMs: number
+  checkInMs: number
+}): EventDraft {
+  const { snapshot } = args
+
+  return {
+    type: 'background-shell-still-running',
+    shellId: snapshot.shellId,
+    command: snapshot.command,
+    description: snapshot.description,
+    runningForMs: args.runningForMs,
+    silentForMs: args.silentForMs,
+    checkInMs: args.checkInMs,
+    tail: args.tail,
+  }
+}

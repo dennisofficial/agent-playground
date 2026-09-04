@@ -11,6 +11,8 @@ import {
   threadRows,
   threadsWindow,
   typeInto,
+  visibleChips,
+  withChips,
   withThreads,
   type ThreadListing,
   type ThreadsState,
@@ -82,6 +84,81 @@ describe('the rows a listing becomes', () => {
     })
 
     expect(rows.map((row) => row.threadId)).toContain('child')
+  })
+
+  it('carries the worktree a thread is standing in, so the row can name the place', () => {
+    const rows = threadRows({
+      threads: [
+        {
+          ...listing({ id: 'placed', title: 'the auth overlay' }),
+          worktree: { path: '/repo/.worktrees/auth', branch: 'dennis/auth' },
+        },
+      ],
+      activeThreadId: '',
+    })
+
+    expect(rows[0]?.worktree?.branch).toBe('dennis/auth')
+  })
+
+  it('carries no worktree for a thread standing in the main tree', () => {
+    const rows = threadRows({ threads: THREE, activeThreadId: '' })
+
+    expect(rows.every((row) => row.worktree === undefined)).toBe(true)
+  })
+})
+
+describe('the pull request chips that land after the rows', () => {
+  const CHIP = { label: '#401', ground: '#000', ink: '#fff' }
+
+  it('attaches chips to the thread they belong to', () => {
+    const state = withChips({ state: opened(), chips: new Map([['thread-b', [CHIP]]]) })
+
+    expect(state.rows.find((row) => row.threadId === 'thread-b')?.chips).toEqual([CHIP])
+    expect(state.rows.find((row) => row.threadId === 'thread-a')?.chips).toBeUndefined()
+  })
+
+  it('leaves the selection where it was, because no row came or went', () => {
+    const moved = moveSelection({ state: opened(), delta: 1 })
+    const chipped = withChips({ state: moved, chips: new Map([['thread-a', [CHIP]]]) })
+
+    expect(selectedThread(chipped)?.threadId).toBe('thread-c')
+  })
+
+  it('does nothing when no badge answered', () => {
+    const state = opened()
+
+    expect(withChips({ state, chips: new Map() })).toBe(state)
+  })
+})
+
+describe('how many chips a row can hold', () => {
+  const chips = (count: number) =>
+    Array.from({ length: count }, (_, index) => ({
+      label: `#${401 + index}`,
+      ground: '#000',
+      ink: '#fff',
+    }))
+
+  it('shows them all when they fit', () => {
+    const { shown, overflow } = visibleChips({ chips: chips(3), cells: 30 })
+
+    expect(shown.map((chip) => chip.label)).toEqual(['#401', '#402', '#403'])
+    expect(overflow).toBe(0)
+  })
+
+  it('counts what the width denied rather than clipping mid-chip', () => {
+    // Each chip is its label plus a cell of padding either side: '#401' is 6, gaps are 2.
+    const { shown, overflow } = visibleChips({ chips: chips(3), cells: 16 })
+
+    expect(shown.map((chip) => chip.label)).toEqual(['#401'])
+    expect(overflow).toBe(2)
+  })
+
+  it('shows only the counter when even one chip would not fit beside it', () => {
+    const { shown, overflow } = visibleChips({ chips: chips(4), cells: 6 })
+
+    expect(shown).toEqual([])
+    expect(overflow).toBe(4)
   })
 })
 

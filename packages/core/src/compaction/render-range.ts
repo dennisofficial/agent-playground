@@ -1,4 +1,5 @@
 import type { Event } from '../events/envelope'
+import { elapsedPhrase } from '../shells/elapsed'
 
 const PAYLOAD_CHARACTER_LIMIT = 600
 
@@ -47,6 +48,10 @@ function lineOf(event: Event, payloadLimit: number): string | undefined {
 
   if (event.type === 'background-shell-ended') {
     return `Background shell "${event.command}" ${event.status}: ${clipped(event.output, payloadLimit)}`
+  }
+
+  if (event.type === 'background-shell-still-running') {
+    return `Background shell "${event.command}" still running after ${elapsedPhrase(event.runningForMs)}`
   }
 
   if (event.type === 'service-ended') {

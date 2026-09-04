@@ -10,6 +10,7 @@
   "scripts": {
     "postinstall": "bun run --filter @dltech/atlas-harness db:ensure",
     "typecheck": "turbo run typecheck",
+    "perf:report": "bun packages/harness/scripts/perf-report.ts",
     "proto:shell": "bun apps/tui/prototype/shell.tsx",
     "proto:round2": "bun apps/tui/prototype/round2.tsx",
     "proto:footer": "bun apps/tui/prototype/footer-pills.tsx",

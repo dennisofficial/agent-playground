@@ -47,7 +47,15 @@ const badge = (args: { pr: number; state: EPullRequestState; checks: EChecksStat
 })
 
 const pr = (args: { pr: number; state: EPullRequestState; checks: EChecksState }): FooterItem =>
-  pullRequestItem({ badge: badge(args), onOpen: noop }) as FooterItem
+  pullRequestItem({
+    footer: {
+      badge: badge(args),
+      label: `#${args.pr}`,
+      url: 'https://example.invalid/pull/0',
+      overflow: 0,
+    },
+    onOpen: noop,
+  }) as FooterItem
 
 const shells = (running: number): FooterItem => shellsItem({ running, onOpen: noop }) as FooterItem
 

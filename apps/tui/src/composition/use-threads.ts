@@ -11,12 +11,14 @@ import {
   selectedThread,
   threadRows,
   typeInto,
+  withChips,
   withThreads,
   type ThreadRow,
   type ThreadsState,
 } from '../ui/threads-model'
 import { isPrintable } from '../ui/keys/printable'
 import type { AtlasApp } from './compose'
+import { threadChips } from './thread-chips'
 
 export type ThreadsControl = {
   state: ThreadsState | null
@@ -53,10 +55,23 @@ export function useThreads(args: {
     void app.threads
       .list({ project: projectOf(app.workspace) })
       .then((threads) => {
+        const rows = threadRows({ threads, activeThreadId })
         const current = held.current
         if (current === null) return
 
-        put(withThreads({ state: current, rows: threadRows({ threads, activeThreadId }) }))
+        put(withThreads({ state: current, rows }))
+
+        const { pullRequests } = app
+        if (pullRequests === null) return
+
+        void threadChips({ rows, home: app.config.cwd, pullRequests })
+          .then((chips) => {
+            const open = held.current
+            if (open === null || open.rows !== rows) return
+
+            put(withChips({ state: open, chips }))
+          })
+          .catch(() => undefined)
       })
       .catch((error: unknown) => {
         const current = held.current
@@ -64,7 +79,7 @@ export function useThreads(args: {
 
         put(failedToList({ state: current, reason: reasonOf(error) }))
       })
-  }, [activeThreadId, app.threads, app.workspace, put])
+  }, [activeThreadId, app, put])
 
   const handleDismiss = useCallback(() => put(null), [put])
 

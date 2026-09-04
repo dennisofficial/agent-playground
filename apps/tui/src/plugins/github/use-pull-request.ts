@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
+import type { LinkedPullRequest } from '@dltech/atlas-core'
+
+import type { Span } from '../../ui/components/spans'
 import { useShimmerClock } from '../../ui/hooks/use-shimmer-clock'
 import { SPINNER_FRAME_MS, theme } from '../../ui/theme'
 import { ESidebarPlace, type SidebarSection, type SidebarSectionRow } from '../surface'
 import { probeCheckout } from './checkout-probe'
+import { pullRequestEntries, type PullRequestEntry } from './pull-request-entries'
 import {
   checkoutKey,
   EPullRequestLookup,
@@ -14,8 +18,15 @@ import {
 import { pullRequestRow } from './pull-request-row'
 import type { PullRequestService } from './pull-request-service'
 
-export type PullRequestControl = {
+export type FooterPullRequest = {
   badge: PullRequestBadge | null
+  label: string
+  url: string
+  overflow: number
+}
+
+export type PullRequestControl = {
+  footer: FooterPullRequest | null
   section: SidebarSection | null
 }
 
@@ -28,6 +39,37 @@ const sameCheckout = (
   if (left === null || right === null) return left === right
 
   return left.directory === right.directory && checkoutKey(left) === checkoutKey(right)
+}
+
+const foundPullRequest = (entry: PullRequestEntry) =>
+  entry.reading !== null && entry.reading.lookup === EPullRequestLookup.Found
+    ? entry.reading.pullRequest
+    : null
+
+const rowOf = (args: {
+  entry: PullRequestEntry
+  now: number
+  onOpen: (url: string) => void
+}): SidebarSectionRow => {
+  const { entry, now, onOpen } = args
+  const pullRequest = foundPullRequest(entry)
+
+  const spans =
+    pullRequest !== null
+      ? pullRequestRow({ pullRequest, now })
+      : (() => {
+          const unread: readonly Span[] = [
+            { text: `#${entry.number}`, fg: theme.code },
+            { text: ` ${entry.branch}`, fg: theme.hint },
+          ]
+          return () => unread
+        })()
+
+  return {
+    id: entry.current ? 'pull-request-current' : `pull-request-${entry.key}`,
+    spans,
+    onActivate: () => onOpen(entry.url),
+  }
 }
 
 /**
@@ -43,10 +85,11 @@ export function usePullRequest(args: {
   service: PullRequestService
   projectDirectory: string
   working: boolean
+  linked: readonly LinkedPullRequest[]
   onOpen: (url: string) => void
   probe?: CheckoutProbe
 }): PullRequestControl {
-  const { service, projectDirectory, working, onOpen } = args
+  const { service, projectDirectory, working, linked, onOpen } = args
   const askGit = args.probe ?? probeCheckout
   const [checkout, setCheckout] = useState<RepositoryCheckout | null>(null)
 
@@ -92,18 +135,30 @@ export function usePullRequest(args: {
   }, [probe, working])
 
   const reading = checkout === null ? null : service.snapshot({ key: checkoutKey(checkout) })
-  const pullRequest =
-    reading !== null && reading.lookup === EPullRequestLookup.Found ? reading.pullRequest : null
-
-  const badge = useMemo(
-    () => (pullRequest === null ? null : pullRequestBadge(pullRequest)),
-    [pullRequest],
-  )
-
-  const now = useShimmerClock({
-    active: (pullRequest?.tally.running ?? 0) > 0,
-    intervalMs: SPINNER_FRAME_MS,
+  const entries = pullRequestEntries({
+    linked,
+    read: (key) => service.snapshot({ key }),
+    current: checkout === null || reading === null ? null : { checkout, reading },
   })
+
+  const anyRunning = entries.some((entry) => {
+    const pullRequest = foundPullRequest(entry)
+    return (pullRequest?.tally.running ?? 0) > 0
+  })
+  const now = useShimmerClock({ active: anyRunning, intervalMs: SPINNER_FRAME_MS })
+
+  const footer = useMemo((): FooterPullRequest | null => {
+    const latest = entries[entries.length - 1]
+    if (latest === undefined) return null
+
+    const pullRequest = foundPullRequest(latest)
+    return {
+      badge: pullRequest === null ? null : pullRequestBadge(pullRequest),
+      label: `#${latest.number}`,
+      url: latest.url,
+      overflow: entries.length - 1,
+    }
+  }, [entries])
 
   const section = useMemo((): SidebarSection | null => {
     const rows: SidebarSectionRow[] = []
@@ -111,17 +166,11 @@ export function usePullRequest(args: {
     if (checkout !== null) {
       rows.push({ id: 'branch', spans: [{ text: checkout.branch, fg: theme.hover }] })
     }
-    if (pullRequest !== null) {
-      rows.push({
-        id: 'pull-request',
-        spans: pullRequestRow({ pullRequest, now }),
-        onActivate: () => onOpen(pullRequest.url),
-      })
-    }
+    for (const entry of entries) rows.push(rowOf({ entry, now, onOpen }))
     if (rows.length === 0) return null
 
     return { id: 'github', place: ESidebarPlace.Facts, rows }
-  }, [checkout, now, onOpen, pullRequest])
+  }, [checkout, entries, now, onOpen])
 
-  return useMemo(() => ({ badge, section }), [badge, section])
+  return useMemo(() => ({ footer, section }), [footer, section])
 }

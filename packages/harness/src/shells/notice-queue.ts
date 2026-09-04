@@ -1,7 +1,7 @@
 import { EShellStatus, type EventDraft, type ThreadId } from '@dltech/atlas-core'
 
 import type { BackgroundShell, ShellSnapshot } from './background-shell'
-import { awaitingInputDraft, endedDraft, matchedDraft } from './notifications'
+import { awaitingInputDraft, endedDraft, matchedDraft, stillRunningDraft } from './notifications'
 import type { MatchedLines } from './shell-watch'
 
 export const DELIVERED_CHARACTERS = 30_000
@@ -18,6 +18,7 @@ export enum ENotice {
   Ended = 'ended',
   AwaitingInput = 'awaiting-input',
   Matched = 'matched',
+  StillRunning = 'still-running',
 }
 
 export type ShellDelta = {
@@ -46,6 +47,19 @@ export type ShellNotice =
     })
   | (NoticedShell & { kind: ENotice.AwaitingInput; take: () => ShellDelta })
   | (NoticedShell & { kind: ENotice.Matched; pattern: string; matched: MatchedLines })
+  | (NoticedShell & {
+      kind: ENotice.StillRunning
+      peek: () => string
+      runningForMs: number
+      silentForMs: number
+      checkInMs: number
+    })
+
+/**
+ * A pending row must know which kind of notice it is: a still-running shell announced as
+ * "waiting on input" would send the operator to answer a prompt that does not exist.
+ */
+export type PendingShellNotice = { kind: ENotice; snapshot: ShellSnapshot }
 
 /**
  * The cursor is the model's place in a shell, so taking a delta is what marks output as delivered.
@@ -65,21 +79,33 @@ export function take(entry: Tracked): ShellDelta {
 
 const NOTHING_PENDING: readonly ShellNotice[] = Object.freeze([])
 
-const NOTHING_ANNOUNCED: readonly ShellSnapshot[] = Object.freeze([])
+const NOTHING_ANNOUNCED: readonly PendingShellNotice[] = Object.freeze([])
 
 export const NOTHING_DRAINED: readonly EventDraft[] = Object.freeze([])
 
-const NOTHING_NOTICED: ReadonlyMap<ThreadId, readonly ShellSnapshot[]> = new Map()
+const NOTHING_NOTICED: ReadonlyMap<ThreadId, readonly PendingShellNotice[]> = new Map()
 
 export class ShellNoticeQueue {
   private queued: readonly ShellNotice[] = NOTHING_PENDING
-  private noticed: ReadonlyMap<ThreadId, readonly ShellSnapshot[]> = NOTHING_NOTICED
+  private noticed: ReadonlyMap<ThreadId, readonly PendingShellNotice[]> = NOTHING_NOTICED
   private readonly listeners = new Set<() => void>()
 
   constructor(private readonly live: (args: { shellId: string }) => ShellSnapshot | undefined) {}
 
+  /**
+   * Check-ins arrive on a cadence whether or not the last one was drained, so an undrained one is
+   * replaced by its fresher successor rather than stacked behind it.
+   */
   queue(notice: ShellNotice): void {
-    this.settle([...this.queued, notice])
+    const kept =
+      notice.kind === ENotice.StillRunning
+        ? this.queued.filter(
+            (held) =>
+              held.kind !== ENotice.StillRunning ||
+              held.snapshot.shellId !== notice.snapshot.shellId,
+          )
+        : this.queued
+    this.settle([...kept, notice])
   }
 
   /**
@@ -97,7 +123,7 @@ export class ShellNoticeQueue {
       .flatMap((notice) => this.draftsOf(notice))
   }
 
-  pending({ threadId }: { threadId: ThreadId }): readonly ShellSnapshot[] {
+  pending({ threadId }: { threadId: ThreadId }): readonly PendingShellNotice[] {
     return this.noticed.get(threadId) ?? NOTHING_ANNOUNCED
   }
 
@@ -117,7 +143,15 @@ export class ShellNoticeQueue {
     this.settle(kept)
   }
 
+  /**
+   * A check-in queued behind an ending is dead on arrival: the shell it describes as running is
+   * not, and the ending queued beside it already says so.
+   */
   private stillWorthTelling(notice: ShellNotice): boolean {
+    if (notice.kind === ENotice.StillRunning) {
+      const live = this.live({ shellId: notice.snapshot.shellId })
+      return live !== undefined && live.status === EShellStatus.Running
+    }
     if (notice.kind !== ENotice.AwaitingInput) return true
 
     const live = this.live({ shellId: notice.snapshot.shellId })
@@ -131,6 +165,18 @@ export class ShellNoticeQueue {
           snapshot: notice.snapshot,
           pattern: notice.pattern,
           matched: notice.matched,
+        }),
+      ]
+    }
+
+    if (notice.kind === ENotice.StillRunning) {
+      return [
+        stillRunningDraft({
+          snapshot: notice.snapshot,
+          tail: notice.peek(),
+          runningForMs: notice.runningForMs,
+          silentForMs: notice.silentForMs,
+          checkInMs: notice.checkInMs,
         }),
       ]
     }
@@ -150,11 +196,12 @@ export class ShellNoticeQueue {
   private settle(notices: readonly ShellNotice[]): void {
     this.queued = notices
 
-    const byThread = new Map<ThreadId, ShellSnapshot[]>()
+    const byThread = new Map<ThreadId, PendingShellNotice[]>()
     for (const notice of notices) {
       const held = byThread.get(notice.threadId)
-      if (held === undefined) byThread.set(notice.threadId, [notice.snapshot])
-      else held.push(notice.snapshot)
+      const pending: PendingShellNotice = { kind: notice.kind, snapshot: notice.snapshot }
+      if (held === undefined) byThread.set(notice.threadId, [pending])
+      else held.push(pending)
     }
     this.noticed = byThread
 

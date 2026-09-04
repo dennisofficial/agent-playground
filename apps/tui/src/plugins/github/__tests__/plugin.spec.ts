@@ -51,19 +51,24 @@ describe('the github plugin as the loader sees it', () => {
     }
   })
 
-  it('contributes the six hooks the feature listens on, one surface and its port', async () => {
+  it('contributes the hooks the feature listens on, one surface, its port and its links', async () => {
     const plugin = resolved()
     const contribution = await plugin.contribute()
 
     expect((contribution.hooks ?? []).map((hook) => `${hook.phase}:${hook.name}`)).toEqual([
       `${EHookPhase.BeforeTurn}:follow-session`,
       `${EHookPhase.AfterTurn}:turn-ended`,
+      `${EHookPhase.AfterTurn}:record-pull-request`,
       `${EHookPhase.OnThreadOpen}:thread-opened`,
+      `${EHookPhase.OnThreadOpen}:forget-thread-links`,
       `${EHookPhase.AfterTool}:follow-worktree`,
       `${EHookPhase.AfterTool}:refresh-pull-request`,
       `${EHookPhase.AfterShell}:refresh-pull-request-after-shell`,
     ])
     expect(contribution.surfaces).toHaveLength(1)
+    expect((contribution.projections ?? []).map((projection) => projection.id)).toEqual([
+      'pull-requests',
+    ])
     expect((contribution.ports ?? []).map((binding) => binding.token)).toEqual([PullRequestPort])
     expect(contribution.tools ?? []).toEqual([])
 

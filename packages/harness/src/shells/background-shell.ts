@@ -60,9 +60,11 @@ export type BackgroundShellSpec = {
   matchSettleMs: number
   matchedLinesCap: number
   timeoutMs?: number | undefined
+  checkInMs?: number | undefined
   onExit: (shell: BackgroundShell) => void
   onAwaitingInput: (shell: BackgroundShell) => void
   onMatched: (args: { shell: BackgroundShell; matched: MatchedLines }) => void
+  onStillRunning: (shell: BackgroundShell) => void
 }
 
 function stopReading(drains: readonly Drain[]): void {
@@ -95,6 +97,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
   let promptWatch: ReturnType<typeof setTimeout> | undefined
   let matchWatch: ReturnType<typeof setTimeout> | undefined
   let deadline: ReturnType<typeof setTimeout> | undefined
+  let checkIn: ReturnType<typeof setTimeout> | undefined
 
   const drains: Drain[] = []
 
@@ -116,6 +119,11 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
   const forgetDeadline = (): void => {
     if (deadline !== undefined) clearTimeout(deadline)
     deadline = undefined
+  }
+
+  const forgetCheckIn = (): void => {
+    if (checkIn !== undefined) clearTimeout(checkIn)
+    checkIn = undefined
   }
 
   const atAPrompt = (): boolean =>
@@ -154,12 +162,39 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     status = EShellStatus.Killed
     killedBy = by
     forgetPromptWatch()
+    forgetCheckIn()
     terminate()
   }
 
   if (spec.timeoutMs !== undefined) {
     deadline = setTimeout(() => kill(EKilledBy.Timeout), spec.timeoutMs)
     deadline.unref?.()
+  }
+
+  /**
+   * A check-in is paced from the start rather than re-armed on output: a poll loop that prints a
+   * line a minute is not idle by any silence measure, yet it is exactly the shell nobody is
+   * watching. Output only feeds the tail the next check-in carries; it never postpones one.
+   */
+  const fireCheckIn = (): void => {
+    checkIn = undefined
+    if (status !== EShellStatus.Running) return
+
+    try {
+      spec.onStillRunning(self)
+    } catch {
+      // The cadence matters more than any one delivery, so a throwing listener costs one check-in.
+    }
+
+    if (status === EShellStatus.Running) {
+      checkIn = setTimeout(fireCheckIn, spec.checkInMs ?? 0)
+      checkIn.unref?.()
+    }
+  }
+
+  if (spec.checkInMs !== undefined) {
+    checkIn = setTimeout(fireCheckIn, spec.checkInMs)
+    checkIn.unref?.()
   }
 
   const deliverMatches = (): void => {
@@ -192,6 +227,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
     if (status !== EShellStatus.Running) return
     status = EShellStatus.Overflowed
     forgetPromptWatch()
+    forgetCheckIn()
     terminate()
     stopReading(drains)
   }
@@ -221,6 +257,7 @@ export function startBackgroundShell(spec: BackgroundShellSpec): StartedBackgrou
       endedAt = spec.clock.now()
       forgetPromptWatch()
       forgetDeadline()
+      forgetCheckIn()
       awaitingSettled = false
       if (status === EShellStatus.Running) status = EShellStatus.Exited
       forgetMatchWatch()

@@ -56,6 +56,7 @@ ds-bundle/
 # shipped binary. Nothing writes here any more; the entry stays so an old checkout's secret
 # material cannot be committed by accident.
 .atlas-home/
+apps/tui/.cpuprofiles/
 
 # Upstream repositories cloned for reference (claude-code, opentui, skills) — read here, never vendored
 .clones/

@@ -3,6 +3,8 @@ import { stepCountIs, streamText, type LanguageModel } from 'ai'
 
 import {
   DEFAULT_IMAGE_TIER,
+  addPerfCounter,
+  EPerfCounter,
   ModelPort,
   type Assembled,
   type Chunk,
@@ -86,26 +88,43 @@ export async function runModelStream(args: {
   })
 
   const accumulator = createPartAccumulator()
+  const parts = stream.fullStream[Symbol.asyncIterator]()
 
   try {
-    for await (const part of stream.fullStream) {
-      tape.tap(part)
+    for (;;) {
+      // partWaitMs brackets the pull itself: network latency plus the SDK's own per-part work
+      // (SSE parse, part construction) happen inside it. modelStepMs = partWaitMs + harnessChunkMs,
+      // so CPU rising with partWaitMs while harnessChunkMs stays at zero convicts the pull side.
+      const pullStarted = performance.now()
+      const next = await parts.next()
+      addPerfCounter({ key: EPerfCounter.PartWaitMs, delta: performance.now() - pullStarted })
+      if (next.done) break
 
-      // The SDK answers its own stream timeout with a graceful `abort` part, indistinguishable
-      // from an esc interrupt except that our signal was never aborted. Turn it back into the
-      // failure it is, or a stall would surface as a silently truncated step.
-      if (part.type === 'abort' && !args.signal.aborted) {
-        throw new StreamStallError('the model stream went silent past its timeout')
-      }
+      const part = next.value
+      const started = performance.now()
+      addPerfCounter({ key: EPerfCounter.HarnessChunk })
 
-      const chunk = toCoreChunk(part)
-      if (chunk === null) continue
+      try {
+        tape.tap(part)
 
-      const kept = await keptChunk({ chunk, hooks: args.hooks, filter: args.onChunk })
-      if (kept !== null) accumulator.handle(kept)
+        // The SDK answers its own stream timeout with a graceful `abort` part, indistinguishable
+        // from an esc interrupt except that our signal was never aborted. Turn it back into the
+        // failure it is, or a stall would surface as a silently truncated step.
+        if (part.type === 'abort' && !args.signal.aborted) {
+          throw new StreamStallError('the model stream went silent past its timeout')
+        }
 
-      if (part.type === 'error') {
-        throw new ModelStreamError({ message: getErrorMessage(part.error), cause: part.error })
+        const chunk = toCoreChunk(part)
+        if (chunk === null) continue
+
+        const kept = await keptChunk({ chunk, hooks: args.hooks, filter: args.onChunk })
+        if (kept !== null) accumulator.handle(kept)
+
+        if (part.type === 'error') {
+          throw new ModelStreamError({ message: getErrorMessage(part.error), cause: part.error })
+        }
+      } finally {
+        addPerfCounter({ key: EPerfCounter.HarnessChunkMs, delta: performance.now() - started })
       }
     }
   } catch (error) {

@@ -9,6 +9,7 @@ import {
 import { NativePlugin, type PluginContribution } from '../plugin'
 import { GhPullRequestPort } from './gh-pull-requests'
 import { RefreshPullRequestAfterShellHook, RefreshPullRequestAfterToolHook } from './hooks'
+import { createPullRequestLinks } from './links'
 import { createPullRequestService } from './pull-request-service'
 import { PullRequestPort } from './pure'
 import { createSessionFacts } from './session'
@@ -34,8 +35,11 @@ export default class GithubPlugin extends NativePlugin {
     const adapter = new GhPullRequestPort()
     const service = createPullRequestService({ pullRequests: adapter })
     const facts = createSessionFacts({ launchDirectory: this.launchDirectory })
+    const links = createPullRequestLinks({ service })
     const afterTool = new RefreshPullRequestAfterToolHook({ pullRequests: service })
     const afterShell = new RefreshPullRequestAfterShellHook({ pullRequests: service })
+
+    links.projection.subscribe(() => service.watch({ links: links.projection.current() }))
 
     return {
       hooks: [
@@ -52,10 +56,22 @@ export default class GithubPlugin extends NativePlugin {
           run: facts.afterTurn,
         },
         {
+          phase: EHookPhase.AfterTurn,
+          name: 'record-pull-request',
+          order: OBSERVE,
+          run: links.recordFound,
+        },
+        {
           phase: EHookPhase.OnThreadOpen,
           name: 'thread-opened',
           order: OBSERVE,
           run: facts.threadOpened,
+        },
+        {
+          phase: EHookPhase.OnThreadOpen,
+          name: 'forget-thread-links',
+          order: OBSERVE,
+          run: links.forgetThread,
         },
         {
           phase: EHookPhase.AfterTool,
@@ -77,7 +93,10 @@ export default class GithubPlugin extends NativePlugin {
         },
       ],
       ports: [{ token: PullRequestPort, use: adapter }],
-      surfaces: [pullRequestSurface({ service, facts, openUrl: createUrlOpener() })],
+      projections: [links.projection],
+      surfaces: [
+        pullRequestSurface({ service, facts, links: links.projection, openUrl: createUrlOpener() }),
+      ],
       dispose: () => service.dispose(),
     }
   }

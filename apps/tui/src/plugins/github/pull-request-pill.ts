@@ -33,3 +33,11 @@ export function pullRequestChip(badge: PullRequestBadge): PullRequestChip {
   const { ground, ink } = chipTone(badge)
   return { spans: [{ text: badge.label, fg: ink }], ground }
 }
+
+/**
+ * A linked pull request whose state has not been read yet gets the muted ground: any state color
+ * would claim a reading nobody took.
+ */
+export function pullRequestFallbackChip(args: { label: string }): PullRequestChip {
+  return { spans: [{ text: args.label, fg: MUTED.ink }], ground: MUTED.ground }
+}

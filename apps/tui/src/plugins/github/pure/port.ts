@@ -23,8 +23,34 @@ export const NO_PULL_REQUEST_READING: PullRequestReading = {
   retryable: true,
 }
 
+export const samePullRequestReading = (
+  left: PullRequestReading,
+  right: PullRequestReading,
+): boolean => {
+  if (left.lookup !== EPullRequestLookup.Found || right.lookup !== EPullRequestLookup.Found) {
+    return left.lookup === right.lookup
+  }
+
+  return (
+    left.pullRequest.number === right.pullRequest.number &&
+    left.pullRequest.state === right.pullRequest.state &&
+    left.pullRequest.checks === right.pullRequest.checks &&
+    left.pullRequest.title === right.pullRequest.title &&
+    left.pullRequest.url === right.pullRequest.url &&
+    left.pullRequest.tally.running === right.pullRequest.tally.running &&
+    left.pullRequest.tally.passed === right.pullRequest.tally.passed &&
+    left.pullRequest.tally.failed === right.pullRequest.tally.failed
+  )
+}
+
 export abstract class PullRequestPort {
   abstract read(request: { checkout: RepositoryCheckout }): Promise<PullRequestReading>
+
+  /**
+   * By number rather than by directory: a linked pull request's worktree may no longer exist, so
+   * the implementation resolves it through `gh --repo`, which accepts HOST/OWNER/REPO.
+   */
+  abstract readLinked(args: { repo: string; number: number }): Promise<PullRequestReading>
 
   /** A push-fed implementation answers from the last frame it was handed, so it arms no timer. */
   abstract readonly pushes: boolean

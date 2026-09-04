@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { EForkMode, toThreadId, toRunId, type EventDraft } from '@dltech/atlas-core'
+import { EForkMode, EWorktreeExit, toThreadId, toRunId, type EventDraft } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../../prisma/generated/client'
 import { openSecondWriter, openStoreFixture, type StoreFixture } from './harness'
@@ -382,5 +382,200 @@ describe('threads scoped to a project', () => {
     expect(forked.workspace).toBe('/here')
     expect(forked.repo).toBe('/repo')
     expect((await threads.list({ project: '/here' })).map((row) => row.id)).toContain(forked.id)
+  })
+})
+
+describe('the worktree a listed thread is standing in', () => {
+  const entered = (path: string, branch: string): EventDraft => ({
+    type: 'worktree-entered',
+    path,
+    branch,
+  })
+  const exited = (path: string): EventDraft => ({
+    type: 'worktree-exited',
+    path,
+    action: EWorktreeExit.Keep,
+  })
+
+  it('is nothing for a thread that never moved', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({ threadId: thread.id, runId, drafts: [said('hello')] })
+
+    expect((await threads.list({ project: '/here' }))[0]?.worktree).toBeUndefined()
+  })
+
+  it('is the worktree the thread last entered', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: thread.id,
+      runId,
+      drafts: [said('hello'), entered('/here/.worktrees/fix-a1b2', 'dennis/fix-a1b2')],
+    })
+
+    expect((await threads.list({ project: '/here' }))[0]?.worktree).toEqual({
+      path: '/here/.worktrees/fix-a1b2',
+      branch: 'dennis/fix-a1b2',
+    })
+  })
+
+  it('is nothing once the thread leaves the worktree again', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: thread.id,
+      runId,
+      drafts: [
+        entered('/here/.worktrees/fix-a1b2', 'dennis/fix-a1b2'),
+        exited('/here/.worktrees/fix-a1b2'),
+      ],
+    })
+
+    expect((await threads.list({ project: '/here' }))[0]?.worktree).toBeUndefined()
+  })
+
+  it('comes back to a worktree the thread re-entered after leaving another', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: thread.id,
+      runId,
+      drafts: [
+        entered('/here/.worktrees/first', 'dennis/first'),
+        exited('/here/.worktrees/first'),
+        entered('/here/.worktrees/second', 'dennis/second'),
+      ],
+    })
+
+    expect((await threads.list({ project: '/here' }))[0]?.worktree?.branch).toBe('dennis/second')
+  })
+
+  it('is inherited by a reference fork, whose log starts empty', async () => {
+    const { threads, log } = await openFixture()
+    const source = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: source.id,
+      runId,
+      drafts: [said('hello'), entered('/here/.worktrees/fix-a1b2', 'dennis/fix-a1b2')],
+    })
+    const forked = await threads.fork({ from: source.id, seq: 2, mode: EForkMode.Reference })
+
+    const listed = await threads.list({ project: '/here' })
+    expect(listed.find((row) => row.id === forked.id)?.worktree?.branch).toBe('dennis/fix-a1b2')
+  })
+
+  it('stops at the fork point, so a worktree the source entered later is not inherited', async () => {
+    const { threads, log } = await openFixture()
+    const source = await threads.create({ workspace: '/here' })
+    await log.append({ threadId: source.id, runId, drafts: [said('hello')] })
+    const forked = await threads.fork({ from: source.id, seq: 1, mode: EForkMode.Reference })
+    await log.append({
+      threadId: source.id,
+      runId,
+      drafts: [entered('/here/.worktrees/fix-a1b2', 'dennis/fix-a1b2')],
+    })
+
+    const listed = await threads.list({ project: '/here' })
+    expect(listed.find((row) => row.id === forked.id)?.worktree).toBeUndefined()
+  })
+
+  it('stands where a copy fork stands, whose copied log carries the move with it', async () => {
+    const { threads, log } = await openFixture()
+    const source = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: source.id,
+      runId,
+      drafts: [said('hello'), entered('/here/.worktrees/fix-a1b2', 'dennis/fix-a1b2')],
+    })
+    const copied = await threads.fork({ from: source.id, seq: 2, mode: EForkMode.Copy })
+
+    const listed = await threads.list({ project: '/here' })
+    expect(listed.find((row) => row.id === copied.id)?.worktree?.branch).toBe('dennis/fix-a1b2')
+  })
+})
+
+describe('the pull requests a listed thread is linked to', () => {
+  const linked = ({ number, branch }: { number: number; branch: string }): EventDraft => ({
+    type: 'pull-request-linked',
+    number,
+    url: `https://github.com/acme/app/pull/${number}`,
+    repo: 'github.com/acme/app',
+    branch,
+  })
+
+  it('is nothing for a thread that never linked one', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({ threadId: thread.id, runId, drafts: [said('hello')] })
+
+    expect((await threads.list({ project: '/here' }))[0]?.pullRequests).toBeUndefined()
+  })
+
+  it('is the links the thread recorded, oldest first', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: thread.id,
+      runId,
+      drafts: [
+        linked({ number: 401, branch: 'dennis/first' }),
+        linked({ number: 412, branch: 'dennis/second' }),
+      ],
+    })
+
+    expect((await threads.list({ project: '/here' }))[0]?.pullRequests).toEqual([
+      {
+        number: 401,
+        url: 'https://github.com/acme/app/pull/401',
+        repo: 'github.com/acme/app',
+        branch: 'dennis/first',
+      },
+      {
+        number: 412,
+        url: 'https://github.com/acme/app/pull/412',
+        repo: 'github.com/acme/app',
+        branch: 'dennis/second',
+      },
+    ])
+  })
+
+  it('keeps a repeat link in its first position, refreshing its fields', async () => {
+    const { threads, log } = await openFixture()
+    const thread = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: thread.id,
+      runId,
+      drafts: [
+        linked({ number: 401, branch: 'dennis/first' }),
+        linked({ number: 412, branch: 'dennis/second' }),
+        linked({ number: 401, branch: 'dennis/first-rebased' }),
+      ],
+    })
+
+    const pullRequests = (await threads.list({ project: '/here' }))[0]?.pullRequests
+    expect(pullRequests?.map((pr) => pr.number)).toEqual([401, 412])
+    expect(pullRequests?.[0]?.branch).toBe('dennis/first-rebased')
+  })
+
+  it('is inherited by a reference fork, up to the fork point', async () => {
+    const { threads, log } = await openFixture()
+    const source = await threads.create({ workspace: '/here' })
+    await log.append({
+      threadId: source.id,
+      runId,
+      drafts: [said('hello'), linked({ number: 401, branch: 'dennis/first' })],
+    })
+    const forked = await threads.fork({ from: source.id, seq: 2, mode: EForkMode.Reference })
+    await log.append({
+      threadId: source.id,
+      runId,
+      drafts: [linked({ number: 412, branch: 'dennis/second' })],
+    })
+
+    const listed = await threads.list({ project: '/here' })
+    expect(
+      listed.find((row) => row.id === forked.id)?.pullRequests?.map((pr) => pr.number),
+    ).toEqual([401])
   })
 })
