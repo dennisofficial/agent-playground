@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EChecksState, EPullRequestState, type PullRequest } from '../pure'
+import { theme } from '../../../ui/theme'
+import { EChecksState, EPullRequestState, pullRequestBadge, type PullRequest } from '../pure'
+import { pullRequestStatusColor } from '../pull-request-pill'
 import { pullRequestRow } from '../pull-request-row'
 
 const WIDE = 200
@@ -71,5 +73,37 @@ describe('the pull request row gives up richness before it gives up the failure 
     const clean = withChecks({ running: 0, passed: 0, failed: 0 })
 
     expect(textAt({ pullRequest: clean, cells: WIDE })).toBe('#12 open')
+  })
+})
+
+describe('the pull request row inks the number with the shared status color', () => {
+  const numberInk = (pullRequest: PullRequest): string | undefined =>
+    pullRequestRow({ pullRequest, now: NOW })(WIDE).at(0)?.fg
+
+  it('matches the tone the footer chip fills with', () => {
+    const failing = withChecks({ running: 0, passed: 1, failed: 1 })
+
+    expect(numberInk(failing)).toBe(pullRequestStatusColor(pullRequestBadge(failing)))
+    expect(numberInk(failing)).toBe(theme.error)
+  })
+
+  it('reads a merged pull request as merged even when its checks failed', () => {
+    const merged: PullRequest = {
+      ...withChecks({ running: 0, passed: 1, failed: 1 }),
+      state: EPullRequestState.Merged,
+      checks: EChecksState.Failing,
+    }
+
+    expect(numberInk(merged)).toBe(theme.court.external)
+  })
+
+  it('reads an open pull request with no checks as the link blue, not green', () => {
+    expect(numberInk(withChecks({ running: 0, passed: 0, failed: 0 }))).toBe(theme.link)
+  })
+
+  it('holds the ink at the narrowest rung', () => {
+    const failing = withChecks({ running: 0, passed: 1, failed: 1 })
+
+    expect(pullRequestRow({ pullRequest: failing, now: NOW })(1).at(0)?.fg).toBe(theme.error)
   })
 })
