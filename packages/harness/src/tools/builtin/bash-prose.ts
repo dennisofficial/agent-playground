@@ -24,6 +24,7 @@ export function bashDescription({
     `Times out after ${defaultTimeoutMs} ms unless timeoutMs says otherwise, and never later than ${maximumTimeoutMs} ms.`,
     'Every call carries a description: a few imperative words naming the job - Run the core tests, Rebase onto main - which is what the developer reads in place of the command.',
     'A command that waits by sleeping is refused, a poll loop included: idling advances nothing, so start the slow thing with runInBackground, or use the blocking wait its own tool already has - gh run watch --exit-status, gh pr checks --watch - rather than a loop around a status query.',
+    'A command that does nothing - true, :, a no-op run only to pass time while a background shell runs - is refused on the same grounds, and worse: it returns at once, so calling it in a loop spins the turn hundreds of times a minute. A turn never waits by calling tools; it waits by ending, and what wakes it afterwards is the background shell ending, a watch match, or a check-in.',
     'Set runInBackground to start a long-running command - a watch, a slow test suite - and get a shell id back at once instead of waiting.',
     'A dev server or anything else that should stay up while you keep working is not a background shell: it belongs on service_start, which never times out and never holds the turn open.',
     'A background shell starts in the same directory workdir names, interleaves stdout and stderr in arrival order, and outlives the turn that started it.',
@@ -37,7 +38,7 @@ export function bashDescription({
     'So widen the alternation rather than narrow it - completed|ERROR|Traceback|FAILED|panic|Killed - and a failure wakes you as fast as a pass does.',
     'Matching lines arrive batched, and they never move the shell_output cursor: a read does not consume a pending match, and a match does not consume what a read would have returned.',
     `After ${MATCHED_LINES_CAP} matched lines the watch disarms and says so; the shell keeps running and still delivers its ending.`,
-    'So never wait on one: no sleeping, no polling, no idle loop. Move on to other work, or end the turn and be woken.',
+    'So never wait on one: no sleeping, no polling, no idle loop, and no do-nothing call to tick the time away - ticking only spins the turn. Move on to other work, or end the turn and be woken.',
     'shell_output reads a shell that will not end on its own, shell_list shows what is running, and shell_kill stops one.',
   ].join(' ')
 }
@@ -66,6 +67,14 @@ export function checkInClause({ checkInMs }: { checkInMs: number }): readonly st
 }
 
 const NATIVE_WAITS = 'gh run watch --exit-status, gh pr checks --watch'
+
+export function noOpRefusal(): string {
+  return [
+    'this command does nothing: it would return at once with nothing printed and nothing changed, so the only thing calling it spends is the turn itself, and calling it again spends another.',
+    'If the point was to wait on a background shell, a turn does not wait by calling tools - it waits by ending. End the turn with no tool call, and the shell ending, a watch match or the next check-in will wake you.',
+    'If nothing is running the slow work yet, start it with runInBackground and a watch instead of ticking.',
+  ].join(' ')
+}
 
 export function idlingRefusal(args: { command: string; timeoutMs: number }): string {
   const idle = readIdling(args)
