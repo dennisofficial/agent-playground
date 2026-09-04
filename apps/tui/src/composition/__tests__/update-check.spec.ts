@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { latestRelease, releaseNotice, RELEASE_TAG_PREFIX } from '../update-check'
+import { latestRelease, releaseNotice, RELEASE_TAG_PREFIX, sourceBehindNotice } from '../update-check'
 
 describe('latestRelease', () => {
   it('picks the newest tag in the tui series and ignores the other apps', () => {
@@ -40,5 +40,22 @@ describe('releaseNotice', () => {
 
   it('stays quiet rather than guess when the running version will not parse', () => {
     expect(releaseNotice({ current: 'dev', latest })).toBeNull()
+  })
+})
+
+describe('sourceBehindNotice', () => {
+  it('stays quiet while the checkout is even with its upstream', () => {
+    expect(sourceBehindNotice({ behind: 0, upstream: 'origin/main' })).toBeNull()
+  })
+
+  it('names one commit as one commit', () => {
+    expect(sourceBehindNotice({ behind: 1, upstream: 'origin/main' })).toContain('1 commit behind')
+  })
+
+  it('names the upstream it counted against', () => {
+    const text = sourceBehindNotice({ behind: 4, upstream: 'origin/main' })
+
+    expect(text).toContain('4 commits behind origin/main')
+    expect(text).toContain('git pull')
   })
 })
