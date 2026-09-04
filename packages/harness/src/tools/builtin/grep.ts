@@ -1,3 +1,5 @@
+import { stat } from 'node:fs/promises'
+
 import { z } from 'zod'
 
 import {
@@ -13,6 +15,7 @@ import {
 } from '@dltech/atlas-core'
 
 import { absolutePathSchema } from './file-text'
+import { missingPathReason } from './missing-path'
 
 const DEFAULT_HEAD_LIMIT = 250
 const MAXIMUM_HEAD_LIMIT = 1_000
@@ -212,6 +215,12 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = input
+
+    if (path !== undefined) {
+      const target = await stat(path).catch(() => null)
+      if (target === null) return { ok: false, reason: await missingPathReason({ path }) }
+    }
+
     const searchPath = path ?? projectDirectory
     const searcher = searcherFor({
       pattern,

@@ -1,6 +1,11 @@
+import { isAbsolute } from 'node:path'
+
 import { z } from 'zod'
 
-export const absolutePathSchema = z.string().min(1)
+export const absolutePathSchema = z
+  .string()
+  .min(1)
+  .refine((value) => isAbsolute(value), { message: 'path must be absolute' })
 
 export enum ELineEnding {
   Lf = 'lf',

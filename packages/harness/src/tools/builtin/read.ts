@@ -15,6 +15,7 @@ import {
 import { z } from 'zod'
 
 import { absolutePathSchema } from './file-text'
+import { missingPathReason } from './missing-path'
 import { readImage } from './read-image'
 
 const MAX_READ_BYTES = 262_144
@@ -193,7 +194,7 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
   protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { path, offset, limit } = input
     const stats = await stat(path).catch(() => null)
-    if (stats === null) return { ok: false, reason: `File does not exist: ${path}` }
+    if (stats === null) return { ok: false, reason: await missingPathReason({ path }) }
     if (stats.isDirectory()) {
       return { ok: false, reason: `${path} is a directory; use glob or grep to inspect its contents.` }
     }
