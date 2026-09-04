@@ -16,17 +16,18 @@ import {  portToken } from '../../container/injection'
 import { writeFileAtomically } from '../../files/atomic-write'
 import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
 import {
-  absolutePathSchema,
   detectLineEnding,
   endingOfRegion,
+  filePathSchema,
   lineEndingAgnosticPattern,
+  resolveToolPath,
   toLf,
   withLineEnding,
 } from './file-text'
 import { renderUnifiedDiff } from './unified-diff'
 
 const inputSchema = z.strictObject({
-  path: absolutePathSchema,
+  path: filePathSchema,
   oldString: z.string(),
   newString: z.string(),
   replaceAll: z.boolean().optional(),
@@ -34,7 +35,7 @@ const inputSchema = z.strictObject({
 
 const description = [
   'Replace an exact string in a text file.',
-  'The path must be absolute.',
+  'A relative path resolves against the project directory.',
   'oldString must match the file exactly, including indentation, and must be unique unless replaceAll is true.',
   'An empty oldString creates the file with newString as its whole content.',
   'Lines the edit does not touch keep their exact bytes, line endings included.',
@@ -144,8 +145,10 @@ export class EditTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     threadId,
+    projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const { path, oldString, newString, replaceAll } = input
+    const path = resolveToolPath({ projectDirectory, path: input.path })
+    const { oldString, newString, replaceAll } = input
 
     const guarded = await this.guard.underLock({
       threadId,

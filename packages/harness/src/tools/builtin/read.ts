@@ -14,7 +14,7 @@ import {
 } from '@dltech/atlas-core'
 import { z } from 'zod'
 
-import { absolutePathSchema } from './file-text'
+import { filePathSchema, resolveToolPath } from './file-text'
 import { missingPathReason } from './missing-path'
 import { readImage } from './read-image'
 
@@ -36,7 +36,7 @@ const regionSchema = z.strictObject({
 })
 
 const inputSchema = z.strictObject({
-  path: absolutePathSchema,
+  path: filePathSchema,
   offset: z.number().int().min(1).optional(),
   limit: z.number().int().min(1).optional(),
   region: regionSchema.optional(),
@@ -44,7 +44,7 @@ const inputSchema = z.strictObject({
 
 const description = [
   'Read a file from the filesystem.',
-  'The path must be absolute.',
+  'A relative path resolves against the project directory.',
   'A PNG, JPEG, GIF or WebP file comes back as a picture you can look at, provided it is small enough to send.',
   'Output is line-numbered, tab-separated, one line per file line.',
   'Use offset to start at a given 1-based line and limit to cap how many lines come back.',
@@ -191,10 +191,23 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
     { field: 'path', presence: EPathPresence.Required, form: EPathForm.Absolute, content: EContentAccess.Reads },
   ]
 
-  protected override async run({ input }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const { path, offset, limit } = input
+  protected override async run({
+    input,
+    projectDirectory,
+  }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
+    const rawPath = input.path
+    const path = resolveToolPath({ projectDirectory, path: rawPath })
+    const { offset, limit } = input
     const stats = await stat(path).catch(() => null)
-    if (stats === null) return { ok: false, reason: await missingPathReason({ path }) }
+    if (stats === null) {
+      return {
+        ok: false,
+        reason: await missingPathReason({
+          path,
+          ...(rawPath === path ? {} : { resolvedFrom: { raw: rawPath, projectDirectory } }),
+        }),
+      }
+    }
     if (stats.isDirectory()) {
       return { ok: false, reason: `${path} is a directory; use glob or grep to inspect its contents.` }
     }

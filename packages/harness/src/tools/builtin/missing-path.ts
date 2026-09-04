@@ -52,15 +52,24 @@ async function closestEntriesOf({
     .map(({ label }) => (label.length > MAX_ENTRY_LENGTH ? `${label.slice(0, MAX_ENTRY_LENGTH)}…` : label))
 }
 
-export async function missingPathReason({ path }: { path: string }): Promise<string> {
+export async function missingPathReason(args: {
+  path: string
+  resolvedFrom?: { raw: string; projectDirectory: string } | undefined
+}): Promise<string> {
+  const { path, resolvedFrom } = args
+  const anchor =
+    resolvedFrom === undefined
+      ? ''
+      : ` (${resolvedFrom.raw} resolved against the project directory ${resolvedFrom.projectDirectory})`
+
   const directory = await deepestExistingDirectoryOf(path)
-  if (directory === undefined) return `File does not exist: ${path}`
+  if (directory === undefined) return `File does not exist: ${path}${anchor}`
 
   const entries = await closestEntriesOf({ directory, target: basename(path) })
   const listing =
     entries.length === 0 ? 'it is empty' : `its closest entries are: ${entries.join(', ')}`
 
   return directory === dirname(path)
-    ? `File does not exist: ${path}. ${directory} is there; ${listing}`
-    : `File does not exist: ${path}. ${directory} is the deepest directory that exists on that path; ${listing}`
+    ? `File does not exist: ${path}${anchor}. ${directory} is there; ${listing}`
+    : `File does not exist: ${path}${anchor}. ${directory} is the deepest directory that exists on that path; ${listing}`
 }

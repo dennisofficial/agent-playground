@@ -14,7 +14,7 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { absolutePathSchema } from './file-text'
+import { filePathSchema, resolveToolPath } from './file-text'
 import { missingPathReason } from './missing-path'
 
 const DEFAULT_HEAD_LIMIT = 250
@@ -27,7 +27,7 @@ const DIRECTORIES_RIPGREP_SKIPS_BY_GITIGNORE = ['node_modules'] as const
 
 const inputSchema = z.strictObject({
   pattern: z.string().min(1),
-  path: absolutePathSchema.optional(),
+  path: filePathSchema.optional(),
   glob: z.string().optional(),
   caseInsensitive: z.boolean().optional(),
   context: z.number().int().min(0).max(20).optional(),
@@ -37,7 +37,7 @@ const inputSchema = z.strictObject({
 
 const description = [
   'Search file contents by regular expression and return the matching lines, each prefixed with its absolute path and line number.',
-  'Searches the workspace root unless path names a narrower file or directory, which must be absolute, and glob narrows further by file name.',
+  'Searches the workspace root unless path names a narrower file or directory (a relative path resolves against the project directory), and glob narrows further by file name.',
   `Returns at most ${DEFAULT_HEAD_LIMIT} lines unless headLimit says otherwise; when more match, the result says so and offset asks for the next page.`,
   'Version control directories are never searched, and long lines are cut short.',
 ].join(' ')
@@ -214,14 +214,24 @@ export class GrepTool extends SchemaTool<typeof inputSchema> {
     signal,
     projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const { pattern, path, glob, caseInsensitive, context, headLimit, offset } = input
+    const { pattern, glob, caseInsensitive, context, headLimit, offset } = input
+    const rawPath = input.path
+    const searchPath = resolveToolPath({ projectDirectory, path: rawPath ?? projectDirectory })
 
-    if (path !== undefined) {
-      const target = await stat(path).catch(() => null)
-      if (target === null) return { ok: false, reason: await missingPathReason({ path }) }
+    if (rawPath !== undefined) {
+      const target = await stat(searchPath).catch(() => null)
+      if (target === null) {
+        return {
+          ok: false,
+          reason: await missingPathReason({
+            path: searchPath,
+            ...(rawPath === searchPath
+              ? {}
+              : { resolvedFrom: { raw: rawPath, projectDirectory } }),
+          }),
+        }
+      }
     }
-
-    const searchPath = path ?? projectDirectory
     const searcher = searcherFor({
       pattern,
       searchPath,
