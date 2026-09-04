@@ -47,21 +47,33 @@ const compiledFor = (ctx: PromptContext): readonly string[] =>
 describe('the answer-in-text fragment across the model axis', () => {
   const fragment = new AnswerInTextFragment()
 
-  it('applies to the kimi fast model whose answer vanished into reasoning', () => {
-    expect(
-      fragment.applies(contextFor({ providerId: 'inference', modelId: 'kimi-k3-fast' })),
-    ).toBe(true)
-  })
+  const KIMI_IDS: readonly { providerId: string; modelId: string }[] = [
+    { providerId: 'inference', modelId: 'kimi-k3-fast' },
+    { providerId: 'inference', modelId: 'kimi-k3' },
+    { providerId: 'inference', modelId: 'kimi-k2.6' },
+    { providerId: 'inference', modelId: 'kimi-k2.5' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k3' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k2' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k2-0905' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k2-thinking' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k2.5' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k2.6' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-k2.7-code' },
+    { providerId: 'openrouter', modelId: 'moonshotai/kimi-latest' },
+  ]
 
-  it("applies to kimi reached through another provider, since the quirk is the model's", () => {
-    expect(
-      fragment.applies(contextFor({ providerId: 'openrouter', modelId: 'moonshotai/kimi-k3' })),
-    ).toBe(true)
+  it('applies to every kimi id the picker offers, on either provider', () => {
+    for (const { providerId, modelId } of KIMI_IDS) {
+      expect(fragment.applies(contextFor({ providerId, modelId }))).toBe(true)
+    }
   })
 
   it('stays out of prompts for models without the quirk', () => {
     expect(
       fragment.applies(contextFor({ providerId: 'anthropic-oauth', modelId: 'claude-opus-5' })),
+    ).toBe(false)
+    expect(
+      fragment.applies(contextFor({ providerId: 'openrouter', modelId: 'openai/gpt-5' })),
     ).toBe(false)
   })
 
