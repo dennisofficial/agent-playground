@@ -5,6 +5,8 @@ import {
   EAutoCompact,
   overflowsWindow,
   awaitsReply,
+  callIdsIn,
+  dedupeCallIds,
   estimateTokensFor,
   imageTierOf,
   contextWindowOf,
@@ -22,6 +24,7 @@ import {
   type EventLogPort,
   type IdPort,
   type ModelPort,
+  type ModelToolCall,
   type RuleContext,
   type RunId,
   type ToolDeclaration,
@@ -34,7 +37,7 @@ import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally }
 import { appendResumeDrafts } from './resume-turn'
 import { createSettlePending, type SettlePending } from './settle-pending'
 import { draftsFor, interruptedDrafts } from './step-drafts'
-import { faultReport, overflowReport, stalledReport } from './turn-faults'
+import { faultReport, overflowReport, stalledReport, swallowedReport } from './turn-faults'
 import { committedSinceLastMessage, messageArrivedSince } from './turn-position'
 import { ETurnStatus, type TurnOutcome } from './turn-outcome'
 import { TurnRunner } from './turn-runner.port'
@@ -178,6 +181,7 @@ export class LoopTurnRunner extends TurnRunner {
     let seenThrough: number | undefined
     let settleAttempted: CallId | undefined
     let compacted = false
+    const committedCalls: ModelToolCall[] = []
 
     const interrupted = async (): Promise<TurnOutcome> => ({
       status: ETurnStatus.Interrupted,
@@ -224,6 +228,10 @@ export class LoopTurnRunner extends TurnRunner {
       const owned = rowsOwnedBy({ events, threadId })
 
       if (!awaitsReply(owned) && !messageArrivedSince({ events: owned, seenThrough })) {
+        const swallowed = committedCalls.at(-1)
+        if (swallowed !== undefined) {
+          return { status: ETurnStatus.Failed, runId, message: swallowedReport(swallowed), cause: swallowed }
+        }
         return { status: ETurnStatus.Idle, runId }
       }
 
@@ -297,14 +305,18 @@ export class LoopTurnRunner extends TurnRunner {
       }
 
       if (abortSignal.aborted) {
-        const abandoned = interruptedDrafts(stepped.result)
+        const abandoned = dedupeCallIds({
+          drafts: interruptedDrafts(stepped.result),
+          taken: callIdsIn(events),
+        })
         if (abandoned.length > 0) await this.log.append({ threadId, runId, drafts: abandoned })
         return interrupted()
       }
 
-      const drafts = draftsFor(stepped.result)
+      const drafts = dedupeCallIds({ drafts: draftsFor(stepped.result), taken: callIdsIn(events) })
       if (drafts.length > 0) await this.log.append({ threadId, runId, drafts })
 
+      committedCalls.push(...stepped.result.toolCalls)
       if (stepped.result.toolCalls.length > 0) continue
 
       const latest = await this.log.read({ threadId })

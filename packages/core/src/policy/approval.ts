@@ -1,7 +1,7 @@
 import { EDecision } from '../events/body'
 import type { Event } from '../events/envelope'
 import type { CallId } from '../events/ids'
-import { answeredApproval, eventsOfType, inputForCall } from '../events/projections'
+import { answeredApproval, eventsOfType } from '../events/projections'
 
 export type ApprovalRequest = { callId: CallId; reason: string }
 
@@ -38,9 +38,12 @@ function askedReason({
 export function resolveApproval({
   events,
   callId,
+  input,
 }: {
   events: readonly Event[]
   callId: CallId
+  /** The pending call occurrence's own input — passed in because a reused call id makes a by-id lookup ambiguous. */
+  input: unknown
 }): ResolvedApproval {
   const answer = answeredApproval({ events, callId })
 
@@ -52,5 +55,9 @@ export function resolveApproval({
     }
   }
 
-  return { resolution: EApprovalResolution.Dispatch, input: inputForCall({ events, callId }) }
+  if (answer?.decision === EDecision.Allow && answer.editedInput !== undefined) {
+    return { resolution: EApprovalResolution.Dispatch, input: answer.editedInput }
+  }
+
+  return { resolution: EApprovalResolution.Dispatch, input }
 }

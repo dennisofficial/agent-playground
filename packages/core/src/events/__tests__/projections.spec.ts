@@ -127,6 +127,79 @@ describe('pendingCalls', () => {
   })
 })
 
+describe('a call id the provider hands out twice', () => {
+  const resulted = (args: { callId: string }): EventDraft => ({
+    type: 'tool-result',
+    callId: toCallId(args.callId),
+    name: 'read_file',
+    output: 'contents',
+  })
+
+  it('holds the fresh call as pending — an older result with the same id settles nothing new', () => {
+    const events = eventsAcrossRuns([
+      { draft: called({ callId: 'call-1', ordinal: 0 }), runId: 'run-1' },
+      { draft: resulted({ callId: 'call-1' }), runId: 'run-1' },
+      { draft: called({ callId: 'call-1', ordinal: 0, input: { path: '/fresh' } }), runId: 'run-2' },
+    ])
+
+    expect(pendingCalls(events).map((call) => [call.runId, call.input])).toEqual([
+      [toRunId('run-2'), { path: '/fresh' }],
+    ])
+  })
+
+  it('lets one result settle two calls that share an id one at a time, oldest open first', () => {
+    const events = eventsFrom([
+      called({ callId: 'call-1', ordinal: 0 }),
+      called({ callId: 'call-1', ordinal: 1 }),
+      resulted({ callId: 'call-1' }),
+    ])
+
+    expect(pendingCalls(events).map((call) => call.ordinal)).toEqual([0])
+  })
+
+  it('ignores a result that arrives with no open call behind it', () => {
+    const events = eventsFrom([
+      resulted({ callId: 'call-1' }),
+      called({ callId: 'call-1', ordinal: 0 }),
+    ])
+
+    expect(pendingCalls(events).map((call) => call.callId)).toEqual([toCallId('call-1')])
+  })
+
+  it('answers the input question with the latest call carrying the id', () => {
+    const events = eventsFrom([
+      called({ callId: 'call-1', ordinal: 0, input: { path: '/stale' } }),
+      resulted({ callId: 'call-1' }),
+      called({ callId: 'call-1', ordinal: 0, input: { path: '/fresh' } }),
+    ])
+
+    expect(inputForCall({ events, callId: toCallId('call-1') })).toEqual({ path: '/fresh' })
+  })
+
+  it('stops counting an approval answer once the id is called again', () => {
+    const events = eventsFrom([
+      called({ callId: 'call-1', ordinal: 0 }),
+      { type: 'approval-requested', callId: toCallId('call-1'), reason: 'writes' },
+      { type: 'approval-answered', callId: toCallId('call-1'), decision: EDecision.Deny },
+      called({ callId: 'call-1', ordinal: 0 }),
+    ])
+
+    expect(answeredApproval({ events, callId: toCallId('call-1') })).toBeUndefined()
+  })
+
+  it('holds a fresh approval request as outstanding despite the answer the old call got', () => {
+    const events = eventsFrom([
+      called({ callId: 'call-1', ordinal: 0 }),
+      { type: 'approval-requested', callId: toCallId('call-1'), reason: 'writes' },
+      { type: 'approval-answered', callId: toCallId('call-1'), decision: EDecision.Allow },
+      called({ callId: 'call-1', ordinal: 0 }),
+      { type: 'approval-requested', callId: toCallId('call-1'), reason: 'writes again' },
+    ])
+
+    expect(outstandingApproval(events)).toBe(toCallId('call-1'))
+  })
+})
+
 describe('answeredApproval', () => {
   it('is undefined when nothing answered the call', () => {
     const events = eventsFrom([{ type: 'approval-requested', callId: toCallId('call-1'), reason: 'writes' }])

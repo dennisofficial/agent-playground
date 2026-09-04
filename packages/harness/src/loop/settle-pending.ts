@@ -69,7 +69,7 @@ export function createSettlePending(deps: {
     const calls = [...pendingCalls(owned)]
       .sort((left, right) => left.ordinal - right.ordinal)
       .map((call) => {
-        const answered = resolveApproval({ events: owned, callId: call.callId })
+        const answered = resolveApproval({ events: owned, callId: call.callId, input: call.input })
         if (answered.resolution === EApprovalResolution.Dispatch) {
           return { ...call, input: answered.input }
         }
