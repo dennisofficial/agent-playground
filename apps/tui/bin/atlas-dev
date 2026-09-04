@@ -44,6 +44,7 @@ RESTART=75
 restart_file=$(mktemp "${TMPDIR:-/tmp}/atlas-dev-restart.XXXXXX")
 trap 'rm -f "$restart_file"' EXIT
 export ATLAS_DEV_RESTART_FILE="$restart_file"
+export ATLAS_DEV=1
 
 generate
 
