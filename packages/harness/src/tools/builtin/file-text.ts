@@ -1,11 +1,12 @@
-import { isAbsolute } from 'node:path'
+import { isAbsolute, resolve } from 'node:path'
 
 import { z } from 'zod'
 
-export const absolutePathSchema = z
-  .string()
-  .min(1)
-  .refine((value) => isAbsolute(value), { message: 'path must be absolute' })
+export const filePathSchema = z.string().min(1)
+
+export function resolveToolPath(args: { projectDirectory: string; path: string }): string {
+  return isAbsolute(args.path) ? args.path : resolve(args.projectDirectory, args.path)
+}
 
 export enum ELineEnding {
   Lf = 'lf',

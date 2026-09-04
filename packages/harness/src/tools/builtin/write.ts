@@ -15,16 +15,16 @@ import { z } from 'zod'
 import {  portToken } from '../../container/injection'
 import { writeFileAtomically } from '../../files/atomic-write'
 import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
-import { absolutePathSchema } from './file-text'
+import { filePathSchema, resolveToolPath } from './file-text'
 
 const inputSchema = z.strictObject({
-  path: absolutePathSchema,
+  path: filePathSchema,
   content: z.string(),
 })
 
 const description = [
   'Write a text file, replacing it entirely if it already exists.',
-  'The path must be absolute; missing parent directories are created.',
+  'A relative path resolves against the project directory; missing parent directories are created.',
   'Content is written byte for byte, so send the line endings you want the file to have.',
   'Prefer the edit tool for changing part of an existing file.',
 ].join(' ')
@@ -48,8 +48,10 @@ export class WriteTool extends SchemaTool<typeof inputSchema> {
   protected override async run({
     input,
     threadId,
+    projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
-    const { path, content } = input
+    const path = resolveToolPath({ projectDirectory, path: input.path })
+    const { content } = input
 
     const guarded = await this.guard.underLock({
       threadId,

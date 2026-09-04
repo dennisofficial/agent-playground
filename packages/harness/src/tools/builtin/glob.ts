@@ -13,18 +13,18 @@ import {
   type ToolRun,
 } from '@dltech/atlas-core'
 
-import { absolutePathSchema } from './file-text'
+import { filePathSchema, resolveToolPath } from './file-text'
 
 const RESULT_LIMIT = 100
 
 const inputSchema = z.strictObject({
   pattern: z.string().min(1),
-  path: absolutePathSchema.optional(),
+  path: filePathSchema.optional(),
 })
 
 const description = [
   'Find files by glob pattern and return their absolute paths, most recently modified first.',
-  'Matches against the directory you are currently in unless path names a different one, which must be absolute.',
+  'Matches against the directory you are currently in unless path names a different one; a relative path resolves against the project directory.',
   `Returns at most ${RESULT_LIMIT} paths; when more match, the result says how many were left out.`,
   'Hidden files and directories are not matched.',
 ].join(' ')
@@ -73,7 +73,7 @@ export class GlobTool extends SchemaTool<typeof inputSchema> {
     projectDirectory,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     const { pattern, path } = input
-    const from = path ?? projectDirectory
+    const from = path === undefined ? projectDirectory : resolveToolPath({ projectDirectory, path })
 
     const found: DatedPath[] = []
     try {

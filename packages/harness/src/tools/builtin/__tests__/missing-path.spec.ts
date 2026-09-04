@@ -5,7 +5,6 @@ import { beforeAll, describe, expect, it } from 'bun:test'
 
 import { toThreadId, type ToolOutcome } from '@dltech/atlas-core'
 
-import { absolutePathSchema } from '../file-text'
 import { GrepTool, type GrepInput } from '../grep'
 import { ReadTool } from '../read'
 
@@ -94,32 +93,5 @@ describe('a missing path tells the model what is actually there', () => {
     const outcome = await search({ pattern: 'needle', path: join(root, 'top.ts') })
 
     expect(outcome.ok).toBe(true)
-  })
-})
-
-describe('absolutePathSchema', () => {
-  it('rejects a relative path and says why', () => {
-    const parsed = absolutePathSchema.safeParse('apps/tui/src/app.ts')
-
-    expect(parsed.success).toBe(false)
-    if (!parsed.success) expect(parsed.error.issues[0]?.message).toContain('absolute')
-  })
-
-  it('accepts an absolute path', () => {
-    expect(absolutePathSchema.safeParse(join(root, 'top.ts')).success).toBe(true)
-  })
-
-  it('turns a relative read path into invalid-input feedback', async () => {
-    const reason = reasonOf(await read('apps/tui/src/app.ts'))
-
-    expect(reason).toContain('invalid input')
-    expect(reason).toContain('absolute')
-  })
-
-  it('turns a relative grep path into invalid-input feedback', async () => {
-    const reason = reasonOf(await search({ pattern: 'needle', path: 'apps/tui' }))
-
-    expect(reason).toContain('invalid input')
-    expect(reason).toContain('absolute')
   })
 })
