@@ -10,7 +10,6 @@ import { classifyRequestOf } from "./classify";
 import { runClassify } from "./classify-run";
 import { resolveConfig } from "./config";
 import { ESession, openSession } from "./open-session";
-import { trackRenderStats } from "./render-stats";
 import { RESTART_EXIT_CODE, restartResumeHandle } from "./restart";
 import { resumeHint } from "./resume-hint";
 import { loadSettings } from "./settings-binding";
@@ -63,7 +62,6 @@ export async function bootAtlas(args: {
     exitOnCtrlC: false,
     targetFps: TARGET_FPS,
   });
-  trackRenderStats(renderer);
 
   const untrackFocus = trackTerminalFocus({
     source: renderer,

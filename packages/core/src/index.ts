@@ -188,8 +188,6 @@ export * from './version/semver'
 export * from './secrets/mask'
 export * from './secrets/prompt'
 
-export * from './perf/counters'
-export * from './perf/keys'
 export * from './notices/notice'
 export * from './notices/queue'
 

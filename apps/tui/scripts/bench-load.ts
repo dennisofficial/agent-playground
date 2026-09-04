@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { drainPerfCounters, EPerfCounter, type ThreadId } from '@dltech/atlas-core'
+import type { ThreadId } from '@dltech/atlas-core'
 import {
   buildHarness,
   BunShellRegistry,
@@ -48,13 +48,22 @@ const parseFlags = (argv: readonly string[]): BenchFlags => ({
   seconds: positiveInteger({ name: 'seconds', raw: readFlag({ argv, name: 'seconds' }), fallback: 30 }),
 })
 
+let streamedParts = 0
+
 const benchModel = (): MockLanguageModelV4 => {
   const parts = providerPartsFor({ text: STEP_TEXT })
   return new MockLanguageModelV4({
     provider: 'bench',
     modelId: 'bench-kimi-speed',
     doStream: async () => ({
-      stream: simulateReadableStream({ chunks: parts, initialDelayInMs: 0, chunkDelayInMs: 0 }),
+      stream: simulateReadableStream({ chunks: parts, initialDelayInMs: 0, chunkDelayInMs: 0 }).pipeThrough(
+        new TransformStream({
+          transform: (part, controller) => {
+            streamedParts += 1
+            controller.enqueue(part)
+          },
+        }),
+      ),
     }),
   })
 }
@@ -62,11 +71,10 @@ const benchModel = (): MockLanguageModelV4 => {
 type BenchSamples = {
   cpuMicros: number
   peakRssBytes: number
-  counters: Map<string, number>
 }
 
 const startSampler = (): { samples: BenchSamples; stop: () => void } => {
-  const samples: BenchSamples = { cpuMicros: 0, peakRssBytes: 0, counters: new Map() }
+  const samples: BenchSamples = { cpuMicros: 0, peakRssBytes: 0 }
   let stopped = false
   let previous = process.cpuUsage()
   const collect = (): void => {
@@ -74,9 +82,6 @@ const startSampler = (): { samples: BenchSamples; stop: () => void } => {
     samples.cpuMicros += cpu.user - previous.user + (cpu.system - previous.system)
     previous = cpu
     samples.peakRssBytes = Math.max(samples.peakRssBytes, process.memoryUsage().rss)
-    for (const [key, value] of Object.entries(drainPerfCounters())) {
-      samples.counters.set(key, (samples.counters.get(key) ?? 0) + value)
-    }
   }
   const timer = setInterval(collect, SAMPLE_EVERY_MS)
   return {
@@ -90,7 +95,7 @@ const startSampler = (): { samples: BenchSamples; stop: () => void } => {
   }
 }
 
-type AgentTally = { completed: number; failed: number }
+type AgentTally = { completed: number; failed: number; turnMs: number }
 
 const runAgent = async (args: {
   harness: AtlasHarness
@@ -99,8 +104,11 @@ const runAgent = async (args: {
 }): Promise<AgentTally> => {
   let completed = 0
   let failed = 0
+  let turnMs = 0
   while (Date.now() < args.deadline) {
+    const started = performance.now()
     const outcome = await args.harness.runner.say({ threadId: args.threadId, text: TURN_PROMPT })
+    turnMs += performance.now() - started
     if (outcome.status === ETurnStatus.Completed) {
       completed += 1
       continue
@@ -108,7 +116,7 @@ const runAgent = async (args: {
     failed += 1
     await Bun.sleep(FAILURE_BACKOFF_MS)
   }
-  return { completed, failed }
+  return { completed, failed, turnMs }
 }
 
 const startShells = (args: { shells: BunShellRegistry; threadId: ThreadId }): void => {
@@ -142,17 +150,14 @@ const spawnAgents = async (args: {
   return agents
 }
 
-const counter = (samples: BenchSamples, key: EPerfCounter): number => samples.counters.get(key) ?? 0
-
 const printReport = (args: {
   flags: BenchFlags
   agents: number
   wallSeconds: number
   tally: AgentTally
   samples: BenchSamples
+  chunks: number
 }): void => {
-  const chunks = counter(args.samples, EPerfCounter.HarnessChunk)
-  const turnMs = counter(args.samples, EPerfCounter.TurnMs)
   const rows: [string, string][] = [
     ['threads', String(args.flags.threads)],
     ['agents', String(args.agents)],
@@ -161,11 +166,10 @@ const printReport = (args: {
     ['turns completed', String(args.tally.completed)],
     ['turns failed', String(args.tally.failed)],
     ['turns / second', (args.tally.completed / args.wallSeconds).toFixed(1)],
-    ['model chunks', String(chunks)],
-    ['chunks / second', (chunks / args.wallSeconds).toFixed(1)],
-    ['harness chunk ms', counter(args.samples, EPerfCounter.HarnessChunkMs).toFixed(0)],
-    ['turn ms total', turnMs.toFixed(0)],
-    ['turn ms avg', (turnMs / Math.max(args.tally.completed, 1)).toFixed(1)],
+    ['model chunks', String(args.chunks)],
+    ['chunks / second', (args.chunks / args.wallSeconds).toFixed(1)],
+    ['turn ms total', args.tally.turnMs.toFixed(0)],
+    ['turn ms avg', (args.tally.turnMs / Math.max(args.tally.completed, 1)).toFixed(1)],
     ['cpu seconds', (args.samples.cpuMicros / 1_000_000).toFixed(2)],
     ['cpu avg %', ((args.samples.cpuMicros / 1_000_000 / args.wallSeconds) * 100).toFixed(1)],
     ['peak rss MB', (args.samples.peakRssBytes / 1024 / 1024).toFixed(0)],
@@ -177,8 +181,12 @@ const printReport = (args: {
 
 const sumTallies = (tallies: readonly AgentTally[]): AgentTally =>
   tallies.reduce<AgentTally>(
-    (sum, each) => ({ completed: sum.completed + each.completed, failed: sum.failed + each.failed }),
-    { completed: 0, failed: 0 },
+    (sum, each) => ({
+      completed: sum.completed + each.completed,
+      failed: sum.failed + each.failed,
+      turnMs: sum.turnMs + each.turnMs,
+    }),
+    { completed: 0, failed: 0, turnMs: 0 },
   )
 
 const main = async (): Promise<void> => {
@@ -194,7 +202,7 @@ const main = async (): Promise<void> => {
   const sampler = startSampler()
   const startedAt = performance.now()
   let agents = 0
-  let tally: AgentTally = { completed: 0, failed: 0 }
+  let tally: AgentTally = { completed: 0, failed: 0, turnMs: 0 }
   let wallSeconds = 0
   try {
     const agentIds = await spawnAgents({ harness, shells, threads: flags.threads })
@@ -209,7 +217,7 @@ const main = async (): Promise<void> => {
     await harness.close()
     rmSync(root, { recursive: true, force: true })
   }
-  printReport({ flags, agents, wallSeconds, tally, samples: sampler.samples })
+  printReport({ flags, agents, wallSeconds, tally, samples: sampler.samples, chunks: streamedParts })
   console.log('\ncleanup: shells killed, database closed, temp directory removed')
 }
 

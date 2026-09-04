@@ -17,7 +17,6 @@ import {
   EPromptAgent,
   DEFAULT_WORKTREE_DIRECTORY,
   EServiceStatus,
-  EPerfModelRole,
   ESettingId,
   EWebSearchBackend,
   backendOf,
@@ -129,12 +128,9 @@ import {
   type DiscoveredSkill,
   type McpServerStatus,
   type SettingsService,
-  createPerfSampler,
 } from '@dltech/atlas-harness'
 
 import { createPendingQueue, type PendingQueue } from '../store'
-import { countModelTraffic } from './counting-model'
-import { atlasRevision } from './atlas-revision'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
@@ -458,13 +454,6 @@ export async function composeAtlas(args: {
   container.register(PrismaClientToken, { useValue: database.prisma })
   registerDisposable({ container, close: database.close })
 
-  const perfSampler = createPerfSampler({
-    prisma: database.prisma,
-    workspace: config.cwd,
-    revision: atlasRevision(),
-  })
-  registerDisposable({ container, close: perfSampler.dispose })
-
   const skillRegistry = bindSkillRegistry({
     container,
     registry: await liveSkillRegistry({
@@ -552,18 +541,9 @@ export async function composeAtlas(args: {
 
   let activeThread: ActiveConversation | null = null
 
-  const titlerModel = countModelTraffic({
-    model: createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID }),
-    role: EPerfModelRole.Titler,
-  })
-  const summariserModel = countModelTraffic({
-    model: createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID }),
-    role: EPerfModelRole.Summariser,
-  })
-  const tldrModel = countModelTraffic({
-    model: createAnthropicOauthModel({ credentials, modelId: TLDR_MODEL_ID }),
-    role: EPerfModelRole.Tldr,
-  })
+  const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
+  const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
+  const tldrModel = createAnthropicOauthModel({ credentials, modelId: TLDR_MODEL_ID })
 
   const summarise: Summariser = ({ events, fromSeq, throughSeq, signal }) =>
     summaryFor({

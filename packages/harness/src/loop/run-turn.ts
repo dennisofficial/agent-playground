@@ -15,11 +15,6 @@ import {
   pendingCalls,
   projectDirectoryOf,
   rowsOwnedBy,
-  adjustPerfGauge,
-  EPerfCounter,
-  EPerfGauge,
-  measurePerf,
-  measurePerfAsync,
   type Assembled,
   type AssemblyPipeline,
   type ThreadId,
@@ -145,22 +140,16 @@ export class LoopTurnRunner extends TurnRunner {
     const spend = openTurnSpend({ ...(this.spend ?? {}), model: this.model.identity })
     let status: string = TURN_CRASHED
 
-    adjustPerfGauge({ key: EPerfGauge.HarnessTurnDepth, delta: 1 })
     try {
-      const outcome = await measurePerfAsync({
-        key: EPerfCounter.TurnMs,
-        run: () =>
-          this.trackedTurn({
-            threadId,
-            runId,
-            spend,
-            ...(signal === undefined ? {} : { signal }),
-          }),
+      const outcome = await this.trackedTurn({
+        threadId,
+        runId,
+        spend,
+        ...(signal === undefined ? {} : { signal }),
       })
       status = outcome.status
       return outcome
     } finally {
-      adjustPerfGauge({ key: EPerfGauge.HarnessTurnDepth, delta: -1 })
       await spend.settle({ threadId, runId, status })
     }
   }
@@ -171,19 +160,8 @@ export class LoopTurnRunner extends TurnRunner {
     const waiting = await this.drainPending({ threadId })
     if (waiting.length === 0) return false
 
-    await this.timedAppend({ threadId, runId: this.ids.nextRunId(), drafts: waiting })
+    await this.log.append({ threadId, runId: this.ids.nextRunId(), drafts: waiting })
     return true
-  }
-
-  private timedLogRead(threadId: ThreadId) {
-    return measurePerfAsync({
-      key: EPerfCounter.TurnLogReadMs,
-      run: () => this.log.read({ threadId }),
-    })
-  }
-
-  private timedAppend(args: { threadId: ThreadId; runId: RunId; drafts: readonly EventDraft[] }) {
-    return measurePerfAsync({ key: EPerfCounter.TurnAppendMs, run: () => this.log.append(args) })
   }
 
   private async trackedTurn({
@@ -214,15 +192,15 @@ export class LoopTurnRunner extends TurnRunner {
     })
 
     const projectDirectory = projectDirectoryOf({
-      events: await this.timedLogRead(threadId),
+      events: await this.log.read({ threadId }),
       launchDirectory: this.launchDirectory,
     })
 
     const opening = (await this.hooks?.beforeTurn({ threadId, projectDirectory })) ?? []
-    if (opening.length > 0) await this.timedAppend({ threadId, runId, drafts: opening })
+    if (opening.length > 0) await this.log.append({ threadId, runId, drafts: opening })
 
     for (;;) {
-      const beforeDrain = await this.timedLogRead(threadId)
+      const beforeDrain = await this.log.read({ threadId })
       const ownedBeforeDrain = rowsOwnedBy({ events: beforeDrain, threadId })
 
       const waiting = outstandingApproval(ownedBeforeDrain)
@@ -241,16 +219,13 @@ export class LoopTurnRunner extends TurnRunner {
         }
 
         settleAttempted = pending.callId
-        const settled = await measurePerfAsync({
-          key: EPerfCounter.TurnToolMs,
-          run: () => settlePending({ threadId, signal: abortSignal }),
-        })
+        const settled = await settlePending({ threadId, signal: abortSignal })
         if (settled.paused !== undefined) return { status: ETurnStatus.Paused, runId, ...settled.paused }
         if (abortSignal.aborted) return interrupted()
         continue
       }
 
-      const events = (await this.drainInto({ threadId })) ? await this.timedLogRead(threadId) : beforeDrain
+      const events = (await this.drainInto({ threadId })) ? await this.log.read({ threadId }) : beforeDrain
       const owned = rowsOwnedBy({ events, threadId })
 
       if (!awaitsReply(owned) && !messageArrivedSince({ events: owned, seenThrough })) {
@@ -272,14 +247,10 @@ export class LoopTurnRunner extends TurnRunner {
         ...(previous === undefined ? {} : { previous }),
       }
 
-      const { assembled: projected, trace } = measurePerf({
-        key: EPerfCounter.TurnAssembleMs,
-        run: () =>
-          assemble({
-            rules: this.assembly.rules,
-            annotators: this.assembly.annotators,
-            ctx,
-          }),
+      const { assembled: projected, trace } = assemble({
+        rules: this.assembly.rules,
+        annotators: this.assembly.annotators,
+        ctx,
       })
 
       const assembled = (await this.hooks?.beforeStep({ assembled: projected, trace })) ?? projected
@@ -316,17 +287,13 @@ export class LoopTurnRunner extends TurnRunner {
         return { status: ETurnStatus.Failed, runId, message: faultReport(faults), cause: faults }
       }
 
-      const stepped = await measurePerfAsync({
-        key: EPerfCounter.TurnModelStepMs,
-        run: () =>
-          takeModelStepWithRetry({
-            model: this.model,
-            tools: this.tools(),
-            onChunk: this.onChunk,
-            assembled,
-            signal: abortSignal,
-            retry: this.retry,
-          }),
+      const stepped = await takeModelStepWithRetry({
+        model: this.model,
+        tools: this.tools(),
+        onChunk: this.onChunk,
+        assembled,
+        signal: abortSignal,
+        retry: this.retry,
       })
 
       modelSteps += 1
@@ -348,17 +315,17 @@ export class LoopTurnRunner extends TurnRunner {
       }
 
       const drafts = dedupeCallIds({ drafts: draftsFor(stepped.result), taken: callIdsIn(events) })
-      if (drafts.length > 0) await this.timedAppend({ threadId, runId, drafts })
+      if (drafts.length > 0) await this.log.append({ threadId, runId, drafts })
 
       committedCalls.push(...stepped.result.toolCalls)
       if (stepped.result.toolCalls.length > 0) continue
 
-      const latest = await this.timedLogRead(threadId)
+      const latest = await this.log.read({ threadId })
       if (messageArrivedSince({ events: latest, seenThrough })) continue
       if (await this.drainInto({ threadId })) continue
 
       const closing = (await this.hooks?.afterTurn({ threadId })) ?? []
-      if (closing.length > 0) await this.timedAppend({ threadId, runId, drafts: closing })
+      if (closing.length > 0) await this.log.append({ threadId, runId, drafts: closing })
 
       return { status: ETurnStatus.Completed, runId }
     }
