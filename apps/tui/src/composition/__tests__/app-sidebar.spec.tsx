@@ -105,12 +105,12 @@ describe('the sidebar', () => {
     }
   }, 60_000)
 
-  it('names the repository with the launch worktree beneath it when opened inside one', async () => {
+  it('names the repository with the launch worktree beneath it when opened inside one, even from a deep subdirectory', async () => {
     const repo = `${homedir()}/Developer/comp-v3`
     const worktree = `${repo}/.claude/worktrees/portal-auth-url`
     const app: FakeApp = fakeApp({
       model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }),
-      cwd: worktree,
+      cwd: `${worktree}/apps/tui`,
       workspace: { workspace: worktree, repo },
     })
     const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
@@ -160,6 +160,71 @@ describe('the sidebar', () => {
 
       const frame = setup.captureCharFrame()
       expect(frame).not.toContain('.claude/worktrees/portal-auth-url')
+
+      const rows = frame.split('\n')
+      const mark = rows.findIndex((row) => row.includes(SIDEBAR_MARK))
+      expect(rows[mark - 1]).toContain('~/Developer/comp-v3')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('names the worktree the session returned to, even when relaunched from the main checkout', async () => {
+    const repo = `${homedir()}/Developer/comp-v3`
+    const departed = `${repo}/.claude/worktrees/portal-auth-url`
+    const returned = `${repo}/.claude/worktrees/launch-tree`
+    const app: FakeApp = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }),
+      cwd: repo,
+      workspace: { workspace: repo, repo },
+    })
+    const events = await app.log.append({
+      threadId: THREAD,
+      runId: toRunId('run-before'),
+      drafts: [
+        { type: 'user-said', text: 'wrap it up' },
+        { type: 'worktree-entered', path: departed, branch: 'dennis/portal-auth-url' },
+        { type: 'worktree-exited', path: departed, action: EWorktreeExit.Keep, returnTo: returned },
+      ],
+    })
+    const setup = await testRender(
+      <App app={app} opened={{ threadId: THREAD, events, turns: [], name: null, started: true }} />,
+      { width: 140, height: 40 },
+    )
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      const rows = setup.captureCharFrame().split('\n')
+      const mark = rows.findIndex((row) => row.includes(SIDEBAR_MARK))
+      expect(rows[mark - 2]).toContain('~/Developer/comp-v3')
+      expect(rows[mark - 1]).toContain('.claude/worktrees/launch-tree')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it('names the main checkout alone when opened in a subdirectory of it', async () => {
+    const repo = `${homedir()}/Developer/comp-v3`
+    const app: FakeApp = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: REPLY } }),
+      cwd: `${repo}/packages/db`,
+      workspace: { workspace: repo, repo },
+    })
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: 140,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+      expect(frame).not.toContain('packages/db')
 
       const rows = frame.split('\n')
       const mark = rows.findIndex((row) => row.includes(SIDEBAR_MARK))

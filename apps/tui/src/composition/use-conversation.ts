@@ -300,7 +300,7 @@ export function useConversation(args: {
       threadId: opened.threadId,
       projectDirectory: projectDirectoryOf({
         events: opened.events,
-        launchDirectory: app.config.cwd,
+        launchDirectory: app.workspace.workspace,
       }),
     })
   }, [app, opened])
@@ -313,12 +313,12 @@ export function useConversation(args: {
     projectDirectory: string
     activeWorktree: ActiveWorktree | null
   } => {
-    const launchDirectory = app.config.cwd
+    const launchDirectory = app.workspace.workspace
     return {
       projectDirectory: projectDirectoryOf({ events, launchDirectory }),
       activeWorktree: activeWorktreeOf(events) ?? null,
     }
-  }, [events, app.config.cwd])
+  }, [events, app.workspace.workspace])
   usedRef.current = used
 
   const rows = useMemo(

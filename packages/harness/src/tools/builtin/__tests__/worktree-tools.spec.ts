@@ -293,6 +293,44 @@ describe('leaving a worktree', () => {
     expect(outcome.ok).toBe(true)
     expect(await exists(inside.path)).toBe(false)
   })
+
+  it('returns to the main checkout, not the worktree the session was launched inside', async () => {
+    const root = await repoWithCommit()
+    const launched = join(root, 'launched-here')
+    await git(['worktree', 'add', '-b', 'launched', launched], root)
+    const { enter, exit } = toolsFor(launched)
+
+    const entering = await enter.invoke(
+      invocation({ input: { name: 'eng-327' }, projectDirectory: launched }),
+    )
+    expect(entering.ok).toBe(true)
+    if (!entering.ok) return
+    const entry = enteredWorktreeOf(entering.output)
+    if (entry === undefined) throw new Error('enter reported no worktree')
+
+    const outcome = await exit.invoke(
+      invocation({
+        input: { action: EWorktreeExit.Keep },
+        projectDirectory: entry.path,
+        homeDirectory: launched,
+        activeWorktree: {
+          path: entry.path,
+          branch: entry.branch,
+          base: entry.base,
+          adopted: false,
+        },
+      }),
+    )
+
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) return
+    expect(exitedWorktreeOf(outcome.output)).toEqual({
+      path: entry.path,
+      action: EWorktreeExit.Keep,
+      returnTo: root,
+    })
+    expect(outcome.modelText).toContain('main checkout')
+  })
 })
 
 describe('leaving a worktree the session was launched inside', () => {

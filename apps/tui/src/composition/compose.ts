@@ -298,7 +298,7 @@ export async function composeAtlas(args: {
   }
 
   registerBuiltinPromptFragments({ container })
-  container.register(WorkspaceRoot, { useValue: config.cwd })
+  container.register(WorkspaceRoot, { useValue: workspace.workspace })
   container.register(KeychainReaderToken, { useValue: createSecurityKeychainReader() })
 
   const keychainService = launchValue(ESettingId.KeychainService)
@@ -340,7 +340,7 @@ export async function composeAtlas(args: {
   })
 
   const environment = environmentFor({
-    projectDirectory: config.cwd,
+    projectDirectory: workspace.workspace,
     repoRoot: workspace.repo ?? undefined,
     worktreeHome:
       workspace.repo === null
@@ -622,12 +622,13 @@ export async function composeAtlas(args: {
     ids,
     assembly: defaultPipeline({
       prompt: compiledPrompt,
-      launchDirectory: config.cwd,
+      launchDirectory: workspace.workspace,
+      repoRoot: workspace.repo ?? undefined,
       runningShells,
       runningAgents,
       runningServices,
     }),
-    launchDirectory: config.cwd,
+    launchDirectory: workspace.workspace,
     tools,
     dispatch: container.resolve(portToken(ToolDispatcher)),
     hooks: container.resolve(HookChainToken),
@@ -686,7 +687,8 @@ export async function composeAtlas(args: {
               ),
               projectDirectory,
             }),
-          launchDirectory: config.cwd,
+          launchDirectory: workspace.workspace,
+          repoRoot: workspace.repo ?? undefined,
           runningShells,
           runningServices,
         }),

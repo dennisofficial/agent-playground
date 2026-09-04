@@ -18,12 +18,14 @@ export type AssemblyPipeline = {
 export function defaultRules({
   prompt,
   launchDirectory,
+  repoRoot,
   runningShells,
   runningServices,
   runningAgents,
 }: {
   prompt: PromptSource
   launchDirectory: string
+  repoRoot?: string | undefined
   runningShells?: RunningShellsSource | undefined
   runningServices?: RunningServicesSource | undefined
   runningAgents?: RunningAgentsSource | undefined
@@ -34,7 +36,7 @@ export function defaultRules({
     agentEndingsBlock(),
     compactedHistory(),
     imagesInContext(),
-    worktreeBlock({ launchDirectory }),
+    worktreeBlock({ launchDirectory, repoRoot }),
     ...(runningShells === undefined ? [] : [runningShellsBlock({ runningShells })]),
     ...(runningServices === undefined ? [] : [runningServicesBlock({ runningServices })]),
     ...(runningAgents === undefined ? [] : [runningAgentsBlock({ runningAgents })]),
@@ -48,18 +50,20 @@ export function defaultAnnotators(): readonly Annotator[] {
 export function defaultPipeline({
   prompt,
   launchDirectory,
+  repoRoot,
   runningShells,
   runningServices,
   runningAgents,
 }: {
   prompt: PromptSource
   launchDirectory: string
+  repoRoot?: string | undefined
   runningShells?: RunningShellsSource | undefined
   runningServices?: RunningServicesSource | undefined
   runningAgents?: RunningAgentsSource | undefined
 }): AssemblyPipeline {
   return {
-    rules: defaultRules({ prompt, launchDirectory, runningShells, runningServices, runningAgents }),
+    rules: defaultRules({ prompt, launchDirectory, repoRoot, runningShells, runningServices, runningAgents }),
     annotators: defaultAnnotators(),
   }
 }

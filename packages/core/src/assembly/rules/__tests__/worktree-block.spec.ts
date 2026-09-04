@@ -64,6 +64,18 @@ describe('telling the model it is in a worktree', () => {
     expect(note).toContain('which has no upstream')
   })
 
+  it('names the main checkout rather than the launch directory when the session started in another worktree', () => {
+    const launchedInside = '/repo/.claude/worktrees/feat-a'
+    const ctx = contextFor({ events: log([entered]) })
+    const withMessages = messagesFromEvents()({ system: [], messages: [] }, ctx)
+    const assembled = worktreeBlock({ launchDirectory: launchedInside, repoRoot: '/repo' })(withMessages, ctx)
+
+    const note = assembled.system.at(-1)?.text ?? ''
+    expect(note).toContain('checked out at /repo;')
+    expect(note).toContain("main checkout")
+    expect(note).not.toContain(launchedInside)
+  })
+
   it('falls silent once the worktree is exited', () => {
     const assembled = assembleWith(
       log([entered, { type: 'worktree-exited', path: TREE, action: EWorktreeExit.Keep }]),

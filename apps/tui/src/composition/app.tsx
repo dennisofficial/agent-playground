@@ -14,7 +14,6 @@ import React, {
 import {
   contextPressure,
   ECompactionAnchor,
-  launchWorktreeOf,
   type EUsageWindow,
   type ModelCard,
 } from '@dltech/atlas-core'
@@ -440,12 +439,11 @@ function Workspace(props: {
   const sidebarVisible = !welcome && sidebarShown({ layout, peeking })
   const overlay = sidebarVisible && !wide
 
-  const launchWorktree = launchWorktreeOf(props.app.workspace)
   const repoRoot = props.app.workspace.repo ?? props.app.config.cwd
   const sidebarWorktree =
     conversation.activeWorktree?.path ??
-    (launchWorktree !== null && conversation.projectDirectory === props.app.config.cwd
-      ? launchWorktree
+    (conversation.projectDirectory.startsWith(`${repoRoot}/`)
+      ? conversation.projectDirectory
       : null)
   const projectRoot = sidebarWorktree === null ? conversation.projectDirectory : repoRoot
   const docked = wide && !welcome

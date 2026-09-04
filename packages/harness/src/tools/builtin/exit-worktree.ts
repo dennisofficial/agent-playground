@@ -21,7 +21,7 @@ const inputSchema = z.strictObject({
 })
 
 const description = [
-  'Leave the worktree the session is in and return to the home directory - the directory Atlas was launched in, or the main checkout if the session already left a worktree it was launched inside.',
+  "Leave the worktree the session is in and return to the repository's main checkout - the ordinary checkout the worktree was cut from, wherever the session was launched.",
   'keep leaves the worktree and its branch on disk to come back to; remove deletes both.',
   'remove only ever touches a worktree Atlas created with enter_worktree name. One the session merely entered by path, or was launched inside, already existed, so it is left on disk whichever action is asked for, and the developer removes it themselves.',
   'A session launched inside a worktree is in one even though it never entered: exiting moves the session to the main checkout of the repository and always keeps the worktree.',
@@ -66,25 +66,29 @@ export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
       return this.leaveLaunchDirectory({ input, projectDirectory })
     }
 
-    const home = homeDirectory ?? this.launchDirectory
     const path = projectDirectory
 
     const repository = await repositoryAt({ cwd: path })
     if (repository.ok) await releaseWorktree({ cwd: repository.view.root, path })
 
+    const returnTo = repository.ok ? repository.view.root : (homeDirectory ?? this.launchDirectory)
+    const landing = repository.ok
+      ? `The project directory is now ${returnTo}, the repository's main checkout.`
+      : `The project directory is ${returnTo} again.`
+
     if (input.action === EWorktreeExit.Remove && activeWorktree.adopted) {
       return {
         ok: true,
-        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo: home } },
-        modelText: `Left the worktree at ${path}. Atlas did not create it - the session entered one that already existed - so it stays on disk with its branch and nothing was removed. Tell the developer that, and let them remove it themselves if they want it gone. The project directory is ${home} again.`,
+        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo } },
+        modelText: `Left the worktree at ${path}. Atlas did not create it - the session entered one that already existed - so it stays on disk with its branch and nothing was removed. Tell the developer that, and let them remove it themselves if they want it gone. ${landing}`,
       }
     }
 
     if (input.action === EWorktreeExit.Keep) {
       return {
         ok: true,
-        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo: home } },
-        modelText: `Left the worktree at ${path}, which stays on disk with its branch. The project directory is ${home} again.`,
+        output: { exitedWorktree: { path, action: EWorktreeExit.Keep, returnTo } },
+        modelText: `Left the worktree at ${path}, which stays on disk with its branch. ${landing}`,
       }
     }
 
@@ -127,8 +131,8 @@ export class ExitWorktreeTool extends SchemaTool<typeof inputSchema> {
 
     return {
       ok: true,
-      output: { exitedWorktree: { path, action: EWorktreeExit.Remove, returnTo: home } },
-      modelText: `Removed the worktree at ${path}${branch === undefined ? '' : ` and its branch ${branch}`}.${branchNote} The project directory is ${home} again.`,
+      output: { exitedWorktree: { path, action: EWorktreeExit.Remove, returnTo } },
+      modelText: `Removed the worktree at ${path}${branch === undefined ? '' : ` and its branch ${branch}`}.${branchNote} ${landing}`,
     }
   }
 
