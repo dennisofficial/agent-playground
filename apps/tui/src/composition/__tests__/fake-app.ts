@@ -267,6 +267,7 @@ export type FakeShells = ShellRegistryPort & {
   place: (snapshot: ShellSnapshot, owner?: ThreadId) => void
   print: (args: { shellId: string; text: string }) => void
   announce: (snapshot: ShellSnapshot, owner?: ThreadId) => void
+  poke: () => void
   readonly killed: readonly string[]
 }
 
@@ -348,6 +349,8 @@ export function fakeShellRegistry(): FakeShells {
       revisionListeners.add(listener)
       return () => void revisionListeners.delete(listener)
     },
+
+    poke: () => bump(),
 
     start: () => ({ ok: false, reason: 'the fake registry starts no processes' }),
 

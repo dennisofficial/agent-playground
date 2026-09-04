@@ -60,7 +60,8 @@ type Mounted = Awaited<ReturnType<typeof testRender>>
 /**
  * The fake registry hands back the very array it mutates, so a status changed in place is
  * invisible to the snapshot comparison that decides whether to re-render. Swapping the listing
- * for a fresh array is what makes a shell look like it ended.
+ * for a fresh array plus a poke is what makes a shell look like it ended: the real registry
+ * publishes on exit, and the fake has to say so out loud.
  */
 function endingShell(args: { app: FakeApp; running: ShellSnapshot }): () => void {
   let listed: readonly ShellSnapshot[] = [args.running]
@@ -69,6 +70,7 @@ function endingShell(args: { app: FakeApp; running: ShellSnapshot }): () => void
 
   return () => {
     listed = [{ ...args.running, status: EShellStatus.Exited }]
+    args.app.shells.poke()
   }
 }
 
