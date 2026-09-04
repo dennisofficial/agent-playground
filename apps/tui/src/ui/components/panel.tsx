@@ -211,7 +211,7 @@ export function Panel(props: {
       {capped ? (
         <Edge
           head
-          fill={band}
+          fill={headed ? band : props.fill}
           {...(props.rail === undefined ? {} : { rail: props.rail })}
           {...(props.label === undefined ? {} : { label: props.label })}
           {...(props.badge === undefined ? {} : { badge: props.badge })}
