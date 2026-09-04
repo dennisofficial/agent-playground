@@ -32,6 +32,7 @@ import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
 import { ECompactScope } from './compact-turn'
 import { useRevokeGrant } from './revoke-grant'
 import type { Renaming } from './session-rename'
+import { terminalTitleSequence } from './terminal-title'
 import { threadHandle } from './thread-slug'
 import { userSaidDraft } from './user-said'
 import { useCompaction } from './use-compaction'
@@ -320,6 +321,12 @@ export function useConversation(args: {
     }
   }, [events, app.workspace.workspace])
   usedRef.current = used
+
+  useEffect(() => {
+    process.stdout.write(
+      terminalTitleSequence({ name, directory: workspace.projectDirectory }),
+    )
+  }, [name, workspace.projectDirectory])
 
   const rows = useMemo(
     () => pendingRows({ messages: queued, notices, agents: agentNotices, services: serviceNotices }),

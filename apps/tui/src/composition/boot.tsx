@@ -14,6 +14,7 @@ import { RESTART_EXIT_CODE, restartResumeHandle } from "./restart";
 import { resumeHint } from "./resume-hint";
 import { loadSettings } from "./settings-binding";
 import { trackTerminalFocus } from "./terminal-focus";
+import { terminalTitleSequence } from "./terminal-title";
 import { readTerminalSize, settleTerminalSize } from "./terminal-size";
 
 const TARGET_FPS = 120;
@@ -67,6 +68,8 @@ export async function bootAtlas(args: {
     write: (sequence) => process.stdout.write(sequence),
   });
   renderer.once("destroy", untrackFocus);
+
+  process.stdout.write(terminalTitleSequence({ name: null, directory: config.cwd }));
 
   const stopSettling = settleTerminalSize({
     read: () => readTerminalSize(process.stdout),
