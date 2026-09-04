@@ -198,4 +198,10 @@ CREATE INDEX "PerfSample_pid_startedAt_idx" ON "PerfSample"("pid", "startedAt");
 CREATE INDEX "PerfSample_startedAt_idx" ON "PerfSample"("startedAt");
 `,
   },
+  {
+    name: '20260904170000_drop_perf_samples',
+    sql: `-- DropTable
+DROP TABLE "PerfSample";
+`,
+  },
 ]

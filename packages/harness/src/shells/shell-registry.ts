@@ -1,11 +1,4 @@
-import {
-  adjustPerfGauge,
-  ClockPort,
-  EKilledBy,
-  EPerfGauge,
-  type EventDraft,
-  type ThreadId,
-} from '@dltech/atlas-core'
+import { ClockPort, EKilledBy, type EventDraft, type ThreadId } from '@dltech/atlas-core'
 
 import {  portToken } from '../container/injection'
 import { HookChainSourceToken, WorkspaceRoot } from '../container/tokens'
@@ -143,7 +136,6 @@ export class BunShellRegistry extends ShellRegistryPort {
       threadId: args.threadId,
       pattern: args.watch,
     })
-    adjustPerfGauge({ key: EPerfGauge.ActiveShells, delta: 1 })
     this.bump()
 
     return { ok: true, snapshot: opened.shell.snapshot() }
@@ -304,7 +296,6 @@ export class BunShellRegistry extends ShellRegistryPort {
     if (entry === undefined || entry.announced) return
 
     entry.announced = true
-    adjustPerfGauge({ key: EPerfGauge.ActiveShells, delta: -1 })
     this.bump()
 
     const settling = this.queueEnding({ entry, shell })

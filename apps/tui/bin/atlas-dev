@@ -54,21 +54,9 @@ export NODE_ENV=production
 
 generate
 
-# Every source launch profiles itself at Bun's default 1 ms sampling interval: cheap enough that
-# the PerfSample telemetry can measure the overhead, and every exit leaves a flamegraph so a hot
-# session explains itself after the fact. Profiles live in the Atlas home rather than beside the
-# checkout — a worktree launch would otherwise scatter them somewhere that gets deleted, and the
-# PerfSample rows they pair with are in the same place. ATLAS_CPU_PROF=0 opts out.
-PROF_ARGS=""
-if [ "${ATLAS_CPU_PROF:-1}" != "0" ]; then
-  prof_dir="${ATLAS_HOME:-$HOME/.atlas}/cpuprofiles"
-  mkdir -p "$prof_dir"
-  PROF_ARGS="--cpu-prof --cpu-prof-dir=$prof_dir --cpu-prof-name=atlas-$(date +%Y%m%d-%H%M%S)-$$.cpuprofile"
-fi
-
 while :; do
   code=0
-  bun $PROF_ARGS src/main.tsx --cwd "$project" "$@" || code=$?
+  bun src/main.tsx --cwd "$project" "$@" || code=$?
 
   if [ "$code" -ne "$RESTART" ]; then
     exit "$code"

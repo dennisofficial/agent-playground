@@ -1,6 +1,4 @@
 import {
-  adjustPerfGauge,
-  EPerfGauge,
   isResumable,
   resumeDrafts,
   rowsOwnedBy,
@@ -156,7 +154,6 @@ export function useTurnDriver(args: {
       store.supersedeFailure()
       stamp(() => turnStarted({ now: readClock() }))
 
-      adjustPerfGauge({ key: EPerfGauge.TurnDepth, delta: 1 })
       void (async () => {
         try {
           if (drafts.length > 0) {
@@ -181,7 +178,6 @@ export function useTurnDriver(args: {
         } finally {
           gate.settle()
           abort.current = null
-          adjustPerfGauge({ key: EPerfGauge.TurnDepth, delta: -1 })
           setWorking(false)
           stamp((current) => turnSettled({ progress: current, now: readClock() }))
           await refresh().catch(() => undefined)
