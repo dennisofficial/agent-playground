@@ -9,11 +9,13 @@ import {
   BunShellRegistry,
   ETurnStatus,
   HookChain,
-  providerPartsFor,
   SystemClock,
   type AtlasHarness,
+  type TurnRunner,
 } from '@dltech/atlas-harness'
-import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
+
+import { benchModel, chunksStreamed } from './bench-model'
+import { mountBenchRender, publishingRunner, type BenchRender } from './bench-render'
 
 const AGENTS_PER_THREAD = 5
 const SHELLS_PER_AGENT = 4
@@ -23,12 +25,7 @@ const FAILURE_BACKOFF_MS = 50
 const SHELL_COMMAND = 'i=0; while true; do i=$((i+1)); echo "bench-shell line $i"; sleep 0.05; done'
 const TURN_PROMPT = 'Stream the full benchmark status report, then stop.'
 
-const STEP_TEXT = Array.from(
-  { length: 256 },
-  (_, index) => `section ${index}: the worker drifted past its quota while the queue kept growing`,
-).join('\n')
-
-type BenchFlags = { threads: number; seconds: number }
+type BenchFlags = { threads: number; seconds: number; render: boolean }
 
 const readFlag = (args: { argv: readonly string[]; name: string }): string | undefined => {
   const prefix = `--${args.name}=`
@@ -46,27 +43,8 @@ const positiveInteger = (args: { name: string; raw: string | undefined; fallback
 const parseFlags = (argv: readonly string[]): BenchFlags => ({
   threads: positiveInteger({ name: 'threads', raw: readFlag({ argv, name: 'threads' }), fallback: 1 }),
   seconds: positiveInteger({ name: 'seconds', raw: readFlag({ argv, name: 'seconds' }), fallback: 30 }),
+  render: !argv.includes('--no-render'),
 })
-
-let streamedParts = 0
-
-const benchModel = (): MockLanguageModelV4 => {
-  const parts = providerPartsFor({ text: STEP_TEXT })
-  return new MockLanguageModelV4({
-    provider: 'bench',
-    modelId: 'bench-kimi-speed',
-    doStream: async () => ({
-      stream: simulateReadableStream({ chunks: parts, initialDelayInMs: 0, chunkDelayInMs: 0 }).pipeThrough(
-        new TransformStream({
-          transform: (part, controller) => {
-            streamedParts += 1
-            controller.enqueue(part)
-          },
-        }),
-      ),
-    }),
-  })
-}
 
 type BenchSamples = {
   cpuMicros: number
@@ -98,7 +76,7 @@ const startSampler = (): { samples: BenchSamples; stop: () => void } => {
 type AgentTally = { completed: number; failed: number; turnMs: number }
 
 const runAgent = async (args: {
-  harness: AtlasHarness
+  runner: TurnRunner
   threadId: ThreadId
   deadline: number
 }): Promise<AgentTally> => {
@@ -107,7 +85,7 @@ const runAgent = async (args: {
   let turnMs = 0
   while (Date.now() < args.deadline) {
     const started = performance.now()
-    const outcome = await args.harness.runner.say({ threadId: args.threadId, text: TURN_PROMPT })
+    const outcome = await args.runner.say({ threadId: args.threadId, text: TURN_PROMPT })
     turnMs += performance.now() - started
     if (outcome.status === ETurnStatus.Completed) {
       completed += 1
@@ -157,9 +135,11 @@ const printReport = (args: {
   tally: AgentTally
   samples: BenchSamples
   chunks: number
+  frames: number | null
 }): void => {
   const rows: [string, string][] = [
     ['threads', String(args.flags.threads)],
+    ['render tier', args.flags.render ? 'on' : 'off'],
     ['agents', String(args.agents)],
     ['shells', String(args.agents * SHELLS_PER_AGENT)],
     ['wall seconds', args.wallSeconds.toFixed(2)],
@@ -168,12 +148,18 @@ const printReport = (args: {
     ['turns / second', (args.tally.completed / args.wallSeconds).toFixed(1)],
     ['model chunks', String(args.chunks)],
     ['chunks / second', (args.chunks / args.wallSeconds).toFixed(1)],
+  ]
+  if (args.frames !== null) {
+    rows.push(['frames rendered', String(args.frames)])
+    rows.push(['frames / second', (args.frames / args.wallSeconds).toFixed(1)])
+  }
+  rows.push(
     ['turn ms total', args.tally.turnMs.toFixed(0)],
     ['turn ms avg', (args.tally.turnMs / Math.max(args.tally.completed, 1)).toFixed(1)],
     ['cpu seconds', (args.samples.cpuMicros / 1_000_000).toFixed(2)],
     ['cpu avg %', ((args.samples.cpuMicros / 1_000_000 / args.wallSeconds) * 100).toFixed(1)],
     ['peak rss MB', (args.samples.peakRssBytes / 1024 / 1024).toFixed(0)],
-  ]
+  )
   const width = Math.max(...rows.map(([label]) => label.length))
   console.log('\nbench-load report')
   for (const [label, value] of rows) console.log(`  ${label.padEnd(width)}  ${value}`)
@@ -197,27 +183,36 @@ const main = async (): Promise<void> => {
     databaseUrl: `file:${join(root, 'bench.db')}`,
     launchDirectory: root,
   })
+  const { channel, runner } = publishingRunner({ harness, root })
   const shells = new BunShellRegistry(root, new SystemClock(), () => new HookChain({}))
+  const visibleThread = await harness.threads.create({ title: 'bench-visible' })
+  const render: BenchRender | null = flags.render
+    ? await mountBenchRender({ root, harness, shells, channel, runner, threadId: visibleThread.id })
+    : null
 
   const sampler = startSampler()
   const startedAt = performance.now()
   let agents = 0
   let tally: AgentTally = { completed: 0, failed: 0, turnMs: 0 }
   let wallSeconds = 0
+  let frames: number | null = null
   try {
     const agentIds = await spawnAgents({ harness, shells, threads: flags.threads })
     agents = agentIds.length
     const deadline = Date.now() + flags.seconds * 1_000
-    const tallies = await Promise.all(agentIds.map((threadId) => runAgent({ harness, threadId, deadline })))
+    const streaming = [...agentIds, visibleThread.id]
+    const tallies = await Promise.all(streaming.map((threadId) => runAgent({ runner, threadId, deadline })))
     tally = sumTallies(tallies)
     wallSeconds = (performance.now() - startedAt) / 1_000
+    frames = render === null ? null : render.framesRendered()
   } finally {
     sampler.stop()
+    if (render !== null) await render.close()
     await shells.closeAll()
     await harness.close()
     rmSync(root, { recursive: true, force: true })
   }
-  printReport({ flags, agents, wallSeconds, tally, samples: sampler.samples, chunks: streamedParts })
+  printReport({ flags, agents, wallSeconds, tally, samples: sampler.samples, chunks: chunksStreamed(), frames })
   console.log('\ncleanup: shells killed, database closed, temp directory removed')
 }
 
