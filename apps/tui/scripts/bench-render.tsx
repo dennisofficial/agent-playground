@@ -5,6 +5,7 @@ import {
   AccountUsagePort,
   defaultPipeline,
   EEffort,
+  EExecutionLocation,
   EMPTY_PROMPT,
   type AccountUsage,
   type ThreadId,
@@ -28,6 +29,8 @@ import { testRender } from '@opentui/react/test-utils'
 import { App } from '../src/composition/app'
 import type { AtlasApp } from '../src/composition/compose'
 import { DEFAULT_MODEL_REF, EOpenMode } from '../src/composition/config'
+import { createExecutionLocationState } from '../src/composition/execution-location-state'
+import { createSandboxStatusState } from '../src/composition/sandbox-status-state'
 import { heldChoice } from '../src/composition/model-selection'
 import { fakeAgentRegistry } from '../src/composition/__tests__/fake-agents'
 import {
@@ -119,7 +122,10 @@ const benchApp = (args: {
     pullRequests: null,
     mcp: () => [],
     threadOpened: async () => {},
-    warp: null,
+    sandbox: { noteBash: () => {}, stop: async () => false },
+    containerStatus: createSandboxStatusState({ image: 'unused' }),
+    executionLocation: createExecutionLocationState({ initial: EExecutionLocation.Host }),
+    executionPinned: false,
     close: async () => {},
   }
 }
