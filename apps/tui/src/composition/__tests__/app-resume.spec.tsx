@@ -44,6 +44,12 @@ async function stoppedMidReply() {
   })
   expect(idle).toBe(true)
 
+  const offered = await until({
+    holds: async () => (await mounted.frame()).includes(RESUME_HINT),
+    within: 20_000,
+  })
+  expect(offered).toBe(true)
+
   return mounted
 }
 
