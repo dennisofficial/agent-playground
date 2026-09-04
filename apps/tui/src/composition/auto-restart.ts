@@ -1,6 +1,7 @@
 import type { SourceStaleness } from './update-check'
 
 export type RestartSafety = {
+  readonly working: boolean
   readonly interrupting: boolean
   readonly compacting: boolean
   readonly approvalOpen: boolean
@@ -11,6 +12,7 @@ export type RestartSafety = {
 }
 
 export function autoRestartBlocker(args: RestartSafety): string | null {
+  if (args.working) return 'a turn is running'
   if (args.interrupting) return 'the turn is being interrupted'
   if (args.compacting) return 'a compaction is running'
   if (args.approvalOpen) return 'an approval is waiting'

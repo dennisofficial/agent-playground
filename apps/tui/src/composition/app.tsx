@@ -305,8 +305,8 @@ function Workspace(props: {
   /**
    * Ambient and off the boot path: a stale-build or release-available notice may arrive a beat
    * after the curtain lifts, and a probe that cannot reach its ground truth says nothing. The
-   * staleness probe stamps the source tree at launch and re-checks on a slow timer; the turn-end
-   * edge below is what acts on it.
+   * staleness probe stamps the source tree at launch; the slow timer and the turn-end edge below
+   * are what act on it.
    */
   const staleness = useRef<SourceStaleness | null>(null)
   useEffect(() => {
@@ -317,10 +317,8 @@ function Workspace(props: {
       if (mounted) staleness.current = probe
     })
 
-    const timer = setInterval(() => void staleness.current?.check(), STALE_CHECK_MS)
     return () => {
       mounted = false
-      clearInterval(timer)
     }
   }, [])
 
@@ -604,43 +602,60 @@ function Workspace(props: {
   }, [exitGuard.state])
 
   /**
-   * The falling edge of `working` is a turn ending — the one moment a stale atlas-dev session may
-   * swap itself out without taking anything with it. The safety snapshot is read after the stamp
-   * check resolves rather than captured at the edge, so a keystroke that lands in between still
-   * holds the restart off. Anything less than clean falls back to the sticky notice.
+   * The falling edge of `working` is a turn ending; the slow timer covers the idle stretches —
+   * the welcome screen above all, where no turn ever ends. Both are moments a stale atlas-dev
+   * session may swap itself out without taking anything with it. The safety snapshot is read
+   * after the stamp check resolves rather than captured up front, so a keystroke that lands in
+   * between still holds the restart off. Anything less than clean falls back to the sticky notice.
    */
+  const settleStale = useCallback(
+    () =>
+      void settleStaleness({
+        staleness: staleness.current,
+        autoRestart: settings.autoRestart,
+        restart: props.onRestart,
+        readSafety: () => ({
+          working: conversation.working,
+          interrupting: conversation.turn.interrupting,
+          compacting: conversation.compacting !== null,
+          approvalOpen: conversation.approval.state !== null,
+          exitGuardOpen: exitGuard.state !== null,
+          queuedMessages: props.app.pending.getSnapshot().length,
+          runningTasks: shells.running + agents.running + services.running,
+          draftEmpty: (draft.editor.current?.plainText ?? draft.value).length === 0,
+        }),
+      }),
+    [
+      settings.autoRestart,
+      props.onRestart,
+      props.app.pending,
+      conversation,
+      exitGuard.state,
+      shells.running,
+      agents.running,
+      services.running,
+      draft,
+    ],
+  )
+
+  const settleStaleRef = useRef(settleStale)
+  useEffect(() => {
+    settleStaleRef.current = settleStale
+  })
+
   const wasWorking = useRef(false)
   useEffect(() => {
     const turnEnded = wasWorking.current && !working
     wasWorking.current = working
     if (!turnEnded) return
 
-    void settleStaleness({
-      staleness: staleness.current,
-      autoRestart: settings.autoRestart,
-      restart: props.onRestart,
-      readSafety: () => ({
-        interrupting: conversation.turn.interrupting,
-        compacting: conversation.compacting !== null,
-        approvalOpen: conversation.approval.state !== null,
-        exitGuardOpen: exitGuard.state !== null,
-        queuedMessages: props.app.pending.getSnapshot().length,
-        runningTasks: shells.running + agents.running + services.running,
-        draftEmpty: (draft.editor.current?.plainText ?? draft.value).length === 0,
-      }),
-    })
-  }, [
-    working,
-    settings.autoRestart,
-    props.onRestart,
-    props.app.pending,
-    conversation,
-    exitGuard.state,
-    shells.running,
-    agents.running,
-    services.running,
-    draft,
-  ])
+    settleStale()
+  }, [working, settleStale])
+
+  useEffect(() => {
+    const timer = setInterval(() => settleStaleRef.current(), STALE_CHECK_MS)
+    return () => clearInterval(timer)
+  }, [])
 
   // OpenTUI parses a whole input burst before React re-renders, so a paste — or ⏎ arriving in the
   // same burst as the text — reaches here with `draft.value` still empty. The buffer is the truth.

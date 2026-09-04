@@ -4,6 +4,7 @@ import { autoRestartBlocker, settleStaleness, type RestartSafety } from '../auto
 import type { SourceStaleness } from '../update-check'
 
 const CLEAN: RestartSafety = {
+  working: false,
   interrupting: false,
   compacting: false,
   approvalOpen: false,
@@ -20,6 +21,7 @@ describe('autoRestartBlocker', () => {
 
   it('blocks on anything a restart would lose or interrupt', () => {
     const cases: readonly [Partial<RestartSafety>, string][] = [
+      [{ working: true }, 'turn is running'],
       [{ interrupting: true }, 'interrupt'],
       [{ compacting: true }, 'compaction'],
       [{ approvalOpen: true }, 'approval'],
@@ -112,6 +114,20 @@ describe('settleStaleness', () => {
       autoRestart: true,
       restart,
       readSafety: () => ({ ...CLEAN, runningTasks: 1 }),
+    })
+
+    expect(calls.restart).toBe(0)
+    expect(calls.check).toBe(1)
+  })
+
+  it('holds the restart while a turn is still running', async () => {
+    const { calls, probe, restart } = rig({ stale: true })
+
+    await settleStaleness({
+      staleness: probe,
+      autoRestart: true,
+      restart,
+      readSafety: () => ({ ...CLEAN, working: true }),
     })
 
     expect(calls.restart).toBe(0)
