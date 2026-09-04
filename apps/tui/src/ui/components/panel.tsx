@@ -129,6 +129,27 @@ function Band(props: { rail?: string; fill: string; children: ReactNode }): Reac
 }
 
 /**
+ * The footer's rows may wrap, so unlike `Band` it takes the height its children need rather than
+ * pinning one row.
+ */
+function FooterBand(props: { rail?: string; fill: string; children: ReactNode }): ReactNode {
+  return (
+    <box flexShrink={0} {...railed(props.rail)}>
+      <box
+        flexDirection="column"
+        flexGrow={1}
+        flexShrink={0}
+        backgroundColor={props.fill}
+        paddingLeft={PANEL_PAD}
+        paddingRight={PANEL_PAD}
+      >
+        {props.children}
+      </box>
+    </box>
+  )
+}
+
+/**
  * The shape the transcript and the composer stack are built from; a surface that is positioned over
  * them rather than flowing with them is a drawer instead.
  *
@@ -138,7 +159,9 @@ function Band(props: { rail?: string; fill: string; children: ReactNode }): Reac
  *
  * `label`, `badge` and `title` are set into the head band, so they need their own background to
  * stand clear of the `▄` behind them. A `header` instead spends a whole row on its own ground,
- * seamed off the body below it whenever `band` is a different colour from `fill`.
+ * seamed off the body below it whenever `band` is a different colour from `fill`. A `footer` is
+ * the mirror of that at the bottom: seamed off the body onto `band`, and the panel then closes
+ * on `band` rather than `fill`.
  */
 export function Panel(props: {
   rail?: string
@@ -148,6 +171,7 @@ export function Panel(props: {
   badge?: ReactNode
   title?: ReactNode
   header?: ReactNode
+  footer?: ReactNode
   width?: number
   children: ReactNode
 }): React.ReactNode {
@@ -177,6 +201,7 @@ export function Panel(props: {
 
   const band = props.band ?? props.fill
   const headed = props.header !== undefined
+  const footed = props.footer !== undefined
   const comfort = blockDensity() === EBlockDensity.Comfort
   const capped = !headed || comfort
   const seamed = headed && comfort && band !== props.fill
@@ -206,10 +231,22 @@ export function Panel(props: {
         />
       ) : null}
       {body}
+      {footed ? (
+        <Seam
+          above={props.fill}
+          below={band}
+          {...(props.rail === undefined ? {} : { rail: props.rail })}
+        />
+      ) : null}
+      {footed ? (
+        <FooterBand fill={band} {...(props.rail === undefined ? {} : { rail: props.rail })}>
+          {props.footer}
+        </FooterBand>
+      ) : null}
       {capped ? (
         <Edge
           head={false}
-          fill={props.fill}
+          fill={footed ? band : props.fill}
           {...(props.rail === undefined ? {} : { rail: props.rail })}
         />
       ) : null}

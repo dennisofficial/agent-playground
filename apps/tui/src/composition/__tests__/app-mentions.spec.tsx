@@ -239,7 +239,7 @@ describe('mentioning a file from the composer', () => {
       await setup.flush()
 
       const frame = setup.captureCharFrame()
-      expect(frame).toContain('⎿ file src/mentionable.ts')
+      expect(frame).toContain('⬚ mentionable.ts')
     } finally {
       await teardown(setup)
     }
@@ -258,7 +258,7 @@ describe('mentioning a file from the composer', () => {
 
       const frame = setup.captureCharFrame()
       expect(frame).toContain('why is @src/absent.ts broken')
-      expect(frame).not.toContain('⎿ file')
+      expect(frame).not.toContain('⬚')
     } finally {
       await teardown(setup)
     }

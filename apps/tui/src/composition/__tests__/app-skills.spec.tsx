@@ -189,7 +189,7 @@ describe('a skill dropped in mid-session', () => {
       await settle(2_000)
       await setup.flush()
 
-      expect(setup.captureCharFrame()).toContain('⎿ skill shanty')
+      expect(setup.captureCharFrame()).toContain('◆ shanty')
     } finally {
       await teardown(setup)
     }

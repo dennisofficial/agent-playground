@@ -64,7 +64,7 @@ describe('a message that loaded a skill', () => {
 
       const frame = setup.captureCharFrame()
       expect(frame).toContain('/pirate how about now?')
-      expect(frame).toContain('⎿ skill pirate')
+      expect(frame).toContain('◆ pirate')
     } finally {
       await teardown(setup)
     }
@@ -80,7 +80,7 @@ describe('a message that loaded a skill', () => {
       await settle(2_000)
       await setup.flush()
 
-      expect(setup.captureCharFrame()).not.toContain('⎿ skill')
+      expect(setup.captureCharFrame()).not.toContain('◆')
     } finally {
       await teardown(setup)
     }

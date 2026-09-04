@@ -28,6 +28,7 @@ export type Palette = {
   okBright: string
   userBg: string
   userFg: string
+  userBand: string
   harnessBg: string
   harnessFg: string
   caretBg: string
@@ -65,6 +66,7 @@ export const theme: Palette = {
   okBright: '#7ee787',
   userBg: '#332e2a',
   userFg: '#f0e9e3',
+  userBand: '#2b2724',
   harnessBg: '#3d2318',
   harnessFg: '#f3e3d8',
   caretBg: ACCENT,
