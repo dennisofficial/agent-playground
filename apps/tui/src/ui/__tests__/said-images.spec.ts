@@ -1,7 +1,7 @@
 import type { SaidImage } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
-import { saidImageLine } from '../said-images'
+import { saidImageText } from '../said-images'
 
 const said = (over: Partial<SaidImage> = {}): SaidImage => ({
   path: '/tmp/atlas/pastes/t1/paste-1.png',
@@ -14,10 +14,10 @@ const said = (over: Partial<SaidImage> = {}): SaidImage => ({
 
 describe('what a picture that rode along reads as in the transcript', () => {
   it('names the file, its size in pixels, and what it cost', () => {
-    expect(saidImageLine(said())).toBe('▣ paste-1.png · 560×280 · ~200 tokens')
+    expect(saidImageText(said())).toBe('paste-1.png · 560×280 · ~200 tokens')
   })
 
   it('leaves out the size and the cost when the dimensions were never read', () => {
-    expect(saidImageLine(said({ width: undefined, height: undefined }))).toBe('▣ paste-1.png')
+    expect(saidImageText(said({ width: undefined, height: undefined }))).toBe('paste-1.png')
   })
 })

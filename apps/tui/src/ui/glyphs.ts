@@ -15,6 +15,8 @@ export const glyph = {
   failed: '✗',
   passed: '✓',
   image: '▣',
+  skill: '◆',
+  file: '⬚',
   copy: '⧉',
   retry: '↻',
 } as const
