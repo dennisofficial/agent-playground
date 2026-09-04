@@ -8,6 +8,7 @@ import {
   EPathPresence,
   EToolEffect,
   SchemaTool,
+  doesNothing,
   waitsBySleeping,
   type DeclaredPathField,
   type ThreadId,
@@ -27,7 +28,7 @@ import {
   type Tail,
 } from '../../shells/shell-process'
 import { CHECK_IN_EVERY_MS, ShellRegistryPort } from '../../shells/shell-registry'
-import { bashDescription, ceilingClause, checkInClause, idlingRefusal, watchClause } from './bash-prose'
+import { bashDescription, ceilingClause, checkInClause, idlingRefusal, noOpRefusal, watchClause } from './bash-prose'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const MAXIMUM_TIMEOUT_MS = 600_000
@@ -177,7 +178,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         ...watchClause({ watch: args.watch }),
         ...ceilingClause({ timeoutMs: args.timeoutMs }),
         ...checkInClause({ checkInMs }),
-        'So do not wait on it: no sleeping, no polling, no idle loop. Take up other work, or end the turn and be woken.',
+        'So do not wait on it: no sleeping, no polling, no idle loop, and no do-nothing command to pass the time - a tick only spins the turn. Take up other work, or end the turn and be woken.',
         `Use shell_output({ shellId: "${shellId}" }) only for a shell that will not end on its own, such as a dev server`,
         `whose startup log you need, and shell_kill({ shellId: "${shellId}" }) to stop it.`,
       ].join(' '),
@@ -234,6 +235,10 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     }
 
     const timeout = Math.min(timeoutMs ?? DEFAULT_TIMEOUT_MS, MAXIMUM_TIMEOUT_MS)
+
+    if (doesNothing({ command })) {
+      return { ok: false, reason: noOpRefusal() }
+    }
 
     if (waitsBySleeping({ command, timeoutMs: timeout })) {
       return { ok: false, reason: idlingRefusal({ command, timeoutMs: timeout }) }

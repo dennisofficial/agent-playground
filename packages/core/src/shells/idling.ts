@@ -159,3 +159,14 @@ export function waitsBySleeping(args: { command: string; timeoutMs: number }): b
   const reading = readIdling(args)
   return reading.unbounded || reading.seconds > SLEEP_BUDGET_SECONDS
 }
+
+const NO_OP_WORD = /^(?:true|:)(?=\s|$)/
+const SEGMENT_BREAK = /&&|\|\||[;\n]/
+
+export function doesNothing({ command }: { command: string }): boolean {
+  const segments = command
+    .split(SEGMENT_BREAK)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0 && !segment.startsWith('#'))
+  return segments.length > 0 && segments.every((segment) => NO_OP_WORD.test(segment))
+}

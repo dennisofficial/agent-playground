@@ -85,7 +85,7 @@ describe('BashTool', () => {
   })
 
   it('says so when a command produced nothing at all', async () => {
-    const outcome = await invoke({ command: 'true' })
+    const outcome = await invoke({ command: `mkdir -p ${join(root, 'silent')}` })
 
     expect(outcome.ok && outcome.modelText).toBe('The command completed with no output.')
   })
@@ -255,6 +255,35 @@ describe('refusing to idle', () => {
 
     expect(outcome.ok).toBe(false)
     expect(!outcome.ok && outcome.reason).toContain('90 seconds asleep')
+  })
+
+  it('refuses a no-op run to pass the time, and names the wait that works', async () => {
+    const outcome = await invoke({ command: 'true' })
+
+    expect(outcome.ok).toBe(false)
+    const reason = !outcome.ok ? outcome.reason : ''
+    expect(reason).toContain('does nothing')
+    expect(reason).toContain('it waits by ending')
+    expect(reason).toContain('runInBackground')
+  })
+
+  it('refuses the other no-op spellings too', async () => {
+    expect((await invoke({ command: ':' })).ok).toBe(false)
+    expect((await invoke({ command: 'true; true' })).ok).toBe(false)
+  })
+
+  it('teaches in the description that a turn waits by ending, never by ticking', () => {
+    const { description } = new BashTool(new BunShellRegistry(root, new SystemClock(), noHooks))
+
+    expect(description).toContain('true, :')
+    expect(description).toContain('it waits by ending')
+    expect(description).toContain('no do-nothing call to tick the time away')
+  })
+
+  it('warns against the tick in the message a background start returns', async () => {
+    const outcome = await invoke({ command: 'sleep 30', runInBackground: true })
+
+    expect(outcome.ok && outcome.modelText).toContain('no do-nothing command to pass the time')
   })
 })
 

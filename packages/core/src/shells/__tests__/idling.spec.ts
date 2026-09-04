@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   SLEEP_BUDGET_SECONDS,
+  doesNothing,
   idledSeconds,
   readIdling,
   sleptSeconds,
@@ -156,6 +157,36 @@ describe('reading the loop a sleep sits inside', () => {
 
   it('keeps sleptSeconds a single pass, with no loop applied', () => {
     expect(sleptSeconds('for i in $(seq 1 115); do sleep 5; done')).toBe(5)
+  })
+})
+
+describe('a command that does nothing at all', () => {
+  it('calls the bare no-ops nothing', () => {
+    expect(doesNothing({ command: 'true' })).toBe(true)
+    expect(doesNothing({ command: ':' })).toBe(true)
+  })
+
+  it('calls a chain of no-ops nothing too', () => {
+    expect(doesNothing({ command: 'true; true' })).toBe(true)
+    expect(doesNothing({ command: 'true && :' })).toBe(true)
+    expect(doesNothing({ command: '  true  ' })).toBe(true)
+  })
+
+  it('ignores the arguments a no-op discards anyway', () => {
+    expect(doesNothing({ command: 'true # idle while the build runs' })).toBe(true)
+    expect(doesNothing({ command: ': still waiting' })).toBe(true)
+  })
+
+  it('leaves real commands alone, including words that merely start with one', () => {
+    expect(doesNothing({ command: 'echo hi' })).toBe(false)
+    expect(doesNothing({ command: 'bun test' })).toBe(false)
+    expect(doesNothing({ command: 'cat truestory.txt' })).toBe(false)
+    expect(doesNothing({ command: 'true; echo done' })).toBe(false)
+  })
+
+  it('has nothing to say about an empty command', () => {
+    expect(doesNothing({ command: '' })).toBe(false)
+    expect(doesNothing({ command: '# only a comment' })).toBe(false)
   })
 })
 
