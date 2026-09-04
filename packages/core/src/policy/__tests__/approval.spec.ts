@@ -39,7 +39,7 @@ describe('resolving an approval the operator has answered', () => {
       { type: 'approval-answered', callId: CALL, decision: EDecision.Deny },
     ])
 
-    expect(resolveApproval({ events, callId: CALL })).toEqual({
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
       resolution: EApprovalResolution.Refused,
       reason: 'the operator declined this call: writing outside the worktree',
     })
@@ -51,7 +51,7 @@ describe('resolving an approval the operator has answered', () => {
       { type: 'approval-answered', callId: CALL, decision: EDecision.Deny },
     ])
 
-    expect(resolveApproval({ events, callId: CALL })).toEqual({
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
       resolution: EApprovalResolution.Refused,
       reason: 'the operator declined this call',
     })
@@ -69,7 +69,7 @@ describe('resolving an approval the operator has answered', () => {
       },
     ])
 
-    expect(resolveApproval({ events, callId: CALL })).toEqual({
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
       resolution: EApprovalResolution.Dispatch,
       input: { path: 'docs/notes.md' },
     })
@@ -82,7 +82,7 @@ describe('resolving an approval the operator has answered', () => {
       { type: 'approval-answered', callId: CALL, decision: EDecision.Allow },
     ])
 
-    expect(resolveApproval({ events, callId: CALL })).toEqual({
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
       resolution: EApprovalResolution.Dispatch,
       input: { path: 'notes.md' },
     })
@@ -96,7 +96,7 @@ describe('resolving an approval the operator has answered', () => {
       { type: 'approval-answered', callId: CALL, decision: EDecision.Allow },
     ])
 
-    expect(resolveApproval({ events, callId: CALL })).toEqual({
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
       resolution: EApprovalResolution.Dispatch,
       input: { path: 'notes.md' },
     })
@@ -105,7 +105,25 @@ describe('resolving an approval the operator has answered', () => {
   it('dispatches an unanswered call untouched', () => {
     const events = eventsFrom([called, asked])
 
-    expect(resolveApproval({ events, callId: CALL })).toEqual({
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
+      resolution: EApprovalResolution.Dispatch,
+      input: { path: 'notes.md' },
+    })
+  })
+
+  it('keeps each pending occurrence of a reused call id with its own input', () => {
+    const events = eventsFrom([
+      called,
+      {
+        type: 'tool-called',
+        callId: CALL,
+        name: 'write',
+        input: { path: 'later.md' },
+        ordinal: 0,
+      },
+    ])
+
+    expect(resolveApproval({ events, callId: CALL, input: { path: 'notes.md' } })).toEqual({
       resolution: EApprovalResolution.Dispatch,
       input: { path: 'notes.md' },
     })

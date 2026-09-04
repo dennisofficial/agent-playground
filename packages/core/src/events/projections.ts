@@ -21,14 +21,34 @@ export function eventsOfType<TType extends EventType>({
   return events.filter((event): event is EventOfType<TType> => event.type === type)
 }
 
+/**
+ * A result settles the most recent open call carrying its id, not every call that ever carried it:
+ * some providers number tool calls per request (kimi's `bash_181`), so a rewound or compacted
+ * thread will see the same id called again, and only positional matching keeps the fresh call
+ * dispatchable.
+ */
 export function pendingCalls(events: readonly Event[]): PendingCall[] {
-  const settled = new Set<CallId>()
+  const open = new Map<CallId, EventOfType<'tool-called'>[]>()
+  const settled = new Set<EventOfType<'tool-called'>>()
+
   for (const event of events) {
-    if (event.type === 'tool-result' || event.type === 'tool-denied') settled.add(event.callId)
+    if (event.type === 'tool-called') {
+      const calls = open.get(event.callId) ?? []
+      calls.push(event)
+      open.set(event.callId, calls)
+      continue
+    }
+
+    if (event.type !== 'tool-result' && event.type !== 'tool-denied') continue
+
+    const latest = open.get(event.callId)?.at(-1)
+    if (latest === undefined) continue
+    settled.add(latest)
+    open.set(event.callId, open.get(event.callId)?.slice(0, -1) ?? [])
   }
 
   return eventsOfType({ events, type: 'tool-called' })
-    .filter((event) => !settled.has(event.callId))
+    .filter((event) => !settled.has(event))
     .map((event) => ({
       callId: event.callId,
       name: event.name,
@@ -46,15 +66,33 @@ export function answeredApproval({
   events: readonly Event[]
   callId: CallId
 }): EventOfType<'approval-answered'> | undefined {
-  return eventsOfType({ events, type: 'approval-answered' })
-    .filter((event) => event.callId === callId)
-    .at(-1)
+  let answered: EventOfType<'approval-answered'> | undefined
+
+  for (const event of events) {
+    if (event.type === 'tool-called' && event.callId === callId) {
+      answered = undefined
+      continue
+    }
+    if (event.type === 'approval-answered' && event.callId === callId) answered = event
+  }
+
+  return answered
 }
 
 export function outstandingApproval(events: readonly Event[]): CallId | undefined {
-  return eventsOfType({ events, type: 'approval-requested' })
-    .map((event) => event.callId)
-    .find((callId) => answeredApproval({ events, callId }) === undefined)
+  const unanswered = new Map<CallId, number>()
+
+  for (const event of events) {
+    if (event.type === 'approval-requested') unanswered.set(event.callId, event.seq)
+    if (event.type === 'approval-answered') unanswered.delete(event.callId)
+  }
+
+  let earliest: { callId: CallId; seq: number } | undefined
+  for (const [callId, seq] of unanswered) {
+    if (earliest === undefined || seq < earliest.seq) earliest = { callId, seq }
+  }
+
+  return earliest?.callId
 }
 
 export function inputForCall({
@@ -67,7 +105,7 @@ export function inputForCall({
   const answer = answeredApproval({ events, callId })
   if (answer?.decision === EDecision.Allow && answer.editedInput !== undefined) return answer.editedInput
 
-  return eventsOfType({ events, type: 'tool-called' }).find((event) => event.callId === callId)?.input
+  return eventsOfType({ events, type: 'tool-called' }).findLast((event) => event.callId === callId)?.input
 }
 
 const TURN_TAKING: readonly EventType[] = [
