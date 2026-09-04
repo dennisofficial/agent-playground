@@ -247,8 +247,6 @@ export function useConversation(args: {
       const images = args.images ?? NO_IMAGES
       if (text.length === 0) return
 
-      app.warp?.handlePromptSubmit({ text })
-
       if (working) {
         pending.enqueue({ text, images })
         nameSession({ said: text, opened: ALREADY_OPEN })
@@ -261,7 +259,7 @@ export function useConversation(args: {
       ])
       nameSession({ said: text, opened })
     },
-    [app, drive, nameSession, pending, working],
+    [drive, nameSession, pending, working],
   )
 
   const handleTakeBackPending = useCallback(() => pending.takeBackLast(), [pending])

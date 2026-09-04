@@ -1,22 +1,18 @@
 import {
-  AfterToolHook,
-  buildWarpOscSequence,
-  buildWarpPayload,
+  buildWarpCwdSequence,
+  buildWarpNotificationSequence,
   EStage,
   eventsOfType,
-  EWarpAgentEvent,
-  negotiateWarpProtocolVersion,
+  isWarpTerminal,
   OnThreadOpenHook,
   rowsOwnedBy,
   summarizeWarpPermission,
-  supportsWarpAgentNotifications,
+  truncateForWarpNotification,
   warpStopTexts,
-  type AfterTool,
   type EventLogPort,
   type HookOutcome,
   type OnThreadOpen,
   type ThreadId,
-  type WarpEventExtras,
   type WarpTerminalEnv,
 } from '@dltech/atlas-core'
 import { ETurnStatus, type TurnOutcome } from '@dltech/atlas-harness'
@@ -24,65 +20,49 @@ import { ETurnStatus, type TurnOutcome } from '@dltech/atlas-harness'
 import type { ApprovalQuestion } from '../ui/approval-model'
 
 export interface WarpReporter {
-  handleThreadOpened(args: { threadId: ThreadId; projectDirectory: string }): void
-  handlePromptSubmit(args: { text: string }): void
-  handleToolComplete(args: { toolName: string }): void
-  handlePermissionRequest(args: { summary: string; toolName: string; toolInput: unknown }): void
-  handleTurnCompleted(args: { query: string; response: string }): void
+  handleThreadOpened(args: { projectDirectory: string }): void
+  handlePermissionRequest(args: { summary: string }): void
+  handleTurnCompleted(args: { response: string }): void
 }
 
 class OscWarpReporter implements WarpReporter {
-  private session: { threadId: ThreadId; cwd: string } | null = null
+  private projectDirectory: string | null = null
 
   constructor(
     private readonly args: {
       write: (sequence: string) => void
-      protocolVersion: number
-      version: string
+      host: string
     },
   ) {}
 
-  handleThreadOpened(args: { threadId: ThreadId; projectDirectory: string }): void {
-    this.session = { threadId: args.threadId, cwd: args.projectDirectory }
-    this.tryEmit(EWarpAgentEvent.SessionStart, { pluginVersion: this.args.version })
+  handleThreadOpened(args: { projectDirectory: string }): void {
+    this.projectDirectory = args.projectDirectory
+    this.tryWrite(
+      buildWarpCwdSequence({ cwd: args.projectDirectory, host: this.args.host }),
+    )
   }
 
-  handlePromptSubmit(args: { text: string }): void {
-    this.tryEmit(EWarpAgentEvent.PromptSubmit, { query: args.text })
+  handlePermissionRequest(args: { summary: string }): void {
+    this.notify(args.summary)
   }
 
-  handleToolComplete(args: { toolName: string }): void {
-    this.tryEmit(EWarpAgentEvent.ToolComplete, { toolName: args.toolName })
+  handleTurnCompleted(args: { response: string }): void {
+    this.notify(truncateForWarpNotification({ text: args.response }))
   }
 
-  handlePermissionRequest(args: { summary: string; toolName: string; toolInput: unknown }): void {
-    this.tryEmit(EWarpAgentEvent.PermissionRequest, {
-      summary: args.summary,
-      toolName: args.toolName,
-      toolInput: args.toolInput,
-    })
+  private notify(body: string): void {
+    if (body === '') return
+    this.tryWrite(buildWarpNotificationSequence({ title: this.title(), body }))
   }
 
-  handleTurnCompleted(args: { query: string; response: string }): void {
-    this.tryEmit(EWarpAgentEvent.Stop, { query: args.query, response: args.response })
+  private title(): string {
+    const project = this.projectDirectory?.split('/').filter(Boolean).pop()
+    return project === undefined ? 'Atlas' : `Atlas — ${project}`
   }
 
-  private tryEmit(event: EWarpAgentEvent, extras: WarpEventExtras): void {
-    const session = this.session
-    if (session === null) return
-
+  private tryWrite(sequence: string): void {
     try {
-      this.args.write(
-        buildWarpOscSequence({
-          payloadJson: buildWarpPayload({
-            event,
-            sessionId: session.threadId,
-            cwd: session.cwd,
-            protocolVersion: this.args.protocolVersion,
-            extras,
-          }),
-        }),
-      )
+      this.args.write(sequence)
     } catch {
       // A notification channel must never take the session down with it.
     }
@@ -92,14 +72,10 @@ class OscWarpReporter implements WarpReporter {
 export function createWarpReporter(args: {
   env: WarpTerminalEnv
   write: (sequence: string) => void
-  version: string
+  host: string
 }): WarpReporter | null {
-  if (!supportsWarpAgentNotifications({ env: args.env })) return null
-  return new OscWarpReporter({
-    write: args.write,
-    protocolVersion: negotiateWarpProtocolVersion({ env: args.env }),
-    version: args.version,
-  })
+  if (!isWarpTerminal({ env: args.env })) return null
+  return new OscWarpReporter({ write: args.write, host: args.host })
 }
 
 export class WarpThreadOpenHook extends OnThreadOpenHook {
@@ -111,21 +87,7 @@ export class WarpThreadOpenHook extends OnThreadOpenHook {
   }
 
   readonly run = async (args: Parameters<OnThreadOpen>[0]): Promise<HookOutcome> => {
-    this.reporter.handleThreadOpened(args)
-    return {}
-  }
-}
-
-export class WarpToolCompleteHook extends AfterToolHook {
-  readonly name = 'warp-tool-complete'
-  readonly order = { stage: EStage.Observe, nudge: 0 }
-
-  constructor(private readonly reporter: WarpReporter) {
-    super()
-  }
-
-  readonly run = async (args: Parameters<AfterTool>[0]): Promise<HookOutcome> => {
-    this.reporter.handleToolComplete({ toolName: args.call.name })
+    this.reporter.handleThreadOpened({ projectDirectory: args.projectDirectory })
     return {}
   }
 }
@@ -148,11 +110,11 @@ export async function reportWarpOutcome(args: {
     const call = eventsOfType({ events: rows, type: 'tool-called' })
       .filter((event) => event.callId === args.asked?.callId)
       .at(-1)
-    const toolName = call?.name ?? 'unknown'
     reporter.handlePermissionRequest({
-      summary: summarizeWarpPermission({ toolName, toolInput: call?.input }),
-      toolName,
-      toolInput: call?.input,
+      summary: summarizeWarpPermission({
+        toolName: call?.name ?? 'a tool',
+        toolInput: call?.input,
+      }),
     })
     return
   }
@@ -164,5 +126,5 @@ export async function reportWarpOutcome(args: {
     threadId: args.threadId,
   })
   const texts = warpStopTexts({ events: rows })
-  if (texts !== undefined) reporter.handleTurnCompleted(texts)
+  if (texts !== undefined) reporter.handleTurnCompleted({ response: texts.response })
 }

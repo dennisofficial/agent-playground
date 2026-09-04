@@ -1,4 +1,4 @@
-import { homedir } from 'node:os'
+import { homedir, hostname } from 'node:os'
 
 import {
   ANTHROPIC_PROVIDER_ID,
@@ -154,11 +154,9 @@ import { instructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
 import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
 import { userSaidDraft } from './user-said'
-import { buildInfo, EBuildKind } from '../build/info'
 import {
   createWarpReporter,
   WarpThreadOpenHook,
-  WarpToolCompleteHook,
   type WarpReporter,
 } from './warp-reporter'
 
@@ -426,18 +424,14 @@ export async function composeAtlas(args: {
     }),
   })
 
-  const info = buildInfo()
   const warp = createWarpReporter({
     env: args.env,
     write: (sequence) => process.stdout.write(sequence),
-    version: info.kind === EBuildKind.Release ? info.version : info.kind,
+    host: args.env.HOSTNAME ?? hostname(),
   })
   if (warp !== null) {
     container.register(portToken(OnThreadOpenHook), {
       useValue: new WarpThreadOpenHook(warp),
-    })
-    container.register(portToken(AfterToolHook), {
-      useValue: new WarpToolCompleteHook(warp),
     })
   }
 

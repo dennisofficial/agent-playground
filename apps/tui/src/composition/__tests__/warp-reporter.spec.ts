@@ -1,21 +1,17 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EToolEffect, toCallId, toRunId, toThreadId } from '@dltech/atlas-core'
+import { toCallId, toRunId, toThreadId } from '@dltech/atlas-core'
 import { ETurnStatus } from '@dltech/atlas-harness'
 
 import {
   createWarpReporter,
   reportWarpOutcome,
   WarpThreadOpenHook,
-  WarpToolCompleteHook,
   type WarpReporter,
 } from '../warp-reporter'
 import { fakeEventLog } from './fake-backend'
 
-const WARP_ENV = {
-  WARP_CLI_AGENT_PROTOCOL_VERSION: '1',
-  WARP_CLIENT_VERSION: 'v0.2026.09.01.08.00.stable_00',
-}
+const WARP_ENV = { TERM_PROGRAM: 'WarpTerminal' }
 
 const THREAD = toThreadId('thread-warp')
 
@@ -24,90 +20,84 @@ function capturedReporter(): { reporter: WarpReporter; writes: string[] } {
   const reporter = createWarpReporter({
     env: WARP_ENV,
     write: (sequence) => writes.push(sequence),
-    version: '0.4.2',
+    host: 'mac.local',
   })
-  if (reporter === null) throw new Error('expected a reporter for a capable Warp')
+  if (reporter === null) throw new Error('expected a reporter inside Warp')
   return { reporter, writes }
 }
 
-function payloadsOf(writes: readonly string[]): Record<string, unknown>[] {
-  return writes.map((write) => {
-    expect(write.startsWith('\x1b]777;notify;warp://cli-agent;')).toBe(true)
-    expect(write.endsWith('\x07')).toBe(true)
-    return JSON.parse(write.slice('\x1b]777;notify;warp://cli-agent;'.length, -1))
-  })
-}
-
 describe('createWarpReporter', () => {
-  it('is null outside a capable Warp build', () => {
+  it('is null outside Warp', () => {
     expect(
-      createWarpReporter({ env: {}, write: () => undefined, version: '0.4.2' }),
+      createWarpReporter({ env: {}, write: () => undefined, host: 'mac.local' }),
+    ).toBeNull()
+    expect(
+      createWarpReporter({
+        env: { TERM_PROGRAM: 'iTerm.app' },
+        write: () => undefined,
+        host: 'mac.local',
+      }),
     ).toBeNull()
   })
 
-  it('creates a reporter when Warp advertises the protocol', () => {
+  it('creates a reporter inside Warp', () => {
     expect(
-      createWarpReporter({ env: WARP_ENV, write: () => undefined, version: '0.4.2' }),
+      createWarpReporter({ env: WARP_ENV, write: () => undefined, host: 'mac.local' }),
     ).not.toBeNull()
   })
 })
 
 describe('OscWarpReporter', () => {
-  it('emits nothing before a thread has been opened', () => {
+  it('points the tab at the opened directory via OSC 7', () => {
     const { reporter, writes } = capturedReporter()
-    reporter.handlePromptSubmit({ text: 'hello' })
+    reporter.handleThreadOpened({ projectDirectory: '/Users/dennis/atlas' })
+
+    expect(writes).toEqual(['\x1b]7;file://mac.local/Users/dennis/atlas\x1b\\'])
+  })
+
+  it('follows the directory on every thread open, including worktrees', () => {
+    const { reporter, writes } = capturedReporter()
+    reporter.handleThreadOpened({ projectDirectory: '/Users/dennis/atlas' })
+    reporter.handleThreadOpened({
+      projectDirectory: '/Users/dennis/atlas/.atlas/worktrees/warp integration',
+    })
+
+    expect(writes.at(-1)).toBe(
+      '\x1b]7;file://mac.local/Users/dennis/atlas/.atlas/worktrees/warp%20integration\x1b\\',
+    )
+  })
+
+  it('pops a plain notification when a turn completes, titled with the project', () => {
+    const { reporter, writes } = capturedReporter()
+    reporter.handleThreadOpened({ projectDirectory: '/Users/dennis/atlas' })
+    reporter.handleTurnCompleted({ response: 'shipped it' })
+
+    expect(writes.at(-1)).toBe('\x1b]777;notify;Atlas — atlas;shipped it\x07')
+  })
+
+  it('pops a plain notification when approval is needed', () => {
+    const { reporter, writes } = capturedReporter()
+    reporter.handleThreadOpened({ projectDirectory: '/x' })
+    reporter.handlePermissionRequest({ summary: 'Wants to run bash: rm -rf dist' })
+
+    expect(writes.at(-1)).toBe('\x1b]777;notify;Atlas — x;Wants to run bash: rm -rf dist\x07')
+  })
+
+  it('says nothing for an empty response', () => {
+    const { reporter, writes } = capturedReporter()
+    reporter.handleThreadOpened({ projectDirectory: '/x' })
+    writes.length = 0
+    reporter.handleTurnCompleted({ response: '' })
+
     expect(writes).toEqual([])
   })
 
-  it('emits session_start with the plugin version when a thread opens', () => {
+  it('truncates a long response to the notification limit', () => {
     const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/Users/dennis/atlas' })
+    reporter.handleThreadOpened({ projectDirectory: '/x' })
+    reporter.handleTurnCompleted({ response: 'a'.repeat(500) })
 
-    expect(payloadsOf(writes)).toEqual([
-      {
-        v: 1,
-        agent: 'atlas',
-        event: 'session_start',
-        session_id: THREAD,
-        cwd: '/Users/dennis/atlas',
-        project: 'atlas',
-        plugin_version: '0.4.2',
-      },
-    ])
-  })
-
-  it('scopes later events to the most recently opened thread', () => {
-    const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/Users/dennis/atlas' })
-    reporter.handlePromptSubmit({ text: 'fix it' })
-    reporter.handleToolComplete({ toolName: 'edit' })
-    reporter.handleTurnCompleted({ query: 'fix it', response: 'fixed' })
-
-    const [sessionStart, promptSubmit, toolComplete, stop] = payloadsOf(writes)
-    expect(sessionStart?.event).toBe('session_start')
-    expect(promptSubmit).toMatchObject({ event: 'prompt_submit', query: 'fix it' })
-    expect(toolComplete).toMatchObject({ event: 'tool_complete', tool_name: 'edit' })
-    expect(stop).toMatchObject({ event: 'stop', query: 'fix it', response: 'fixed' })
-    for (const payload of payloadsOf(writes)) {
-      expect(payload.session_id).toBe(THREAD)
-    }
-  })
-
-  it('emits permission_request with summary and tool fields', () => {
-    const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/x' })
-    reporter.handlePermissionRequest({
-      summary: 'Wants to run bash: rm -rf build',
-      toolName: 'bash',
-      toolInput: { command: 'rm -rf build' },
-    })
-
-    expect(payloadsOf(writes).at(-1)).toMatchObject({
-      event: 'permission_request',
-      summary: 'Wants to run bash: rm -rf build',
-      tool_name: 'bash',
-      tool_input: { command: 'rm -rf build' },
-    })
+    expect(writes.at(-1)).toBe(`\x1b]777;notify;Atlas — x;${'a'.repeat(197)}...\x07`)
   })
 
   it('survives a write that throws', () => {
@@ -116,44 +106,24 @@ describe('OscWarpReporter', () => {
       write: () => {
         throw new Error('EPIPE')
       },
-      version: '0.4.2',
+      host: 'mac.local',
     })
-    reporter?.handleThreadOpened({ threadId: THREAD, projectDirectory: '/x' })
-    reporter?.handlePromptSubmit({ text: 'still alive' })
+    reporter?.handleThreadOpened({ projectDirectory: '/x' })
+    reporter?.handleTurnCompleted({ response: 'still alive' })
   })
 })
 
-describe('the hook adapters', () => {
-  it('WarpThreadOpenHook forwards the opened thread', async () => {
+describe('WarpThreadOpenHook', () => {
+  it('forwards the opened directory', async () => {
     const { reporter, writes } = capturedReporter()
     const hook = new WarpThreadOpenHook(reporter)
-    const outcome = await hook.run({ threadId: THREAD, projectDirectory: '/Users/dennis/atlas' })
-
-    expect(outcome).toEqual({})
-    expect(payloadsOf(writes).at(-1)?.event).toBe('session_start')
-  })
-
-  it('WarpToolCompleteHook forwards the tool name', async () => {
-    const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/x' })
-    const hook = new WarpToolCompleteHook(reporter)
     const outcome = await hook.run({
-      call: {
-        callId: toCallId('call-1'),
-        name: 'bash',
-        input: { command: 'ls' },
-        effect: EToolEffect.Write,
-        threadId: THREAD,
-      },
-      result: { ok: true, output: 'done', modelText: 'done' },
-      signal: new AbortController().signal,
+      threadId: THREAD,
+      projectDirectory: '/Users/dennis/atlas',
     })
 
     expect(outcome).toEqual({})
-    expect(payloadsOf(writes).at(-1)).toMatchObject({
-      event: 'tool_complete',
-      tool_name: 'bash',
-    })
+    expect(writes).toEqual(['\x1b]7;file://mac.local/Users/dennis/atlas\x1b\\'])
   })
 })
 
@@ -170,9 +140,9 @@ describe('reportWarpOutcome', () => {
     expect(log.branchesRead).toEqual([])
   })
 
-  it('reports stop with the trailing prompt and response on a completed turn', async () => {
+  it('notifies with the trailing response on a completed turn', async () => {
     const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/x' })
+    reporter.handleThreadOpened({ projectDirectory: '/x' })
     writes.length = 0
 
     const log = fakeEventLog()
@@ -193,16 +163,12 @@ describe('reportWarpOutcome', () => {
       asked: null,
     })
 
-    expect(payloadsOf(writes).at(-1)).toMatchObject({
-      event: 'stop',
-      query: 'ship it',
-      response: 'shipped',
-    })
+    expect(writes.at(-1)).toBe('\x1b]777;notify;Atlas — x;shipped\x07')
   })
 
-  it('reports permission_request joined back to the tool call', async () => {
+  it('notifies with the permission summary joined back to the tool call', async () => {
     const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/x' })
+    reporter.handleThreadOpened({ projectDirectory: '/x' })
     writes.length = 0
 
     const log = fakeEventLog()
@@ -235,16 +201,12 @@ describe('reportWarpOutcome', () => {
       asked: { callId: toCallId('call-9'), reason: 'destructive', evidence: [], dimensions: [] },
     })
 
-    expect(payloadsOf(writes).at(-1)).toMatchObject({
-      event: 'permission_request',
-      summary: 'Wants to run bash: rm -rf dist',
-      tool_name: 'bash',
-    })
+    expect(writes.at(-1)).toBe('\x1b]777;notify;Atlas — x;Wants to run bash: rm -rf dist\x07')
   })
 
   it('stays quiet on an interrupted turn', async () => {
     const { reporter, writes } = capturedReporter()
-    reporter.handleThreadOpened({ threadId: THREAD, projectDirectory: '/x' })
+    reporter.handleThreadOpened({ projectDirectory: '/x' })
     writes.length = 0
 
     await reportWarpOutcome({

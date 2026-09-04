@@ -1,6 +1,6 @@
 import type { Event } from '../events/envelope'
 import { eventsOfType } from '../events/projections'
-import { truncateForWarpNotification } from './payload'
+import { truncateForWarpNotification } from './sequence'
 
 export function warpStopTexts({
   events,
