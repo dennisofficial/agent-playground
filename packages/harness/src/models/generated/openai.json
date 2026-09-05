@@ -216,24 +216,6 @@
   {
     "ref": {
       "providerId": "openai",
-      "modelId": "gpt-5.2-chat-latest"
-    },
-    "label": "GPT-5.2 Chat",
-    "api": "openai-responses",
-    "contextWindow": 128000,
-    "imageTier": "standard",
-    "maxOutputTokens": 16384,
-    "cost": {
-      "inputPerMillion": 1.75,
-      "outputPerMillion": 14
-    },
-    "effort": {
-      "medium": "medium"
-    }
-  },
-  {
-    "ref": {
-      "providerId": "openai",
       "modelId": "gpt-5.2-pro"
     },
     "label": "GPT-5.2 Pro",
@@ -249,21 +231,6 @@
       "medium": "medium",
       "high": "high",
       "xhigh": "xhigh"
-    }
-  },
-  {
-    "ref": {
-      "providerId": "openai",
-      "modelId": "gpt-5.3-chat-latest"
-    },
-    "label": "GPT-5.3 Chat (latest)",
-    "api": "openai-responses",
-    "contextWindow": 128000,
-    "imageTier": "standard",
-    "maxOutputTokens": 16384,
-    "cost": {
-      "inputPerMillion": 1.75,
-      "outputPerMillion": 14
     }
   },
   {
@@ -523,6 +490,28 @@
     },
     "effort": {
       "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh",
+      "max": "max"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "openai",
+      "modelId": "gpt-6-astra"
+    },
+    "label": "GPT-6 Astra",
+    "api": "openai-responses",
+    "contextWindow": 1050000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 10,
+      "outputPerMillion": 50
+    },
+    "effort": {
       "low": "low",
       "medium": "medium",
       "high": "high",

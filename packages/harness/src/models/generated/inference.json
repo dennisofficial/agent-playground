@@ -107,6 +107,12 @@
     "cost": {
       "inputPerMillion": 0.3,
       "outputPerMillion": 2.5
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -122,6 +128,12 @@
     "cost": {
       "inputPerMillion": 0.1,
       "outputPerMillion": 0.4
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -137,6 +149,12 @@
     "cost": {
       "inputPerMillion": 1.25,
       "outputPerMillion": 10
+    },
+    "effort": {
+      "minimal": "minimal",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -152,6 +170,12 @@
     "cost": {
       "inputPerMillion": 0.5,
       "outputPerMillion": 3
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -167,6 +191,12 @@
     "cost": {
       "inputPerMillion": 0.25,
       "outputPerMillion": 1.5
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -182,6 +212,11 @@
     "cost": {
       "inputPerMillion": 2,
       "outputPerMillion": 12
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -197,6 +232,12 @@
     "cost": {
       "inputPerMillion": 1.5,
       "outputPerMillion": 9
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -212,6 +253,12 @@
     "cost": {
       "inputPerMillion": 0.3,
       "outputPerMillion": 2.5
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -227,6 +274,12 @@
     "cost": {
       "inputPerMillion": 1.5,
       "outputPerMillion": 7.5
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -242,6 +295,11 @@
     "cost": {
       "inputPerMillion": 1.5,
       "outputPerMillion": 7.5
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -287,6 +345,12 @@
     "cost": {
       "inputPerMillion": 0.95,
       "outputPerMillion": 2.55
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -302,6 +366,12 @@
     "cost": {
       "inputPerMillion": 1.3,
       "outputPerMillion": 4.4
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -317,6 +387,12 @@
     "cost": {
       "inputPerMillion": 2.6,
       "outputPerMillion": 8.8
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -332,6 +408,11 @@
     "cost": {
       "inputPerMillion": 2.1,
       "outputPerMillion": 6.6
+    },
+    "effort": {
+      "low": "low",
+      "high": "high",
+      "max": "max"
     }
   },
   {
@@ -349,7 +430,6 @@
       "outputPerMillion": 1.8
     },
     "effort": {
-      "off": "none",
       "low": "low",
       "high": "high",
       "max": "max"
@@ -594,6 +674,28 @@
   {
     "ref": {
       "providerId": "inference",
+      "modelId": "gpt-6-astra"
+    },
+    "label": "gpt-6-astra",
+    "api": "openai-completions",
+    "contextWindow": 922000,
+    "imageTier": "standard",
+    "maxOutputTokens": 128000,
+    "cost": {
+      "inputPerMillion": 10,
+      "outputPerMillion": 50
+    },
+    "effort": {
+      "off": "none",
+      "low": "low",
+      "medium": "medium",
+      "high": "high",
+      "xhigh": "xhigh"
+    }
+  },
+  {
+    "ref": {
+      "providerId": "inference",
       "modelId": "grok-4.5"
     },
     "label": "grok-4.5",
@@ -643,7 +745,7 @@
     "maxOutputTokens": 4096,
     "cost": {
       "inputPerMillion": 0.05,
-      "outputPerMillion": 0.25
+      "outputPerMillion": 0.23
     }
   },
   {
@@ -674,6 +776,11 @@
     "cost": {
       "inputPerMillion": 0.8,
       "outputPerMillion": 3.95
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -689,6 +796,11 @@
     "cost": {
       "inputPerMillion": 1.25,
       "outputPerMillion": 5.3
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -789,6 +901,11 @@
     "cost": {
       "inputPerMillion": 0.102,
       "outputPerMillion": 0.48
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -804,6 +921,11 @@
     "cost": {
       "inputPerMillion": 0.2275,
       "outputPerMillion": 0.91
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -819,6 +941,11 @@
     "cost": {
       "inputPerMillion": 0.12,
       "outputPerMillion": 0.5
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -834,6 +961,11 @@
     "cost": {
       "inputPerMillion": 0.117,
       "outputPerMillion": 0.455
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -849,6 +981,11 @@
     "cost": {
       "inputPerMillion": 0.78,
       "outputPerMillion": 3.9
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   },
   {
@@ -864,6 +1001,11 @@
     "cost": {
       "inputPerMillion": 0.4,
       "outputPerMillion": 1.6
+    },
+    "effort": {
+      "low": "low",
+      "medium": "medium",
+      "high": "high"
     }
   }
 ]
