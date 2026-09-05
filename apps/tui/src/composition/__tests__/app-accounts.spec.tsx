@@ -146,7 +146,7 @@ describe('the accounts overlay', () => {
     }
   })
 
-  it('opens by itself, carrying what went wrong, when nothing can authenticate', async () => {
+  it('announces a boot auth failure as a chip rather than taking the screen', async () => {
     const setup = await opened({
       app: await appWith([]),
       notice: 'Atlas could not authenticate.\n\nAtlas holds no accounts. Sign in with /auth.',
@@ -155,10 +155,41 @@ describe('the accounts overlay', () => {
     try {
       const frame = setup.captureCharFrame()
 
+      expect(frame).toContain('A provider login is failing')
+      expect(frame).toContain('ctrl+a')
+      expect(frame).not.toContain('ACCOUNTS')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('keeps the diagnosis for the first manual open the chip points at', async () => {
+    const setup = await opened({
+      app: await appWith([]),
+      notice: 'Atlas could not authenticate.\n\nAtlas holds no accounts. Sign in with /auth.',
+    })
+
+    try {
+      await openOverlay(setup)
+
+      const frame = setup.captureCharFrame()
+
       expect(frame).toContain('ACCOUNTS')
       expect(frame).toContain('Atlas holds no accounts')
-      expect(frame).toContain('Anthropic')
-      expect(frame).toContain('not signed in')
+    } finally {
+      await teardown(setup)
+    }
+  })
+
+  it('shows the chip only once for the same failure', async () => {
+    const setup = await opened({
+      app: await appWith([]),
+      notice: 'Atlas could not authenticate.\n\nAtlas holds no accounts. Sign in with /auth.',
+    })
+
+    try {
+      const first = setup.captureCharFrame()
+      expect(first.match(/A provider login is failing/g)).toHaveLength(1)
     } finally {
       await teardown(setup)
     }

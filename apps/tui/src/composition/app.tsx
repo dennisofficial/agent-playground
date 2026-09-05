@@ -539,17 +539,31 @@ function Workspace(props: {
   )
 
   /**
-   * A session that opened with nothing it can authenticate with shows the accounts overlay rather
-   * than waiting for the first turn to fail with the same message.
+   * A boot-time auth failure is usually ambient (DNS down, a revoked refresh token), so it earns a
+   * chip rather than the screen. The full diagnosis waits for the first manual open of the overlay,
+   * which is what the chip points at.
    */
   const { credentialNotice } = props
   const notified = useRef(false)
+  const pendingCredentialNotice = useRef<string | null>(null)
   useEffect(() => {
     if (credentialNotice === null || notified.current) return
 
     notified.current = true
-    accounts.handleOpen(credentialNotice)
-  }, [accounts, credentialNotice])
+    pendingCredentialNotice.current = credentialNotice
+    notify({
+      key: 'credential-failure',
+      text: 'A provider login is failing — press ctrl+a or run /auth.',
+      tone: ENoticeTone.Warn,
+      ttlMs: 23_000,
+    })
+  }, [credentialNotice])
+
+  const handleOpenAccounts = useCallback(() => {
+    const notice = pendingCredentialNotice.current
+    pendingCredentialNotice.current = null
+    accounts.handleOpen(notice ?? undefined)
+  }, [accounts])
 
   const handleRewindChoice = useCallback(
     ({ point, verb }: RewindChoice) => {
@@ -695,7 +709,7 @@ function Workspace(props: {
         onShowAgentTypes: () => setPanel(EChromePanel.AgentTypes),
         onShowLostAgents: handleShowLostAgents,
         onOpenSettings: settings.handleOpen,
-        onOpenAccounts: () => accounts.handleOpen(),
+        onOpenAccounts: handleOpenAccounts,
         onNewConversation: handleNewConversation,
         onOpenThreads: handleResumeConversation,
         onRename: conversation.handleRename,
@@ -704,12 +718,12 @@ function Workspace(props: {
         onRestart: props.onRestart === null ? null : handleRestart,
       }),
     [
-      accounts,
       agentsPicker.handleOpen,
       conversation.handleCompact,
       conversation.handleRename,
       handleContainer,
       handleNewConversation,
+      handleOpenAccounts,
       handleReloadSkills,
       handleRestart,
       props.app,
@@ -970,7 +984,7 @@ function Workspace(props: {
       onCycleAgents: agents.count === 0 ? null : agentView.handleCycle,
       onToggleSidebar: wide ? null : handleToggleSidebar,
       onOpenSettings: settings.handleOpen,
-      onOpenAccounts: () => accounts.handleOpen(),
+      onOpenAccounts: handleOpenAccounts,
       onQuit: handleQuit,
     }),
   )
