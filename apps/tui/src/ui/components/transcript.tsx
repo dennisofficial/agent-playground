@@ -120,6 +120,38 @@ export function Transcript(props: {
       />
     )
 
+  const mounted: React.ReactNode[] = []
+  windowing.sections.forEach((section, sectionIndex) => {
+    if (section.kind === 'spacer') {
+      mounted.push(<box key={`spacer:${sectionIndex}`} height={section.height} flexShrink={0} />)
+      return
+    }
+    for (let index = section.span.start; index < section.span.end; index += 1) {
+      const entry = model.entries[index]
+      if (entry === undefined) continue
+      mounted.push(
+        <box key={entry.key} id={entry.key} flexDirection="column">
+          {index === anchorIndex ? (
+            <box id={UNSEEN_ANCHOR_ID} flexDirection="column">
+              {index > 0 ? <NewDivider width={props.width} /> : null}
+            </box>
+          ) : null}
+          <EntryView
+            entry={entry}
+            width={props.width}
+            expanded={opened.has(entry.key)}
+            {...(entry.kind === EEntryKind.ToolsRan
+              ? { opened: openedSubsetOf({ cache: openedSubsets, run: entry.run, opened }) }
+              : {})}
+            onToggle={handleToggle}
+            cwd={props.cwd}
+            continues={model.entries[index - 1]?.kind === EEntryKind.ToolsRan}
+          />
+        </box>,
+      )
+    }
+  })
+
   return (
     <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
       {peekLine}
@@ -134,35 +166,7 @@ export function Transcript(props: {
         viewportCulling
         contentOptions={{ paddingRight: TRANSCRIPT_PADDING }}
       >
-        {windowing.above > 0 ? (
-          <box height={windowing.above} flexShrink={0} />
-        ) : null}
-        {model.entries.slice(windowing.span.start, windowing.span.end).map((entry, offset) => {
-          const index = windowing.span.start + offset
-          return (
-            <box key={entry.key} id={entry.key} flexDirection="column">
-              {index === anchorIndex ? (
-                <box id={UNSEEN_ANCHOR_ID} flexDirection="column">
-                  {index > 0 ? <NewDivider width={props.width} /> : null}
-                </box>
-              ) : null}
-              <EntryView
-                entry={entry}
-                width={props.width}
-                expanded={opened.has(entry.key)}
-                {...(entry.kind === EEntryKind.ToolsRan
-                  ? { opened: openedSubsetOf({ cache: openedSubsets, run: entry.run, opened }) }
-                  : {})}
-                onToggle={handleToggle}
-                cwd={props.cwd}
-                continues={model.entries[index - 1]?.kind === EEntryKind.ToolsRan}
-              />
-            </box>
-          )
-        })}
-        {windowing.below > 0 ? (
-          <box height={windowing.below} flexShrink={0} />
-        ) : null}
+        {mounted}
 
         {model.failure ? (
           <ErrorBlock

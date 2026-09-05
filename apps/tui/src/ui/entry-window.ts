@@ -94,17 +94,68 @@ export function initialSpan(args: {
   return { start: Math.max(0, args.total - args.cap), end: args.total }
 }
 
-/** Spacer heights standing in for the unmounted entries above and below the span. */
-export function spacerRows(args: {
+/**
+ * OpenTUI anchors a selection to the renderable under the press and re-derives its screen
+ * position every frame, so a selection tracks its content only while that renderable stays
+ * mounted. The pinned span is the entries an active selection covers; it mounts beside the
+ * window rather than inside it, so scrolling far enough to move the window cannot unmount the
+ * selection out from under the pointer.
+ */
+export function mountSpans(args: { base: Span; pinned: Span | null; total: number }): readonly Span[] {
+  const { base, pinned, total } = args
+  if (pinned === null) return [base]
+  const start = Math.max(0, Math.min(pinned.start, total))
+  const end = Math.max(start, Math.min(pinned.end, total))
+  if (start === end) return [base]
+  if (end < base.start) return [{ start, end }, base]
+  if (start > base.end) return [base, { start, end }]
+  return [{ start: Math.min(start, base.start), end: Math.max(end, base.end) }]
+}
+
+export type MountSection =
+  | { readonly kind: 'spacer'; readonly height: number }
+  | { readonly kind: 'entries'; readonly span: Span }
+
+/** Index of the entry whose rows contain the given content row, clamped to the transcript. */
+export function entryAtRow(args: {
   tops: readonly number[]
   rows: readonly number[]
-  span: Span
-}): { above: number; below: number } {
+  row: number
+}): number | null {
   const total = args.rows.length
-  if (total === 0) return { above: 0, below: 0 }
-  const above = args.tops[args.span.start] ?? 0
-  const last = Math.min(args.span.end, total) - 1
-  const mountedBottom = (args.tops[last] ?? 0) + rowsAt({ rows: args.rows, index: last })
+  if (total === 0) return null
+  const clamped = Math.max(0, args.row)
+  let index = 0
+  while (
+    index + 1 < total &&
+    (args.tops[index] ?? 0) + rowsAt({ rows: args.rows, index }) <= clamped
+  ) {
+    index += 1
+  }
+  if ((args.tops[index] ?? 0) > clamped && index > 0) return index - 1
+  return index
+}
+
+/** Spacer and entry sections covering the whole scroll extent, for ordered disjoint spans. */
+export function sectionsOf(args: {
+  tops: readonly number[]
+  rows: readonly number[]
+  spans: readonly Span[]
+}): MountSection[] {
+  const total = args.rows.length
+  if (total === 0) return []
   const totalRows = (args.tops[total - 1] ?? 0) + rowsAt({ rows: args.rows, index: total - 1 })
-  return { above, below: Math.max(0, totalRows - mountedBottom) }
+
+  const sections: MountSection[] = []
+  let covered = 0
+  for (const span of args.spans) {
+    const end = Math.min(span.end, total)
+    if (span.start >= end) continue
+    const top = args.tops[span.start] ?? totalRows
+    if (top > covered) sections.push({ kind: 'spacer', height: top - covered })
+    sections.push({ kind: 'entries', span: { start: span.start, end } })
+    covered = Math.max(covered, (args.tops[end - 1] ?? 0) + rowsAt({ rows: args.rows, index: end - 1 }))
+  }
+  if (totalRows > covered) sections.push({ kind: 'spacer', height: totalRows - covered })
+  return sections
 }
