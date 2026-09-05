@@ -132,6 +132,7 @@ const benchApp = (args: {
 
 export type BenchRender = {
   framesRendered: () => number
+  frameText: () => string
   close: () => Promise<void>
 }
 
@@ -161,6 +162,7 @@ export const mountBenchRender = async (args: {
   await setup.flush()
   return {
     framesRendered: () => setup.renderer.getStats().frameCount,
+    frameText: () => setup.captureCharFrame(),
     close: () => teardown(setup),
   }
 }
