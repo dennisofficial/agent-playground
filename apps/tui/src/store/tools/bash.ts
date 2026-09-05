@@ -75,7 +75,7 @@ const gathered = (args: {
     failed: broke,
     note: broke ? `exit ${args.shell.exitCode ?? 1}` : printed > 0 ? `${count(printed)} l` : '',
     metric: broke || args.counts === false ? null : printed,
-    detail: args.detail ?? EDetail.Output,
+    detail: args.detail ?? EDetail.Terminal,
   }
 }
 
@@ -94,7 +94,7 @@ const named = (args: {
   failed: args.failed,
   note: args.note,
   metric: null,
-  detail: args.detail ?? EDetail.Output,
+  detail: args.detail ?? EDetail.Terminal,
 })
 
 export const firstLine = (command: string): string => command.split('\n')[0]?.trim() ?? command

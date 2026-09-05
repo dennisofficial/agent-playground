@@ -211,6 +211,90 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).toContain('Created src/new.ts')
   })
 
+  it('shows an edit’s replacement text as it is dictated, before the edit has run', async () => {
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'edit',
+          state: ECallState.Pending,
+          input: { path: `${CWD}/src/a.ts`, oldString: 'const one = 1', newString: 'const two' },
+        }),
+      ]),
+    )
+
+    expect(frame).toContain('Editing src/a.ts')
+    expect(frame).toContain('const two')
+  })
+
+  it('draws a settled command as a terminal — the command above what it printed', async () => {
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'bash',
+          input: { command: 'bun run build', description: 'Build the workspace' },
+          output: { command: 'bun run build', stdout: 'bundled 3 entry points', exitCode: 0 },
+        }),
+      ]),
+    )
+    const rows = frame.split('\n')
+
+    expect(frame).toContain('Build the workspace')
+    const command = rows.findIndex((row) => row.includes('$ bun run build'))
+    const printed = rows.findIndex((row) => row.includes('bundled 3 entry points'))
+    expect(command).toBeGreaterThanOrEqual(0)
+    expect(printed).toBeGreaterThan(command)
+  })
+
+  it('strips the colour codes out of what a command printed', async () => {
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'bash',
+          input: { command: 'nix build' },
+          output: { command: 'nix build', stdout: '\x1b[31m✗ 3 fail\x1b[0m', exitCode: 1 },
+        }),
+      ]),
+    )
+
+    expect(frame).toContain('✗ 3 fail')
+    expect(frame).not.toContain('[31m')
+  })
+
+  it('shows a command typing into its terminal before it has run', async () => {
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'bash',
+          state: ECallState.Pending,
+          input: { command: 'bun run bu' },
+        }),
+      ]),
+    )
+
+    expect(frame).toContain('$ bun run bu')
+  })
+
+  it('opens a folded read’s terminal when its row is clicked', async () => {
+    const listed = call({
+      name: 'bash',
+      input: { command: 'ls docs' },
+      output: { command: 'ls docs', stdout: 'architecture.md\ncore-contract.md', exitCode: 0 },
+    })
+    const run = runOf([read('a.ts', 10), listed])
+
+    const shut = await frameOf(run)
+    expect(shut).toContain('Read 1 file')
+    expect(shut).not.toContain('architecture.md')
+
+    const open = await frameOf(
+      run,
+      new Set([`sentence:${run.calls[0]?.callId ?? ''}`, listed.callId]),
+      TALL,
+    )
+    expect(open).toContain('$ ls docs')
+    expect(open).toContain('architecture.md')
+  })
+
   it('draws a failure as its own row, leaving the sentence to the work that succeeded', async () => {
     const broken = call({
       name: 'bash',
@@ -224,7 +308,7 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).not.toContain('failed')
   })
 
-  it('keeps what a broken command printed behind its row until the row is opened', async () => {
+  it('shows a broken command’s terminal unasked, the way an edit shows its diff', async () => {
     const broken = call({
       name: 'bash',
       input: { command: 'bun run typecheck' },
@@ -234,14 +318,11 @@ describe('a run of tool calls in the transcript', () => {
         exitCode: 2,
       },
     })
-    const run = runOf([broken])
+    const frame = await frameOf(runOf([broken]))
 
-    const shut = await frameOf(run)
-    expect(shut).toContain('Typecheck')
-    expect(shut).not.toContain('TS2769')
-
-    const open = await frameOf(run, new Set([broken.callId]), TALL)
-    expect(open).toContain('TS2769')
+    expect(frame).toContain('Typecheck')
+    expect(frame).toContain('$ bun run typecheck')
+    expect(frame).toContain('TS2769')
   })
 
   it('keeps a sentence whole when a later stage owns the exit code the clause does not', async () => {

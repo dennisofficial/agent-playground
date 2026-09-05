@@ -89,6 +89,16 @@ export function targetOf(args: { call: ToolCall; cwd: string }): string | undefi
 export const writtenContentOf = (call: ToolCall): string | undefined =>
   str(inputOf(call).content) ?? str(inputOf(call).text)
 
+/**
+ * The body a file-changing call is dictating, drawn while the arguments are still arriving. A
+ * `write` sends the whole file; an `edit` sends only the replacement text.
+ */
+export function dictatedContentOf(call: ToolCall): string | undefined {
+  if (call.name === 'write') return writtenContentOf(call)
+  if (call.name === 'edit') return str(inputOf(call).newString)
+  return undefined
+}
+
 export function diffOf(call: ToolCall): DiffFile | null {
   const patch = str(outputOf(call).diff)
   if (patch === undefined) return null

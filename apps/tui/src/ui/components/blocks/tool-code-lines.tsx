@@ -29,7 +29,7 @@ export function codeLinesOf(body: readonly string[]): CodeLine[] {
 
 type Rows = readonly (readonly TextChunk[])[] | null
 
-function useHighlighted(args: {
+export function useHighlighted(args: {
   lines: readonly string[]
   filetype: string
 }): readonly (readonly TextChunk[] | null)[] {

@@ -23,6 +23,7 @@ export {
   str,
   commandLines,
   detailOf,
+  dictatedContentOf,
   writtenContentOf,
   diffOf,
   diffStatOf,

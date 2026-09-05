@@ -215,12 +215,16 @@ function AloneBlock(props: {
     reading.detail === EDetail.Diff ||
     reading.detail === EDetail.Created ||
     reading.detail === EDetail.Image ||
+    reading.detail === EDetail.Terminal ||
     props.opened.has(call.callId)
   /**
-   * A file still being dictated shows the file, not the streaming tail: the content is on the call,
-   * so the panel it will settle into can be drawn now rather than after the last argument lands.
+   * A call still being dictated shows what it is dictating, not the streaming tail: the content is
+   * on the call, so the panel it will settle into can be drawn now rather than after the last
+   * argument lands.
    */
-  const dictating = running && reading.detail === EDetail.Created
+  const dictating =
+    running &&
+    (reading.detail === EDetail.Created || reading.detail === EDetail.Terminal)
 
   return (
     <box flexDirection="column" marginBottom={1} width={props.inner} flexShrink={0}>

@@ -3,7 +3,8 @@
  *
  * A `write` reports `path`, `created` and `bytes` and no patch, so there is nothing for the diff
  * renderer to take. The content is on the CALL rather than the result — the model sent it — so it can
- * be drawn without the tool changing.
+ * be drawn without the tool changing. An `edit` still being dictated lands here too: its replacement
+ * text types into this panel, and the real diff takes over when the call settles.
  *
  * Same chrome, no diff language: every line of a new file is new, so tinting them green and signing
  * them `+` states the obvious in colour a reader has been taught means "this line, in particular,
@@ -13,7 +14,7 @@
 import React from 'react'
 
 import type { ToolCall } from '../../../store'
-import { inputOf, relativise, str, writtenContentOf } from '../../../store/tools'
+import { dictatedContentOf, inputOf, relativise, str } from '../../../store/tools'
 import { theme } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
@@ -45,7 +46,7 @@ export function ToolCreatedFile(props: {
   cwd: string
   expand?: Expander
 }): React.ReactNode {
-  const content = writtenContentOf(props.call)
+  const content = dictatedContentOf(props.call)
   if (content === undefined) return null
 
   const expand = props.expand ?? NOT_EXPANDABLE

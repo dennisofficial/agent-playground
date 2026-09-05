@@ -497,4 +497,85 @@ describe('a call the model is still dictating', () => {
     expect(reading.line).toBe('write')
     expect(reading.detail).toBe(EDetail.None)
   })
+
+  it('names an edit and opens onto the replacement text as it arrives', () => {
+    const reading = classify({
+      call: aCall({
+        name: 'edit',
+        state: ECallState.Pending,
+        input: { path: '/repo/src/ui/theme.ts', oldString: 'const a = 1', newString: 'const b' },
+      }),
+      cwd: CWD,
+    })
+
+    expect(reading.klass).toBe(EToolClass.Change)
+    expect(reading.line).toBe('Editing src/ui/theme.ts')
+    expect(reading.detail).toBe(EDetail.Created)
+  })
+
+  it('waits for the replacement text, which streams in after the text it replaces', () => {
+    const reading = classify({
+      call: aCall({
+        name: 'edit',
+        state: ECallState.Pending,
+        input: { path: '/repo/src/ui/theme.ts', oldString: 'const a = 1' },
+      }),
+      cwd: CWD,
+    })
+
+    expect(reading.line).toBe('src/ui/theme.ts')
+    expect(reading.detail).toBe(EDetail.None)
+  })
+
+  it('opens a command onto its terminal as the command arrives', () => {
+    const reading = classify({
+      call: aCall({
+        name: 'bash',
+        state: ECallState.Pending,
+        input: { command: 'bun run build --prod', description: 'Build for production' },
+      }),
+      cwd: CWD,
+    })
+
+    expect(reading.klass).toBe(EToolClass.Command)
+    expect(reading.line).toBe('Build for production')
+    expect(reading.detail).toBe(EDetail.Terminal)
+  })
+
+  it('waits for the command before promising a terminal there is nothing to type into', () => {
+    const reading = classify({
+      call: aCall({ name: 'bash', state: ECallState.Pending, input: {} }),
+      cwd: CWD,
+    })
+
+    expect(reading.line).toBe('bash')
+    expect(reading.detail).toBe(EDetail.None)
+  })
+})
+
+describe('the terminal a settled command opens onto', () => {
+  it('gives an unrecognised command the terminal rather than a dim dump', () => {
+    const shell = reading(aShell({ command: 'nixify --frobnicate', stdout: 'done' }))
+
+    expect(shell.detail).toBe(EDetail.Terminal)
+  })
+
+  it('gives a folded read the same terminal when it is opened', () => {
+    const shell = reading(aShell({ command: "sed -n '1,60p' src/ui/theme.ts", stdout: 'a\nb' }))
+
+    expect(shell.gather).toBe(EGather.Read)
+    expect(shell.detail).toBe(EDetail.Terminal)
+  })
+
+  it('gives a named command the terminal too', () => {
+    const committed = reading(aShell({ command: "git commit -m 'fix(tui): a thing'" }))
+
+    expect(committed.detail).toBe(EDetail.Terminal)
+  })
+
+  it('keeps a test run on its tally, which reads better than its output', () => {
+    const tests = reading(aShell({ command: 'bun test', stdout: '\n 41 pass\n 0 fail\n' }))
+
+    expect(tests.detail).toBe(EDetail.Tests)
+  })
 })

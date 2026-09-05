@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { ECallState } from '../../tool-runs'
-import { detailOf, reasonOf } from '../reading'
+import { detailOf, dictatedContentOf, reasonOf } from '../reading'
 import { aCall } from './fixture'
 
 describe('what an opened call has to show', () => {
@@ -25,5 +25,27 @@ describe('what an opened call has to show', () => {
 
     expect(reasonOf(call)).toBe('outside the workspace')
     expect(reasonOf(aCall({ name: 'read' }))).toBe('')
+  })
+})
+
+describe('what a call is still dictating', () => {
+  it('reads a write’s whole file off the call', () => {
+    const call = aCall({ name: 'write', input: { path: '/repo/a.ts', content: 'const a = 1' } })
+
+    expect(dictatedContentOf(call)).toBe('const a = 1')
+  })
+
+  it('reads an edit’s replacement text off the call', () => {
+    const call = aCall({
+      name: 'edit',
+      input: { path: '/repo/a.ts', oldString: 'const a = 1', newString: 'const b = 2' },
+    })
+
+    expect(dictatedContentOf(call)).toBe('const b = 2')
+  })
+
+  it('claims nothing for a call that dictates no file content', () => {
+    expect(dictatedContentOf(aCall({ name: 'bash', input: { command: 'ls' } }))).toBeUndefined()
+    expect(dictatedContentOf(aCall({ name: 'edit', input: { path: '/repo/a.ts' } }))).toBeUndefined()
   })
 })
