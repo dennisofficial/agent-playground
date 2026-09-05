@@ -7,17 +7,16 @@ import {
 } from '@dltech/atlas-core'
 
 import { ANTHROPIC_OAUTH_BETA } from '../providers/anthropic-oauth'
+import { CLAUDE_CODE_VERSION } from '../providers/anthropic-subscription-attribution'
 import { parseAnthropicUsage } from './parse-anthropic-usage'
 
 /**
  * The only source of a real 5-hour / 7-day percentage. Inference responses carry no rate-limit
  * headers even while this endpoint reports headroom, so nothing on the transport can stand in for
  * it. It needs the `user:profile` scope, which the login flow already requests, and it expects the
- * Claude Code CLI's user-agent — bump the version below if it starts refusing.
+ * Claude Code CLI's user-agent — bump CLAUDE_CODE_VERSION if it starts refusing.
  */
 export const ANTHROPIC_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
-
-const CLAUDE_CODE_VERSION = '2.1.251'
 
 const REQUEST_TIMEOUT_MS = 10_000
 
