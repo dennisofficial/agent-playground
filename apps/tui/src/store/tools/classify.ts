@@ -17,6 +17,7 @@ import {
   commandLabel,
   count,
   detailOf,
+  dictatedContentOf,
   diffStatOf,
   hostOf,
   inputOf,
@@ -30,25 +31,45 @@ import {
   str,
   strings,
   targetOf,
-  writtenContentOf,
 } from './reading'
 
 const MCP_SEPARATOR = '__'
 
 /**
- * A write the model has not finished dictating, opened onto the file it is dictating.
+ * A command the model has not finished dictating, opened onto the terminal it will run in.
+ *
+ * The command is on the CALL, so it types into the panel as the arguments arrive and stays up while
+ * the command runs — a long command no longer reads as dead air either.
+ */
+function dictatingShell(args: { call: ToolCall; cwd: string }): Classification | null {
+  if (str(inputOf(args.call).command) === undefined) return null
+
+  return {
+    klass: EToolClass.Command,
+    gather: null,
+    line: targetOf(args) ?? args.call.name,
+    failed: false,
+    note: '',
+    metric: null,
+    detail: EDetail.Terminal,
+  }
+}
+
+/**
+ * A write or edit the model has not finished dictating, opened onto the text it is dictating.
  *
  * The content is on the CALL, so the same panel the settled row gets can be drawn from arguments
  * that are still arriving — which is the whole reason a long write no longer reads as dead air.
  */
 function dictating(args: { call: ToolCall; cwd: string }): Classification | null {
-  if (args.call.name !== 'write') return null
-  if (writtenContentOf(args.call) === undefined) return null
+  if (args.call.name === 'bash') return dictatingShell(args)
+  if (dictatedContentOf(args.call) === undefined) return null
 
+  const verb = args.call.name === 'edit' ? 'Editing' : 'Writing'
   return {
     klass: EToolClass.Change,
     gather: null,
-    line: `Writing ${targetOf(args) ?? args.call.name}`,
+    line: `${verb} ${targetOf(args) ?? args.call.name}`,
     failed: false,
     note: '',
     metric: null,

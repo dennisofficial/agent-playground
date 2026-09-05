@@ -44,6 +44,8 @@ export enum EDetail {
   /** A picture that was read — for now its name, dimensions and weight on one line. */
   Image = 'image',
   Output = 'output',
+  /** A shell command — its highlighted line over what it printed, drawn the way a terminal draws it. */
+  Terminal = 'terminal',
   /** Why a call never ran, or why it came back an error — the sentence the model was handed. */
   Reason = 'reason',
   Matches = 'matches',

@@ -22,6 +22,7 @@ import {
   strings,
   targetOf,
 } from '../../../store/tools'
+import { stripAnsi } from '../../ansi'
 import { tailOfPath } from '../../paths'
 import { wrapWords } from '../../text-flow'
 import { theme } from '../../theme'
@@ -30,6 +31,7 @@ import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggl
 import { CodeLines, codeLinesOf } from './tool-code-lines'
 import { ToolCreatedFile } from './tool-created-file'
 import { ToolImage } from './tool-image'
+import { ToolTerminal } from './tool-terminal'
 import { ToolPage, ToolResults } from './tool-web'
 
 const DIFF_CONTEXT = 2
@@ -44,7 +46,7 @@ function Line(props: { text: string; inner: number; fg: string }): React.ReactNo
   return (
     <text wrapMode="none" width={props.inner} flexShrink={0}>
       <span fg={props.fg}>
-        {`${INDENT}${tailOfPath({ path: props.text, cells: Math.max(8, props.inner - INDENT.length) })}`}
+        {`${INDENT}${tailOfPath({ path: stripAnsi(props.text), cells: Math.max(8, props.inner - INDENT.length) })}`}
       </span>
     </text>
   )
@@ -262,6 +264,9 @@ export function ToolDetail(props: {
   }
   if (props.detail === EDetail.Results) {
     return <ToolResults call={props.call} inner={props.inner} expand={expand} />
+  }
+  if (props.detail === EDetail.Terminal) {
+    return <ToolTerminal call={props.call} inner={props.inner} expand={expand} />
   }
   if (props.detail === EDetail.Plan) return <Plan call={props.call} inner={props.inner} />
   if (props.detail === EDetail.Tests) {
