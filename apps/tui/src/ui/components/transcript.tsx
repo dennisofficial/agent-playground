@@ -1,7 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+
+import type { ScrollBoxRenderable } from '@opentui/core'
 
 import { EEntryKind, type PendingRow, type TranscriptModel } from '../../store'
 import { NOTHING_IN_BACKGROUND, type BackgroundWork } from '../background-wait'
+import { useEntryWindow } from '../hooks/use-entry-window'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
 import { TRANSCRIPT_PADDING } from '../theme'
@@ -71,10 +74,20 @@ export function Transcript(props: {
       ),
     [model.entries],
   )
+  const scroller = useRef<ScrollBoxRenderable | null>(null)
+  const windowing = useEntryWindow({
+    entries: model.entries,
+    scroller,
+    anchorIndex,
+    width: props.width,
+  })
   const follow = useTranscriptFollow({
+    scroller,
     anchorId: anchorIndex >= 0 ? UNSEEN_ANCHOR_ID : null,
     sends: props.sends ?? 0,
     peekKeys,
+    onTick: windowing.handleTick,
+    offsetOfKey: windowing.offsetOfKey,
   })
   const handleScroller = useHiddenVerticalScrollbar(follow.scroller)
 
@@ -121,26 +134,35 @@ export function Transcript(props: {
         viewportCulling
         contentOptions={{ paddingRight: TRANSCRIPT_PADDING }}
       >
-        {model.entries.map((entry, index) => (
-          <box key={entry.key} id={entry.key} flexDirection="column">
-            {index === anchorIndex ? (
-              <box id={UNSEEN_ANCHOR_ID} flexDirection="column">
-                {index > 0 ? <NewDivider width={props.width} /> : null}
-              </box>
-            ) : null}
-            <EntryView
-              entry={entry}
-              width={props.width}
-              expanded={opened.has(entry.key)}
-              {...(entry.kind === EEntryKind.ToolsRan
-                ? { opened: openedSubsetOf({ cache: openedSubsets, run: entry.run, opened }) }
-                : {})}
-              onToggle={handleToggle}
-              cwd={props.cwd}
-              continues={model.entries[index - 1]?.kind === EEntryKind.ToolsRan}
-            />
-          </box>
-        ))}
+        {windowing.above > 0 ? (
+          <box height={windowing.above} flexShrink={0} />
+        ) : null}
+        {model.entries.slice(windowing.span.start, windowing.span.end).map((entry, offset) => {
+          const index = windowing.span.start + offset
+          return (
+            <box key={entry.key} id={entry.key} flexDirection="column">
+              {index === anchorIndex ? (
+                <box id={UNSEEN_ANCHOR_ID} flexDirection="column">
+                  {index > 0 ? <NewDivider width={props.width} /> : null}
+                </box>
+              ) : null}
+              <EntryView
+                entry={entry}
+                width={props.width}
+                expanded={opened.has(entry.key)}
+                {...(entry.kind === EEntryKind.ToolsRan
+                  ? { opened: openedSubsetOf({ cache: openedSubsets, run: entry.run, opened }) }
+                  : {})}
+                onToggle={handleToggle}
+                cwd={props.cwd}
+                continues={model.entries[index - 1]?.kind === EEntryKind.ToolsRan}
+              />
+            </box>
+          )
+        })}
+        {windowing.below > 0 ? (
+          <box height={windowing.below} flexShrink={0} />
+        ) : null}
 
         {model.failure ? (
           <ErrorBlock

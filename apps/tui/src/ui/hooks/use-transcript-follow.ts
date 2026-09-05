@@ -25,15 +25,23 @@ const candidatesOf = (
 
 export function useTranscriptFollow(
   args: {
+    scroller?: RefObject<ScrollBoxRenderable | null>
     anchorId?: string | null
     sends?: number
     peekKeys?: ReadonlySet<string>
+    onTick?: () => void
+    offsetOfKey?: (key: string) => number | null
   } = {},
 ): TranscriptFollow {
-  const scroller = useRef<ScrollBoxRenderable | null>(null)
+  const ownScroller = useRef<ScrollBoxRenderable | null>(null)
+  const scroller = args.scroller ?? ownScroller
   const landed = useRef(false)
   const anchorId = useRef<string | null>(args.anchorId ?? null)
   const peekKeys = useRef<ReadonlySet<string>>(args.peekKeys ?? NOTHING_TO_PEEK)
+  const onTick = useRef<(() => void) | undefined>(args.onTick)
+  onTick.current = args.onTick
+  const offsetOfKey = useRef<((key: string) => number | null) | undefined>(args.offsetOfKey)
+  offsetOfKey.current = args.offsetOfKey
   const sends = args.sends ?? 0
 
   const evaluate = useCallback(() => {
@@ -58,6 +66,8 @@ export function useTranscriptFollow(
         viewportTop: box.viewport.y,
       }),
     })
+
+    onTick.current?.()
   }, [])
 
   useEffect(() => {
@@ -99,8 +109,15 @@ export function useTranscriptFollow(
   const handleJumpTo = useCallback(
     (key: string) => {
       const box = scroller.current
-      const child = box?.content.findDescendantById(key)
-      if (!box || !child) return
+      if (!box) return
+      const child = box.content.findDescendantById(key)
+      if (!child) {
+        const offset = offsetOfKey.current?.(key)
+        if (offset === null || offset === undefined) return
+        box.scrollTo(Math.max(0, offset))
+        evaluate()
+        return
+      }
       box.scrollTo(Math.max(0, box.scrollTop + (child.y - box.viewport.y)))
       evaluate()
     },
