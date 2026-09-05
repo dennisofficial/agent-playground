@@ -38,6 +38,7 @@ export enum ESettingId {
   WebSearchKey = 'web.searchKey',
   ModelId = 'model.id',
   ModelEffort = 'model.effort',
+  QuickModel = 'model.quickModel',
   ModelFavourites = 'model.favourites',
   SubagentModel = 'agents.subagentModel',
   ExecutionLocation = 'execution.location',
@@ -495,6 +496,17 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     kind: ESettingKind.Choice,
     fallback: DEFAULT_EFFORT,
     options: EFFORT_OPTIONS,
+  },
+  {
+    id: ESettingId.QuickModel,
+    page: ESettingPage.General,
+    group: 'Model',
+    label: 'Quick-call model',
+    description:
+      'The model the quick background calls run on — tl;dr footers, session titles and the nudge judge — all of which pin a low effort and never read the conversation\u2019s own model. Left empty, each runs on its built-in default. One choice serves them all: it is how you move the quick tier onto another provider when the usual one is having a bad day.',
+    environmentVariable: 'ATLAS_QUICK_MODEL',
+    kind: ESettingKind.Model,
+    fallback: '',
   },
   {
     id: ESettingId.ModelFavourites,

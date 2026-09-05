@@ -167,6 +167,7 @@ export * from './models/favourites'
 export * from './models/pressure'
 export * from './models/usage'
 export * from './models/retry'
+export * from './models/utility-roles'
 
 export * from './usage/window'
 export * from './usage/meter'
