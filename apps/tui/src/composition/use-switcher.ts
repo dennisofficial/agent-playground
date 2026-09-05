@@ -36,19 +36,13 @@ export type SwitcherControl = {
   handleDismiss: () => void
   handlePick: (choice: SwitcherChoice) => void
   handleSelect: (index: number) => void
+  handleQuery: (typed: string) => void
   handleKey: (key: KeyEvent) => void
 }
 
 type Browsing = { state: SwitcherState; query: string; scope: EModelScope }
 
-const FILTERABLE = /[\w.:/-]/
-
 const PIN_KEY = '*'
-
-const isFilterKey = (key: KeyEvent): boolean => {
-  const sequence = key.sequence ?? ''
-  return sequence.length === 1 && !key.ctrl && !key.meta && FILTERABLE.test(sequence)
-}
 
 /**
  * OpenTUI parses a whole input burst before React re-renders, so the run of key events a typed word
@@ -124,20 +118,23 @@ export function useSwitcher(args: {
     [onPick, put],
   )
 
-  const handleFilter = useCallback(
-    (args: { current: Browsing; typed: string }) => {
+  const handleQuery = useCallback(
+    (typed: string) => {
+      const current = held.current
+      if (current === null) return
+
       const following = selectedCard({
-        state: args.current.state,
-        rows: rowsFor(args.current.query),
+        state: current.state,
+        rows: rowsFor(current.query),
       })?.ref
 
       put({
-        ...args.current,
-        query: args.typed,
+        ...current,
+        query: typed,
         state: anchorOn({
-          rows: rowsFor(args.typed),
+          rows: rowsFor(typed),
           active: following,
-          effort: args.current.state.effort,
+          effort: current.state.effort,
         }),
       })
     },
@@ -189,41 +186,37 @@ export function useSwitcher(args: {
       const laid = rowsFor(current.query)
 
       if (key.name === 'escape') {
+        key.preventDefault()
         handleDismiss()
         return
       }
 
       if (key.name === 'return') {
+        key.preventDefault()
         handlePick(resolve({ state: current.state, rows: laid }))
         return
       }
 
       if (key.name === 'up' || key.name === 'down') {
+        key.preventDefault()
         const delta = key.name === 'up' ? -1 : 1
         put({ ...current, state: moveSelection({ state: current.state, delta, rows: laid }) })
         return
       }
 
       if (key.name === 'left' || key.name === 'right') {
+        key.preventDefault()
         const delta = key.name === 'left' ? -1 : 1
         put({ ...current, state: adjustEffort({ state: current.state, delta, rows: laid }) })
         return
       }
 
-      if (key.name === 'backspace') {
-        handleFilter({ current, typed: current.query.slice(0, -1) })
-        return
-      }
-
-      if (key.sequence === PIN_KEY) {
+      if (key.sequence === PIN_KEY && !key.ctrl && !key.meta) {
+        key.preventDefault()
         handlePin(current)
-        return
       }
-
-      if (isFilterKey(key))
-        handleFilter({ current, typed: `${current.query}${key.sequence ?? ''}` })
     },
-    [handleDismiss, handleFilter, handlePick, handlePin, put, rowsFor],
+    [handleDismiss, handlePick, handlePin, put, rowsFor],
   )
 
   return useMemo(
@@ -238,6 +231,7 @@ export function useSwitcher(args: {
       handleDismiss,
       handlePick,
       handleSelect,
+      handleQuery,
       handleKey,
     }),
     [
@@ -247,6 +241,7 @@ export function useSwitcher(args: {
       handleKey,
       handleOpen,
       handlePick,
+      handleQuery,
       handleSelect,
       query,
       rows,

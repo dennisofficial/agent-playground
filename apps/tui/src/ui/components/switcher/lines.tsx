@@ -53,7 +53,7 @@ export function NothingMatchedLine(props: { cells: number }): React.ReactNode {
   return <TextLine spans={[{ text: NOTHING_MATCHED, fg: theme.hint }]} cells={props.cells} />
 }
 
-const tally = (args: { shown: number; total: number }): Span => ({
+const tally = (args: { shown: number; total: number }): { text: string; fg: string } => ({
   text: args.shown === args.total ? `${args.total}` : `${args.shown} of ${args.total}`,
   fg: theme.hint,
 })
@@ -63,17 +63,28 @@ export function FilterLine(props: {
   query: string
   shown: number
   total: number
+  onQueryChange?: ((value: string) => void) | undefined
 }): React.ReactNode {
-  const typed: Span[] = [
-    { text: `${glyph.marker} `, fg: theme.accent },
-    props.query.length === 0
-      ? { text: FILTER_PLACEHOLDER, fg: theme.hint }
-      : { text: props.query, fg: theme.bright },
-  ]
   const counted = tally({ shown: props.shown, total: props.total })
-  const gap = Math.max(GAP_CELLS, props.cells - spanCells(typed) - cellsOf(counted.text))
 
-  return <TextLine spans={[...typed, { text: ' '.repeat(gap) }, counted]} cells={props.cells} />
+  return (
+    <DrawerLine>
+      <box flexDirection="row" flexGrow={1}>
+        <text fg={theme.accent}>{`${glyph.marker} `}</text>
+        <input
+          flexGrow={1}
+          value={props.query}
+          focused
+          placeholder={FILTER_PLACEHOLDER}
+          textColor={theme.bright}
+          placeholderColor={theme.hint}
+          cursorColor={theme.caretBg}
+          {...(props.onQueryChange === undefined ? {} : { onInput: props.onQueryChange })}
+        />
+        <text fg={counted.fg}>{counted.text}</text>
+      </box>
+    </DrawerLine>
+  )
 }
 
 /**

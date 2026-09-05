@@ -98,6 +98,7 @@ export function Switcher(props: {
   onPick: (choice: SwitcherChoice) => void
   onSelect: (index: number) => void
   onDismiss: () => void
+  onQueryChange?: ((value: string) => void) | undefined
 }): React.ReactNode {
   const cells = switcherCells({ width: props.width })
   const press = usePress()
@@ -126,6 +127,7 @@ export function Switcher(props: {
           query={props.query ?? ''}
           shown={shownCount(props.rows)}
           total={props.total}
+          onQueryChange={props.onQueryChange}
         />
         {props.rows.length === 0 ? <NothingMatchedLine cells={cells} /> : null}
         <scrollbox ref={attach} flexGrow={1} flexShrink={1} flexBasis={0} focusable={false}>

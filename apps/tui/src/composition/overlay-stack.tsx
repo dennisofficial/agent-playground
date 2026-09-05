@@ -111,6 +111,7 @@ export function OverlayStack(props: {
           onPick={switcher.handlePick}
           onSelect={switcher.handleSelect}
           onDismiss={switcher.handleDismiss}
+          onQueryChange={switcher.handleQuery}
         />
       )}
       {shells.state === null ? null : (
