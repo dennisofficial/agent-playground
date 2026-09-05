@@ -59,7 +59,7 @@ async function onSettings(app: FakeApp): Promise<Mounted> {
 const valueOf = (app: FakeApp, id: ESettingId): unknown =>
   app.settings.snapshot().resolution.settings.get(id)?.value
 
-const SIDEBAR_WIDTH_ROW = 5
+const SIDEBAR_WIDTH_ROW = 6
 
 async function downTo(args: { setup: Mounted; row: number }): Promise<void> {
   for (let step = 0; step < args.row; step += 1) {

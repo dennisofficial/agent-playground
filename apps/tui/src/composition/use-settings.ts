@@ -87,11 +87,13 @@ export function useSettings(args: {
     [app.settings.definitions, held.resolution],
   )
 
-  const { accent, density, composer, imageRows } = appearanceOf({ resolution: held.resolution })
+  const { accent, density, composer, imageRows, fenceWrap } = appearanceOf({
+    resolution: held.resolution,
+  })
 
   const appearance = useMemo(
-    () => ({ accent, density, composer, imageRows }),
-    [accent, composer, density, imageRows],
+    () => ({ accent, density, composer, imageRows, fenceWrap }),
+    [accent, composer, density, imageRows, fenceWrap],
   )
 
   useEffect(() => {

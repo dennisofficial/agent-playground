@@ -18,13 +18,22 @@ export function classifyDiffLine(line: string): DiffLineKind {
   return 'context'
 }
 
-function view(args: { source: string; width: number; palette: DiffPalette }): FencedBlockView {
+function view(args: {
+  source: string
+  width: number
+  wrap: boolean
+  palette: DiffPalette
+}): FencedBlockView {
   const lines = args.source.split('\n')
   const columns = Math.max(0, ...lines.map((line) => line.length))
 
   return {
     node: (
-      <text wrapMode="none" width={Math.min(columns, args.width)} flexShrink={0}>
+      <text
+        wrapMode={args.wrap ? 'word' : 'none'}
+        width={Math.min(columns, args.width)}
+        flexShrink={0}
+      >
         {lines.map((line, index) => {
           const style: StyleDefinitionInput = args.palette[classifyDiffLine(line)]
           const text = style.bg ? line.padEnd(columns) : line
@@ -50,5 +59,6 @@ function view(args: { source: string; width: number; palette: DiffPalette }): Fe
 export const diffRenderer: FencedRenderer = {
   name: 'diff',
   handles: (language) => language === 'diff' || language === 'patch',
-  render: (args) => view({ source: args.source, width: args.width, palette: codeTheme().diff }),
+  render: (args) =>
+    view({ source: args.source, width: args.width, wrap: args.wrap, palette: codeTheme().diff }),
 }

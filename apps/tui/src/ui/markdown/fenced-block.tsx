@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 
 import { Panel, PANEL_INSET, PANEL_PAD } from '../components/panel'
+import { wrapsFence } from '../fence-wrap-store'
 import { ALT, theme } from '../theme'
 import { COPY_BUTTON_WIDTH, CopyButton } from './copy-button'
 import { rendererFor } from './registry'
@@ -57,25 +58,27 @@ export function FencedBlock(props: {
   const [streaming] = useState(() => props.streaming === true)
 
   const available = Math.max(4, props.width - RIGHT_MARGIN)
+  const wrap = wrapsFence(props.language)
   const gutter = gutterWidth(props.source)
+  const lead = wrap ? 0 : gutter
 
   const view = useMemo(
     () =>
       rendererFor(props.language).render({
         source: props.source,
         language: props.language,
-        width: Math.max(1, available - CHROME - gutter),
+        width: Math.max(1, available - CHROME - lead),
         streaming,
+        wrap,
       }),
-    [props.language, props.source, available, gutter, streaming],
+    [props.language, props.source, available, lead, streaming, wrap],
   )
 
-  const numbered = view.numbered !== false
-  const lead = numbered ? gutter : 0
+  const numbered = !wrap && view.numbered !== false
   const natural = Math.max(view.columns + lead + CHROME, headerColumns(props))
   const outer = Math.min(available, Math.max(natural, props.levelled ?? 0))
   const inner = Math.max(1, outer - CHROME - lead)
-  const overflows = view.columns > inner
+  const overflows = !wrap && view.columns > inner
 
   return (
     <box

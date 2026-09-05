@@ -33,7 +33,7 @@ describe('settingsModel', () => {
     const general = modelWith().pages[0]
 
     expect(general?.groups.map((group) => [group.label, group.rows.length])).toEqual([
-      ['Transcript', 5],
+      ['Transcript', 6],
       ['Layout', 2],
       ['Project context', 5],
       ['Context window', 1],
@@ -46,7 +46,7 @@ describe('settingsModel', () => {
       ['Model', 2],
       ['Execution', 4],
     ])
-    expect(general?.rows).toHaveLength(28)
+    expect(general?.rows).toHaveLength(29)
   })
 
   it('keeps the appearance page to its colour, its density and its composer', () => {
@@ -83,7 +83,7 @@ describe('moving around the page', () => {
     const top = openSettings()
 
     expect(moveRow({ state: top, model, delta: -1 })).toEqual({ pageIndex: 0, rowIndex: 0 })
-    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 27 })
+    expect(moveRow({ state: top, model, delta: 99 })).toEqual({ pageIndex: 0, rowIndex: 28 })
   })
 
   it('wraps around the tab strip and lands on its first row', () => {

@@ -34,6 +34,7 @@ describe('diffRenderer', () => {
       language: 'diff',
       width: 10,
       streaming: false,
+      wrap: false,
     })
     expect(view.rows).toBe(2)
     expect(view.columns).toBe('-a much longer line here'.length)

@@ -16,6 +16,7 @@ import { grammarsReady } from '../markdown/__tests__/harness'
 import { OPTION_SEPARATOR, RANGE_HINT, TOGGLE_HINT } from '../settings-format'
 import { SHIPPED_ACCENT, type Appearance } from '../appearance'
 import { SHIPPED_IMAGE_ROWS } from '../image-rows-store'
+import { SHIPPED_FENCE_WRAP } from '../fence-wrap-store'
 import { CHOSEN, COMPOSER_DRAFT, DIFF_PATH, UNCHOSEN } from '../components/settings/previews'
 import { EComposerEdge } from '../composer-edge-store'
 import { EBlockDensity } from '../density-store'
@@ -34,7 +35,8 @@ const ORIGIN = '~/.atlas/settings.json'
 const SHIPPED_APPEARANCE: Appearance = {
   accent: SHIPPED_ACCENT,
   density: EBlockDensity.Comfort,
-  composer: EComposerEdge.Slab, imageRows: SHIPPED_IMAGE_ROWS
+  composer: EComposerEdge.Slab, imageRows: SHIPPED_IMAGE_ROWS,
+  fenceWrap: SHIPPED_FENCE_WRAP,
 }
 
 const SECRETS_ORIGIN = '~/.atlas/secrets.json'
@@ -139,7 +141,7 @@ describe('the settings page', () => {
   })
 
   it('marks the selected row and only that row', async () => {
-    const rows = await rowsOf(page({ state: { pageIndex: 0, rowIndex: 5 } }), WIDE)
+    const rows = await rowsOf(page({ state: stateOf(ESettingId.SidebarWidth) }), WIDE)
     const marked = rows.filter((row) => row.includes(glyph.selected))
 
     expect(marked).toHaveLength(1)

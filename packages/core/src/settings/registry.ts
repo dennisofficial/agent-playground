@@ -22,6 +22,7 @@ export enum ESettingId {
   ReloadInstructions = 'context.reload',
   AutoCompact = 'context.autoCompact',
   ImageRows = 'transcript.imageRows',
+  FenceWrap = 'transcript.fenceWrap',
   TldrFooter = 'tldr.footer',
   TldrStatus = 'tldr.status',
   WorktreeDirectory = 'worktree.directory',
@@ -101,6 +102,22 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 80,
     step: 2,
     unit: ' rows',
+  },
+  {
+    id: ESettingId.FenceWrap,
+    page: ESettingPage.General,
+    group: 'Transcript',
+    label: 'Soft-wrap fences',
+    description:
+      'What a fenced block does with a line that runs past the panel. Never gives every fence a sideways pan on alt+wheel, keeping each line whole. Text wraps the fences that hold prose — markdown, plain text and shell commands, the shape a quoted answer or a long one-liner takes — and leaves code alone, because a wrapped line of code reads as two lines that were never written. All wraps every fence, code included.',
+    environmentVariable: 'ATLAS_FENCE_WRAP',
+    kind: ESettingKind.Choice,
+    fallback: 'text',
+    options: [
+      { value: 'text', label: 'text', detail: 'shipped' },
+      { value: 'never', label: 'never', detail: 'pan instead' },
+      { value: 'all', label: 'all', detail: 'code too' },
+    ],
   },
   {
     id: ESettingId.TldrFooter,

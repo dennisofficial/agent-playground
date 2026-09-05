@@ -16,6 +16,11 @@ import {
   EBlockDensity,
   SHIPPED_DENSITY,
 } from '../../density-store'
+import {
+  applyFenceWrap,
+  EFenceWrap,
+  SHIPPED_FENCE_WRAP,
+} from '../../fence-wrap-store'
 import { theme } from '../../theme'
 import { CONTENT_PADDING, gutterWidth } from '../fenced-block'
 import { MarkdownView } from '../markdown-view'
@@ -33,6 +38,10 @@ const WIDE_FENCE = ['```ts', WIDE_CODE, '```'].join('\n')
 const CODE_INSET = CONTENT_PADDING + gutterWidth(WIDE_CODE)
 
 const FILLER = Array.from({ length: 25 }, (_, i) => `filler line ${i}`).join('\n\n')
+
+const WIDE_MD = `${'alpha '.repeat(20)}omega`
+
+const WIDE_MD_FENCE = ['```md', WIDE_MD, '```'].join('\n')
 
 function rowOf(frame: string, needle: string): number {
   return frame.split('\n').findIndex((line) => line.includes(needle))
@@ -340,6 +349,43 @@ describe('FencedBlock', () => {
       expect(hovered[code]).toContain('plain text')
     } finally {
       await teardown(setup)
+    }
+  }, 30_000)
+
+  it('wraps a wide md fence to the panel instead of panning it', async () => {
+    const { setup } = await mount(`${FILLER}\n\n${WIDE_MD_FENCE}`)
+    try {
+      const frame = setup.captureCharFrame()
+      expect(rowOf(frame, 'omega')).toBeGreaterThan(rowOf(frame, 'alpha'))
+      expect(frame).not.toContain('⇄')
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('numbers no rows on a wrapped fence, since a wrapped line is not a source line', async () => {
+    const { setup } = await mount(`${FILLER}\n\n${WIDE_MD_FENCE}`)
+    try {
+      const line = setup.captureCharFrame().split('\n')[rowOf(setup.captureCharFrame(), 'alpha')]
+      const rail = line?.indexOf(RAIL) ?? -1
+      expect(line?.slice(rail + 1 + CONTENT_PADDING).startsWith('alpha')).toBe(true)
+    } finally {
+      await teardown(setup)
+    }
+  }, 30_000)
+
+  it('pans even an md fence sideways when wrapping is set to never', async () => {
+    applyFenceWrap(EFenceWrap.Never)
+    try {
+      const { setup } = await mount(`${FILLER}\n\n${WIDE_MD_FENCE}`)
+      try {
+        const frame = setup.captureCharFrame()
+        expect(frame).toContain('⇄')
+      } finally {
+        await teardown(setup)
+      }
+    } finally {
+      applyFenceWrap(SHIPPED_FENCE_WRAP)
     }
   }, 30_000)
 

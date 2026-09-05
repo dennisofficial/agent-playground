@@ -8,6 +8,7 @@ import {
   type EComposerEdge,
 } from './composer-edge-store'
 import { applyBlockDensity, blockDensityOf, SHIPPED_DENSITY, type EBlockDensity } from './density-store'
+import { applyFenceWrap, fenceWrapOf, SHIPPED_FENCE_WRAP, type EFenceWrap } from './fence-wrap-store'
 import { applyImageRows, SHIPPED_IMAGE_ROWS } from './image-rows-store'
 import { applyPalette } from './palette-store'
 import { theme } from './theme'
@@ -19,6 +20,7 @@ export type Appearance = {
   density: EBlockDensity
   composer: EComposerEdge
   imageRows: number
+  fenceWrap: EFenceWrap
 }
 
 export function appearanceOf(args: { resolution: SettingsResolution }): Appearance {
@@ -47,6 +49,13 @@ export function appearanceOf(args: { resolution: SettingsResolution }): Appearan
       id: ESettingId.ImageRows,
       fallback: SHIPPED_IMAGE_ROWS,
     }),
+    fenceWrap: fenceWrapOf(
+      choiceValueOf({
+        resolution: args.resolution,
+        id: ESettingId.FenceWrap,
+        fallback: SHIPPED_FENCE_WRAP,
+      }),
+    ),
   }
 }
 
@@ -55,4 +64,5 @@ export function applyAppearance(appearance: Appearance): void {
   applyBlockDensity(appearance.density)
   applyComposerEdge(appearance.composer)
   applyImageRows(appearance.imageRows)
+  applyFenceWrap(appearance.fenceWrap)
 }

@@ -12,6 +12,7 @@ export type FencedRenderArgs = {
   readonly language: string
   readonly width: number
   readonly streaming: boolean
+  readonly wrap: boolean
 }
 
 export type FencedRenderer = {

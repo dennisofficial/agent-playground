@@ -24,7 +24,7 @@ function highlightedView(args: FencedRenderArgs): FencedBlockView {
         content={args.source}
         filetype={filetype}
         syntaxStyle={codeSyntaxStyleFor(filetype)}
-        wrapMode="none"
+        wrapMode={args.wrap ? 'word' : 'none'}
         width={Math.min(columns, args.width)}
         flexShrink={0}
       />
@@ -48,7 +48,11 @@ export const plainRenderer: FencedRenderer = {
     const columns = Math.max(0, ...lines.map((line) => line.length))
     return {
       node: (
-        <text wrapMode="none" width={Math.min(columns, args.width)} flexShrink={0}>
+        <text
+          wrapMode={args.wrap ? 'word' : 'none'}
+          width={Math.min(columns, args.width)}
+          flexShrink={0}
+        >
           {args.source}
         </text>
       ),

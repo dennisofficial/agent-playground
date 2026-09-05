@@ -19,13 +19,22 @@ function rowsFor(args: FencedRenderArgs): StyledRows | null {
   })
 }
 
-function view(args: { rows: StyledRows; source: string; width: number }): FencedBlockView {
+function view(args: {
+  rows: StyledRows
+  source: string
+  width: number
+  wrap: boolean
+}): FencedBlockView {
   const lines = args.source.split('\n')
   const columns = Math.max(0, ...lines.map((line) => line.length))
 
   return {
     node: (
-      <text wrapMode="none" width={Math.min(columns, args.width)} flexShrink={0}>
+      <text
+        wrapMode={args.wrap ? 'word' : 'none'}
+        width={Math.min(columns, args.width)}
+        flexShrink={0}
+      >
         {args.rows.map((runs, row) => (
           <span key={row}>
             {runs.map((run, index) => (
@@ -54,6 +63,6 @@ export const lexicalRenderer: FencedRenderer = {
   render: (args) => {
     const rows = rowsFor(args)
     if (!rows) throw new Error(`no lexical language for "${args.language}"`)
-    return view({ rows, source: args.source, width: args.width })
+    return view({ rows, source: args.source, width: args.width, wrap: args.wrap })
   },
 }
