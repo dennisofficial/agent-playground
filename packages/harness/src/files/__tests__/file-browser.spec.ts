@@ -177,3 +177,73 @@ describe('FileBrowser.load', () => {
     })
   })
 })
+
+describe('FileBrowser behind a reachable set, as a container thread sees it', () => {
+  let mount: string
+  let elsewhere: string
+
+  beforeEach(() => {
+    mount = mkdtempSync(join(tmpdir(), 'atlas-mount-'))
+    elsewhere = mkdtempSync(join(tmpdir(), 'atlas-outside-'))
+    writeFileSync(join(mount, 'shared.ts'), 'shared')
+    writeFileSync(join(elsewhere, 'notes.md'), 'borrowed')
+  })
+
+  const sandboxed = (): FileBrowser =>
+    new FileBrowser({ root, reachableRoots: () => [root, mount] })
+
+  it('lists the project and a declared mount, the two things the container can reach', async () => {
+    write({ at: 'app.ts', content: 'x' })
+
+    expect((await sandboxed().list('')).map((one) => one.name)).toEqual(['app.ts'])
+    expect((await sandboxed().list(mount)).map((one) => one.name)).toEqual(['shared.ts'])
+  })
+
+  it('shows nothing for a directory outside the roots, however real it is on the host', async () => {
+    expect(await sandboxed().list(elsewhere)).toEqual([])
+  })
+
+  it('offers only the branches that lead to a root when browsing above one', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'atlas-base-'))
+    mkdirSync(join(base, 'kept'))
+    mkdirSync(join(base, 'dropped'))
+    writeFileSync(join(base, 'loose.md'), 'x')
+
+    const files = new FileBrowser({ root, reachableRoots: () => [root, join(base, 'kept')] })
+
+    expect((await files.list(base)).map((one) => one.name)).toEqual(['kept'])
+  })
+
+  it('denies exists for a real file outside the roots, so the mention never paints', async () => {
+    expect(await sandboxed().exists(join(elsewhere, 'notes.md'))).toBe(false)
+    expect(await sandboxed().exists(join(mount, 'shared.ts'))).toBe(true)
+  })
+
+  it('refuses to attach a real file outside the roots, naming the sandbox boundary', async () => {
+    expect(await sandboxed().load(join(elsewhere, 'notes.md'))).toEqual({
+      type: EFileLoad.Refused,
+      path: join(elsewhere, 'notes.md'),
+      reason: 'it is outside what the sandbox can reach',
+    })
+  })
+
+  it('answers from the current roots, not the roots at construction', async () => {
+    let roots: readonly string[] = [root]
+    const files = new FileBrowser({ root, reachableRoots: () => roots })
+
+    expect(await files.exists(join(mount, 'shared.ts'))).toBe(false)
+
+    files.forget()
+    roots = [root, mount]
+    expect(await files.exists(join(mount, 'shared.ts'))).toBe(true)
+  })
+
+  it('reads the whole host again when the reachable set is undefined', async () => {
+    const host = new FileBrowser({ root, reachableRoots: () => undefined })
+
+    expect(await host.load(join(elsewhere, 'notes.md'))).toMatchObject({
+      type: EFileLoad.Text,
+      content: 'borrowed',
+    })
+  })
+})

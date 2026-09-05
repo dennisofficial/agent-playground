@@ -32,7 +32,11 @@ export { DEFAULT_DOCKER_SOCKET } from './execution/docker/sandbox'
 export type { SandboxConfig } from './execution/docker/sandbox'
 export { DockerProcessPort } from './execution/docker/docker-process'
 export { ESandboxState, type SandboxStatus, type SandboxStatusListener } from './execution/docker/status'
-export { sandboxConfigFromHost } from './execution/docker/host-environment'
+export {
+  ATLAS_HOME_MOUNTED_SUBTREES,
+  mountedAtlasHomeSubtrees,
+  sandboxConfigFromHost,
+} from './execution/docker/host-environment'
 export { EImageKind, resolveContainerConfig, type ContainerResolution } from './execution/image/resolve'
 export type { BoundPort } from './execution/docker/ports'
 export { LocalProcessPort } from './execution/local-process'

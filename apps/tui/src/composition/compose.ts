@@ -137,6 +137,7 @@ import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
 import { launchSelection, modelPinned } from './model-preference'
 import { executionPinned, resolveExecutionLocation } from './execution-preference'
+import { reachableRootsFor } from './reachable-files'
 import {
   createExecutionLocationState,
   type ExecutionLocationState,
@@ -763,7 +764,15 @@ export async function composeAtlas(args: {
     pluginProjections: plugins.projections,
     pluginSurfaces: plugins.surfaces,
     pullRequests,
-    files: new FileBrowser({ root: config.cwd }),
+    files: new FileBrowser({
+      root: config.cwd,
+      reachableRoots: () =>
+        reachableRootsFor({
+          location: executionLocation.current(),
+          projectDirectory: config.cwd,
+          mounts,
+        }),
+    }),
     openUrl: createUrlOpener(),
     credentials,
     accounts,

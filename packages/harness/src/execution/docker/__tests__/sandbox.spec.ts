@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
 import { existsSync } from 'node:fs'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 import { DockerEngine } from '../engine'
 import { EMountMode } from '../../image/mounts'
+import { runSandboxScript } from '../sandbox-scripts'
 import {
   CONTAINER_GNUPG_HOME,
   ensureSandbox,
@@ -151,6 +152,18 @@ describe('sandboxCreateBody', () => {
     expect(env).toContain('GIT_CONFIG_KEY_1=safe.directory')
     expect(env).toContain(`GIT_CONFIG_VALUE_1=${CONFIG.worktree}`)
   })
+
+  it('binds each atlas home subtree read-only at its identical path, never the atlas home root', () => {
+    const body = sandboxCreateBody({
+      ...CONFIG,
+      atlasHomeSubtrees: ['/Users/operator/.atlas/memory', '/Users/operator/.atlas/skills'],
+    })
+    const binds = body.HostConfig?.Binds ?? []
+
+    expect(binds).toContain('/Users/operator/.atlas/memory:/Users/operator/.atlas/memory:ro')
+    expect(binds).toContain('/Users/operator/.atlas/skills:/Users/operator/.atlas/skills:ro')
+    expect(binds.some((bind) => bind.startsWith('/Users/operator/.atlas:'))).toBe(false)
+  })
 })
 
 const SOCKET = '/var/run/docker.sock'
@@ -269,6 +282,48 @@ describeDocker('ensureSandbox against a live daemon', () => {
     } finally {
       await rm(setupMarker, { force: true })
       await rm(startMarker, { force: true })
+    }
+  })
+
+  it('reads a mounted memory subtree inside, but cannot see auth.json or write to it', async () => {
+    const atlasHome = join('/private/tmp', 'atlas-dev-sandbox-home')
+    await mkdir(join(atlasHome, 'memory'), { recursive: true })
+    await writeFile(join(atlasHome, 'memory', 'MEMORY.md'), 'remembered')
+    await writeFile(join(atlasHome, 'auth.json'), '{"secret":true}')
+
+    try {
+      const sandbox = await ensureSandbox({
+        engine,
+        config: liveConfig({ atlasHomeSubtrees: [join(atlasHome, 'memory')] }),
+      })
+
+      const reading = await runSandboxScript({
+        engine,
+        containerId: sandbox.id,
+        script: `cat ${join(atlasHome, 'memory', 'MEMORY.md')}`,
+        cwd: worktree,
+      })
+      expect(reading.exitCode).toBe(0)
+      expect(reading.output).toContain('remembered')
+
+      const credentials = await runSandboxScript({
+        engine,
+        containerId: sandbox.id,
+        script: `cat ${join(atlasHome, 'auth.json')}`,
+        cwd: worktree,
+      })
+      expect(credentials.exitCode).not.toBe(0)
+
+      const writing = await runSandboxScript({
+        engine,
+        containerId: sandbox.id,
+        script: `touch ${join(atlasHome, 'memory', 'probe')}`,
+        cwd: worktree,
+      })
+      expect(writing.exitCode).not.toBe(0)
+      expect(existsSync(join(atlasHome, 'memory', 'probe'))).toBe(false)
+    } finally {
+      await rm(atlasHome, { recursive: true, force: true })
     }
   })
 })
@@ -448,6 +503,31 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
         ...FAKE_CONFIG,
         mounts: [{ path: '/Users/operator/Developer/shared-lib', mode: EMountMode.ReadOnly }],
       },
+    })
+
+    expect(sandbox.created).toBe(false)
+    expect(sandbox.id).toBe('kept-1')
+  })
+
+  it('treats atlas home subtrees as system mounts, so they never trigger a drift refusal', async () => {
+    const { engine: fake } = fakeEngine({
+      existing: {
+        id: 'kept-1',
+        state: 'running',
+        mounts: [
+          ...systemMounts,
+          {
+            source: '/Users/operator/.atlas/memory',
+            destination: '/Users/operator/.atlas/memory',
+            readOnly: true,
+          },
+        ],
+      },
+    })
+
+    const sandbox = await ensureSandbox({
+      engine: fake,
+      config: { ...FAKE_CONFIG, atlasHomeSubtrees: ['/Users/operator/.atlas/memory'] },
     })
 
     expect(sandbox.created).toBe(false)

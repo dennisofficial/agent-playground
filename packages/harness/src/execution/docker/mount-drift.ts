@@ -21,6 +21,7 @@ export const systemMountDestinations = (config: SandboxConfig): ReadonlySet<stri
       config.gpgAgentExtraSocket === undefined
         ? undefined
         : `${CONTAINER_GNUPG_HOME}/S.gpg-agent`,
+      ...(config.atlasHomeSubtrees ?? []),
     ].filter((path): path is string => path !== undefined),
   )
 

@@ -24,6 +24,11 @@ export function useExecutionLocation(args: {
     app.executionLocation.current,
   )
 
+  useEffect(
+    () => app.executionLocation.subscribe(() => app.files.forget()),
+    [app],
+  )
+
   useEffect(() => {
     const pinned = launching.current && app.executionPinned
     launching.current = false

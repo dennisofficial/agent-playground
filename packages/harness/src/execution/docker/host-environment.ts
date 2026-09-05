@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { atlasHomeFrom, isUnderPath } from '@dltech/atlas-core'
+
 import {
   DEFAULT_DOCKER_SOCKET,
   DEFAULT_SANDBOX_IMAGE,
@@ -9,6 +11,7 @@ import {
   type SandboxLimits,
 } from './sandbox'
 import { EImageKind, type ContainerResolution } from '../image/resolve'
+import type { Mount } from '../image/mounts'
 
 export type HostSandboxEnvironment = {
   uid: number
@@ -68,12 +71,33 @@ const imageOf = (resolution: ContainerResolution): string => {
   )
 }
 
+// The atlas home root holds auth.json, the vault key and harness.db, which never enter a
+// container — so the container gets these four fixed subtrees, one bind each, and the root
+// cannot be reached by widening the list.
+export const ATLAS_HOME_MOUNTED_SUBTREES = ['memory', 'skills', 'agents', 'projects'] as const
+
+export function mountedAtlasHomeSubtrees(args: {
+  worktree: string
+  declared?: readonly Mount[] | undefined
+  atlasHome?: string | undefined
+}): readonly string[] {
+  const atlasHome = args.atlasHome ?? atlasHomeFrom({ env: process.env, home: homedir() })
+  const covered = [args.worktree, ...(args.declared ?? []).map((mount) => mount.path)]
+
+  return ATLAS_HOME_MOUNTED_SUBTREES.map((name) => join(atlasHome, name)).filter(
+    (subtree) =>
+      existsSync(subtree) &&
+      !covered.some((root) => isUnderPath({ directory: root, path: subtree })),
+  )
+}
+
 export function sandboxConfigFromHost(args: {
   worktree: string
   limits: SandboxLimits
   image?: string | undefined
   resolution?: ContainerResolution | undefined
   labelPrefix?: string | undefined
+  atlasHomeSubtrees?: readonly string[] | undefined
 }): SandboxConfig {
   const host = hostSandboxEnvironment()
 
@@ -95,5 +119,8 @@ export function sandboxConfigFromHost(args: {
     setup: args.resolution?.setup,
     start: args.resolution?.start,
     mounts: args.resolution?.mounts,
+    atlasHomeSubtrees:
+      args.atlasHomeSubtrees ??
+      mountedAtlasHomeSubtrees({ worktree: args.worktree, declared: args.resolution?.mounts }),
   }
 }

@@ -34,7 +34,7 @@ const freshProject = async (containerJson?: string): Promise<string> => {
   return project
 }
 
-const bindIn = (cwd: string) =>
+const bindIn = (cwd: string, atlasHome?: string) =>
   bindSandbox({
     container: createHarnessContainer(),
     engine: new DockerEngine({ socketPath: join(cwd, 'no-daemon.sock') }),
@@ -44,6 +44,7 @@ const bindIn = (cwd: string) =>
       user: new MemorySettingsStore({ label: 'sandbox-binding spec' }),
     }),
     executionLocation: createExecutionLocationState({ initial: EExecutionLocation.Docker }),
+    atlasHome: atlasHome ?? join(cwd, 'no-atlas-home-here'),
   })
 
 describe('the mounts bindSandbox hands the tail block', () => {
@@ -77,5 +78,20 @@ describe('the mounts bindSandbox hands the tail block', () => {
     expect(mounts).toEqual([])
     const note = executionLocationNote({ location: EExecutionLocation.Docker, mounts })
     expect(note).toContain('A path outside the project is not mounted')
+  })
+
+  it('tells the model it can read the mounted atlas home subtrees, never the home root', async () => {
+    const cwd = await freshProject()
+    const atlasHome = await mkdtemp(join(tmpdir(), 'atlas-sandbox-home-'))
+    projects.push(atlasHome)
+    await mkdir(join(atlasHome, 'memory'), { recursive: true })
+    await writeFile(join(atlasHome, 'auth.json'), '{"secret":true}')
+
+    const { mounts } = await bindIn(cwd, atlasHome)
+
+    expect(mounts).toEqual([join(atlasHome, 'memory')])
+    const note = executionLocationNote({ location: EExecutionLocation.Docker, mounts })
+    expect(note).toContain(join(atlasHome, 'memory'))
+    expect(note).not.toContain('auth.json')
   })
 })

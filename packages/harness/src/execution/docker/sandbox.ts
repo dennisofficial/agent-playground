@@ -46,6 +46,7 @@ export type SandboxConfig = {
   setup?: string | undefined
   start?: string | undefined
   mounts?: readonly Mount[] | undefined
+  atlasHomeSubtrees?: readonly string[] | undefined
 }
 
 export type Sandbox = {
@@ -76,6 +77,7 @@ export function sandboxCreateBody(config: SandboxConfig): CreateContainerBody {
   if (config.gitconfigPath !== undefined) {
     binds.push(`${config.gitconfigPath}:${config.gitconfigPath}:ro`)
   }
+  for (const subtree of config.atlasHomeSubtrees ?? []) binds.push(`${subtree}:${subtree}:ro`)
   for (const mount of config.mounts ?? []) binds.push(mountBind(mount))
 
   // git honours GIT_CONFIG_COUNT/KEY_n/VALUE_n pairs (since git 2.31) above every config file,

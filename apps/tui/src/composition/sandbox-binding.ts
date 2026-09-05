@@ -20,6 +20,7 @@ import {
   startIdleStop,
   stopSandbox,
   portToken,
+  mountedAtlasHomeSubtrees,
   resolveContainerConfig,
   ShellRegistryPort,
   type DependencyContainer,
@@ -45,6 +46,7 @@ export async function bindSandbox(args: {
   cwd: string
   settings: SettingsService
   executionLocation: ExecutionLocationState
+  atlasHome?: string | undefined
 }): Promise<{
   sandbox: SandboxControl
   containerStatus: SandboxStatusState
@@ -53,7 +55,12 @@ export async function bindSandbox(args: {
   const { container, engine, cwd, settings, executionLocation } = args
 
   const resolution = await resolveContainerConfig({ projectDirectory: cwd })
-  const mounts = resolution.mounts.map((mount) => mount.path)
+  const atlasSubtrees = mountedAtlasHomeSubtrees({
+    worktree: cwd,
+    declared: resolution.mounts,
+    atlasHome: args.atlasHome,
+  })
+  const mounts = [...resolution.mounts.map((mount) => mount.path), ...atlasSubtrees]
   for (const refusal of resolution.refusals) {
     notify({
       key: `container-refusal:${refusal.file}`,
@@ -77,6 +84,7 @@ export async function bindSandbox(args: {
         sandbox: sandboxConfigFromHost({
           worktree: cwd,
           resolution,
+          atlasHomeSubtrees: atlasSubtrees,
           limits: {
             cpus: rangeValueOf({
               resolution: settings.snapshot().resolution,

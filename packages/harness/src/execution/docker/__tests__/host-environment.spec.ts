@@ -1,10 +1,14 @@
 import { describe, expect, it } from 'bun:test'
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { hostSandboxEnvironment, sandboxConfigFromHost } from '../host-environment'
+import {
+  hostSandboxEnvironment,
+  mountedAtlasHomeSubtrees,
+  sandboxConfigFromHost,
+} from '../host-environment'
 import { EMountMode } from '../../image/mounts'
 import {
   EConfigSource,
@@ -112,5 +116,93 @@ describe('hostSandboxEnvironment', () => {
         }),
       }),
     ).toThrow(/container\.json/)
+  })
+})
+
+describe('mountedAtlasHomeSubtrees', () => {
+  const withAtlasHome = async (
+    run: (atlasHome: string) => void | Promise<void>,
+  ): Promise<void> => {
+    const atlasHome = await mkdtemp(join(tmpdir(), 'atlas-dev-home-'))
+    try {
+      await run(atlasHome)
+    } finally {
+      await rm(atlasHome, { recursive: true, force: true })
+    }
+  }
+
+  it('offers each safe subtree that exists, and only those', async () => {
+    await withAtlasHome(async (atlasHome) => {
+      await mkdir(join(atlasHome, 'memory'))
+      await mkdir(join(atlasHome, 'skills'))
+      await writeFile(join(atlasHome, 'auth.json'), '{"secret":true}')
+      await writeFile(join(atlasHome, 'harness.db'), 'the event log')
+
+      expect(
+        mountedAtlasHomeSubtrees({ worktree: '/unrelated/worktree', atlasHome }),
+      ).toEqual([join(atlasHome, 'memory'), join(atlasHome, 'skills')])
+    })
+  })
+
+  it('can never name the atlas home root — the candidate list is four fixed subtrees', async () => {
+    await withAtlasHome(async (atlasHome) => {
+      await mkdir(join(atlasHome, 'memory'))
+      await mkdir(join(atlasHome, 'agents'))
+      await mkdir(join(atlasHome, 'projects'))
+
+      const subtrees = mountedAtlasHomeSubtrees({ worktree: '/unrelated/worktree', atlasHome })
+
+      expect(subtrees).not.toContain(atlasHome)
+      expect(subtrees.every((subtree) => subtree.startsWith(`${atlasHome}/`))).toBe(true)
+    })
+  })
+
+  it('skips subtrees the worktree bind already covers, as a source launch under the repo', async () => {
+    await withAtlasHome(async (atlasHome) => {
+      await mkdir(join(atlasHome, 'memory'))
+      const worktree = join(atlasHome, '..')
+
+      expect(mountedAtlasHomeSubtrees({ worktree, atlasHome })).toEqual([])
+    })
+  })
+
+  it('skips a subtree a declared mount already covers, so Docker never sees a duplicate bind', async () => {
+    await withAtlasHome(async (atlasHome) => {
+      await mkdir(join(atlasHome, 'memory'))
+      await mkdir(join(atlasHome, 'skills'))
+
+      expect(
+        mountedAtlasHomeSubtrees({
+          worktree: '/unrelated/worktree',
+          declared: [{ path: atlasHome, mode: EMountMode.ReadOnly }],
+          atlasHome,
+        }),
+      ).toEqual([])
+    })
+  })
+
+  it('lands on the sandbox config, honouring an explicit list over probing', async () => {
+    await withAtlasHome(async (atlasHome) => {
+      await mkdir(join(atlasHome, 'memory'))
+      const previous = process.env['ATLAS_HOME']
+      process.env['ATLAS_HOME'] = atlasHome
+      try {
+        const probed = sandboxConfigFromHost({
+          worktree: '/unrelated/worktree',
+          limits: { cpus: 1, memoryBytes: 1024 ** 3 },
+        })
+        expect(probed.atlasHomeSubtrees).toEqual([join(atlasHome, 'memory')])
+
+        const explicit = sandboxConfigFromHost({
+          worktree: '/unrelated/worktree',
+          limits: { cpus: 1, memoryBytes: 1024 ** 3 },
+          atlasHomeSubtrees: ['/elsewhere/memory'],
+        })
+        expect(explicit.atlasHomeSubtrees).toEqual(['/elsewhere/memory'])
+      } finally {
+        if (previous === undefined) delete process.env['ATLAS_HOME']
+        else process.env['ATLAS_HOME'] = previous
+      }
+    })
   })
 })
