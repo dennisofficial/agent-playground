@@ -14,7 +14,7 @@ import {
   type TurnRunner,
 } from '@dltech/atlas-harness'
 
-import { benchModel, chunksStreamed } from './bench-model'
+import { benchModel, chunksStreamed, STEP_TEXT } from './bench-model'
 import { mountBenchRender, publishingRunner, type BenchRender } from './bench-render'
 
 const AGENTS_PER_THREAD = 5
@@ -25,7 +25,7 @@ const FAILURE_BACKOFF_MS = 50
 const SHELL_COMMAND = 'i=0; while true; do i=$((i+1)); echo "bench-shell line $i"; sleep 0.05; done'
 const TURN_PROMPT = 'Stream the full benchmark status report, then stop.'
 
-type BenchFlags = { threads: number; seconds: number; render: boolean }
+type BenchFlags = { threads: number; seconds: number; render: boolean; history: number }
 
 const readFlag = (args: { argv: readonly string[]; name: string }): string | undefined => {
   const prefix = `--${args.name}=`
@@ -44,6 +44,7 @@ const parseFlags = (argv: readonly string[]): BenchFlags => ({
   threads: positiveInteger({ name: 'threads', raw: readFlag({ argv, name: 'threads' }), fallback: 1 }),
   seconds: positiveInteger({ name: 'seconds', raw: readFlag({ argv, name: 'seconds' }), fallback: 30 }),
   render: !argv.includes('--no-render'),
+  history: positiveInteger({ name: 'history', raw: readFlag({ argv, name: 'history' }), fallback: 0 }),
 })
 
 type BenchSamples = {
@@ -186,6 +187,13 @@ const main = async (): Promise<void> => {
   const { channel, runner } = publishingRunner({ harness, root })
   const shells = new BunShellRegistry(root, new SystemClock(), () => new HookChain({}))
   const visibleThread = await harness.threads.create({ title: 'bench-visible' })
+  for (let entry = 0; entry < flags.history; entry += 1) {
+    await harness.log.append({
+      threadId: visibleThread.id,
+      runId: harness.ids.nextRunId(),
+      drafts: [{ type: 'assistant-said', parts: [{ type: 'text', text: STEP_TEXT }] }],
+    })
+  }
   const render: BenchRender | null = flags.render
     ? await mountBenchRender({ root, harness, shells, channel, runner, threadId: visibleThread.id })
     : null
@@ -205,6 +213,9 @@ const main = async (): Promise<void> => {
     tally = sumTallies(tallies)
     wallSeconds = (performance.now() - startedAt) / 1_000
     frames = render === null ? null : render.framesRendered()
+    if (render !== null && render.frameText().includes('something broke')) {
+      console.error('render tier crashed (crash screen is showing); the run measured the error screen')
+    }
   } finally {
     sampler.stop()
     if (render !== null) await render.close()
