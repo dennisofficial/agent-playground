@@ -2,10 +2,12 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   FALLBACK_ROW_ESTIMATE,
+  entryAtRow,
   estimateRows,
   initialSpan,
+  mountSpans,
   rowsPerEntry,
-  spacerRows,
+  sectionsOf,
   topsOf,
   visibleSpan,
   windowSpan,
@@ -115,14 +117,92 @@ describe('initialSpan', () => {
   })
 })
 
-describe('spacerRows', () => {
-  it('stands in for the unmounted rows above and below the span', () => {
-    const { rows, tops } = layoutOf([3, 5, 7, 11])
-    expect(spacerRows({ tops, rows, span: { start: 1, end: 3 } })).toEqual({ above: 3, below: 11 })
+describe('mountSpans', () => {
+  const base = { start: 100, end: 200 }
+
+  it('is the base window alone without a selection', () => {
+    expect(mountSpans({ base, pinned: null, total: 1000 })).toEqual([base])
   })
 
-  it('is zero when everything is mounted', () => {
+  it('keeps a pinned selection mounted beside the window', () => {
+    expect(mountSpans({ base, pinned: { start: 900, end: 910 }, total: 1000 })).toEqual([
+      base,
+      { start: 900, end: 910 },
+    ])
+    expect(mountSpans({ base, pinned: { start: 10, end: 20 }, total: 1000 })).toEqual([
+      { start: 10, end: 20 },
+      base,
+    ])
+  })
+
+  it('merges the pin into the window when they overlap or touch', () => {
+    expect(mountSpans({ base, pinned: { start: 150, end: 250 }, total: 1000 })).toEqual([
+      { start: 100, end: 250 },
+    ])
+    expect(mountSpans({ base, pinned: { start: 50, end: 100 }, total: 1000 })).toEqual([
+      { start: 50, end: 200 },
+    ])
+    expect(mountSpans({ base, pinned: { start: 120, end: 130 }, total: 1000 })).toEqual([base])
+  })
+
+  it('clamps the pin to the transcript', () => {
+    expect(mountSpans({ base, pinned: { start: 995, end: 1010 }, total: 1000 })).toEqual([
+      base,
+      { start: 995, end: 1000 },
+    ])
+  })
+})
+
+describe('entryAtRow', () => {
+  const { rows, tops } = layoutOf([3, 5, 7, 11])
+
+  it('finds the entry containing a content row', () => {
+    expect(entryAtRow({ tops, rows, row: 0 })).toBe(0)
+    expect(entryAtRow({ tops, rows, row: 3 })).toBe(1)
+    expect(entryAtRow({ tops, rows, row: 7 })).toBe(1)
+    expect(entryAtRow({ tops, rows, row: 8 })).toBe(2)
+    expect(entryAtRow({ tops, rows, row: 25 })).toBe(3)
+  })
+
+  it('clamps past the ends instead of giving up', () => {
+    expect(entryAtRow({ tops, rows, row: -5 })).toBe(0)
+    expect(entryAtRow({ tops, rows, row: 999 })).toBe(3)
+  })
+
+  it('is null for an empty transcript', () => {
+    expect(entryAtRow({ tops: [], rows: [], row: 4 })).toBeNull()
+  })
+})
+
+describe('sectionsOf', () => {
+  it('stands spacers in for the unmounted rows around one span', () => {
+    const { rows, tops } = layoutOf([3, 5, 7, 11])
+    expect(sectionsOf({ tops, rows, spans: [{ start: 1, end: 3 }] })).toEqual([
+      { kind: 'spacer', height: 3 },
+      { kind: 'entries', span: { start: 1, end: 3 } },
+      { kind: 'spacer', height: 11 },
+    ])
+  })
+
+  it('bridges disjoint spans with a spacer for the gap', () => {
+    const { rows, tops } = layoutOf([3, 5, 7, 11])
+    expect(
+      sectionsOf({ tops, rows, spans: [{ start: 0, end: 1 }, { start: 3, end: 4 }] }),
+    ).toEqual([
+      { kind: 'entries', span: { start: 0, end: 1 } },
+      { kind: 'spacer', height: 12 },
+      { kind: 'entries', span: { start: 3, end: 4 } },
+    ])
+  })
+
+  it('has no spacers when everything is mounted', () => {
     const { rows, tops } = layoutOf([3, 5, 7])
-    expect(spacerRows({ tops, rows, span: { start: 0, end: 3 } })).toEqual({ above: 0, below: 0 })
+    expect(sectionsOf({ tops, rows, spans: [{ start: 0, end: 3 }] })).toEqual([
+      { kind: 'entries', span: { start: 0, end: 3 } },
+    ])
+  })
+
+  it('is empty for an empty transcript', () => {
+    expect(sectionsOf({ tops: [], rows: [], spans: [] })).toEqual([])
   })
 })
