@@ -10,7 +10,13 @@ import {
   type Grant,
 } from "@dltech/atlas-core";
 
-import type { BoundPort, ESandboxState, TurnSpend } from "@dltech/atlas-harness";
+import {
+  EShellStatus,
+  type BoundPort,
+  type ESandboxState,
+  type ShellSnapshot,
+  type TurnSpend,
+} from "@dltech/atlas-harness";
 
 import { classifierFold, type ClassifierFold } from "./classifier-fold";
 import { truncateCells } from "../ui/components/sidebar/cells";
@@ -226,14 +232,27 @@ export function withSections(args: {
   return { ...args.model, sections };
 }
 
+export function exposedPortsOf(args: {
+  shells: readonly ShellSnapshot[];
+}): readonly BoundPort[] {
+  return args.shells
+    .flatMap((shell) => {
+      if (shell.status !== EShellStatus.Running || shell.exposure === undefined) return [];
+      const { containerPort, hostPort } = shell.exposure;
+      return [{ containerPort, hostPort }];
+    })
+    .sort((left, right) => left.containerPort - right.containerPort);
+}
+
 export function containerPillOf(args: {
   location: EExecutionLocation;
   container: SidebarContainer;
+  exposed: readonly BoundPort[];
 }): SidebarContainer | null {
   if (args.location === EExecutionLocation.Host) return null;
 
-  const { state, image, ports, reason } = args.container;
-  return { state, image, ports, ...(reason === undefined ? {} : { reason }) };
+  const { state, image, reason } = args.container;
+  return { state, image, ports: args.exposed, ...(reason === undefined ? {} : { reason }) };
 }
 
 export function withContainer(args: {

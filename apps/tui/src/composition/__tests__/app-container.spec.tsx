@@ -4,7 +4,7 @@ import React from 'react'
 import { testRender } from '@opentui/react/test-utils'
 
 import { EExecutionLocation, ESettingId, type SettingsDocument } from '@dltech/atlas-core'
-import { ESandboxState } from '@dltech/atlas-harness'
+import { ESandboxState, EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harness'
 
 import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { App } from '../app'
@@ -143,6 +143,81 @@ describe('the container command', () => {
   }, 60_000)
 })
 
+const shellExposing = (args: { containerPort: number; hostPort: number }): ShellSnapshot => ({
+  shellId: toShellId('bash_1'),
+  command: 'bun run dev',
+  description: 'dev server',
+  status: EShellStatus.Running,
+  startedAt: '2026-09-05T12:00:00.000Z',
+  lastOutputAt: '2026-09-05T12:00:00.000Z',
+  totalCharacters: 0,
+  awaitingInput: false,
+  exposure: {
+    containerPort: args.containerPort,
+    hostPort: args.hostPort,
+    url: `http://localhost:${args.hostPort}`,
+  },
+})
+
+describe('the sandbox line in the transcript', () => {
+  it('narrates the sandbox while it starts and clears once it runs', async () => {
+    const app = speaking()
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: 140,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+      expect(setup.captureCharFrame()).not.toContain('starting the container')
+
+      app.containerStatus.mark({ state: ESandboxState.Starting })
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+      expect(setup.captureCharFrame()).toContain('starting the container')
+
+      app.containerStatus.mark({ state: ESandboxState.Running, ports: [] })
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+      expect(setup.captureCharFrame()).not.toContain('starting the container')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+
+  it("carries the daemon's reason while the sandbox is failed", async () => {
+    const app = speaking()
+    const setup = await testRender(<App app={app} opened={await spokenIn(app)} />, {
+      width: 140,
+      height: 40,
+    })
+
+    try {
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      app.containerStatus.mark({
+        state: ESandboxState.Failed,
+        reason: 'No such image: atlas-dev-no-such-image:latest',
+      })
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      const frame = setup.captureCharFrame()
+      expect(frame).toContain('the container failed to start')
+      expect(frame).toContain('No such image')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
+})
+
 describe('the container pill in the sidebar', () => {
   it('is absent on the host and answers with the sandbox state in docker', async () => {
     const app = speaking()
@@ -178,7 +253,14 @@ describe('the container pill in the sidebar', () => {
 
       const running = setup.captureCharFrame()
       expect(running).toContain('running')
-      expect(running).toContain('3000→20123')
+      expect(running).not.toContain('3000→20123')
+
+      app.shells.place(shellExposing({ containerPort: 3000, hostPort: 20_123 }))
+      await setup.flush()
+      await settle(250)
+      await setup.flush()
+
+      expect(setup.captureCharFrame()).toContain('3000→20123')
     } finally {
       await teardown(setup)
     }

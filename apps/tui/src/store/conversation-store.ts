@@ -20,9 +20,11 @@ import {
   sameSidebar,
   sidebarFoldOf,
   sidebarFrom,
+  type SidebarContainer,
   type SidebarEventFold,
   type SidebarModel,
 } from "./sidebar-model";
+import { watchSandbox, type SandboxStatusSource } from "./sandbox-source";
 import { pendingTldrOf, subscribeTldrFeed } from "../ui/tldr-feed-store";
 import { sameEvents, sameTurns } from "./same-log";
 import type { ModelPriceLookup } from "./sidebar-spend";
@@ -61,6 +63,7 @@ export function createConversationStore(args: {
   name?: string | null;
   priceOf?: ModelPriceLookup | undefined;
   projectEvents?: ((args: { events: readonly Event[] }) => void) | undefined;
+  sandbox?: SandboxStatusSource | undefined;
 }): ConversationStore {
   const paceReveal = args.paceReveal ?? false;
   let thinking: EThinkingVisibility = args.thinking ?? SHIPPED_THINKING;
@@ -70,6 +73,7 @@ export function createConversationStore(args: {
   let turns: readonly TurnSpend[] = args.turns ?? NO_TURNS;
   let turn: TurnClock = IDLE_TURN;
   let gate: RevealGate | null = null;
+  let sandbox: SidebarContainer | null = args.sandbox?.current() ?? null;
   let pendingTldr = pendingTldrOf(args.threadId) ?? null;
   let frame: ReturnType<typeof setTimeout> | undefined;
   const tracker = createStepTracker();
@@ -102,7 +106,7 @@ export function createConversationStore(args: {
   const sidebarNow = (): SidebarModel =>
     sidebarFrom({ fold: foldNow(), turn, turns, priceOf: args.priceOf, name });
 
-  let model = assembleTranscript({ durable: durableNow(), live: [], thinking, pendingTldr, tldrStatus })
+  let model = assembleTranscript({ durable: durableNow(), live: [], thinking, pendingTldr, tldrStatus, sandbox })
   let sidebar = sidebarNow()
 
   args.projectEvents?.({ events });
@@ -145,6 +149,7 @@ export function createConversationStore(args: {
         thinking,
         pendingTldr,
         tldrStatus,
+        sandbox,
       }),
     )
     const nextSidebar = sidebarNow()
@@ -207,6 +212,15 @@ export function createConversationStore(args: {
     }
     pendingTldr = next;
     republish();
+  });
+
+  const unsubscribeFromSandbox = watchSandbox({
+    source: args.sandbox,
+    current: () => sandbox,
+    onMoved: (next) => {
+      sandbox = next;
+      republish();
+    },
   });
 
   return {
@@ -276,6 +290,7 @@ export function createConversationStore(args: {
       unsubscribeFromChannel?.();
       unsubscribeFromChannel = undefined;
       unsubscribeFromFeed();
+      unsubscribeFromSandbox?.();
       listeners.clear();
     },
   };

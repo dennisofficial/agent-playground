@@ -80,6 +80,37 @@ describeDocker('DockerProcessPort sandbox status', () => {
     await rm(missingWorktree, { recursive: true, force: true })
   }, 60_000)
 
+  it('restarts the sandbox on the next spawn when the daemon stopped it behind our back', async () => {
+    const seen: SandboxStatus[] = []
+    const port = new DockerProcessPort({
+      engine,
+      sandbox: sandboxConfig(),
+      onStatus: (status) => seen.push(status),
+    })
+
+    expect(await runTrue(port)).toBe(0)
+
+    const found = await engine.listContainers({
+      labels: { [worktreeLabel(PREFIX)]: worktree },
+      all: true,
+    })
+    const sandbox = found[0]
+    if (sandbox === undefined) throw new Error('the first spawn created no sandbox')
+    await engine.stopContainer({ id: sandbox.id })
+
+    expect(await runTrue(port)).toBe(0)
+
+    const restarted = await engine.inspectContainer({ id: sandbox.id })
+    expect(restarted.state.running).toBe(true)
+    expect(seen.map((one) => one.state)).toEqual([
+      ESandboxState.Starting,
+      ESandboxState.Running,
+      ESandboxState.Stopped,
+      ESandboxState.Starting,
+      ESandboxState.Running,
+    ])
+  }, 60_000)
+
   it('re-ensures after being told the sandbox stopped, so the next spawn restarts it', async () => {
     const seen: SandboxStatus[] = []
     const port = new DockerProcessPort({

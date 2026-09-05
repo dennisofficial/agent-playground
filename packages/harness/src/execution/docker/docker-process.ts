@@ -7,7 +7,7 @@ import {
 
 import { SIGKILL_GRACE_MS } from '../local-process'
 import { demuxExecStream } from './frames'
-import type { DockerEngine } from './engine'
+import { EngineRequestFailed, type ContainerDetails, type DockerEngine } from './engine'
 import { blockRefusal, portInBlock } from './ports'
 import {
   DEFAULT_LABEL_PREFIX,
@@ -45,6 +45,11 @@ const bridge = (
         .catch((error: unknown) => controller.error(error))
     },
   })
+
+const containerStopped = (error: unknown): boolean =>
+  error instanceof EngineRequestFailed &&
+  error.status === 409 &&
+  error.message.includes('is not running')
 
 const execEnvFor = (args: {
   requested: Record<string, string | undefined>
@@ -178,12 +183,8 @@ export class DockerProcessPort implements ProcessPort {
 
   private async ensureTracked(): Promise<Sandbox> {
     try {
-      const sandbox = await ensureSandbox({
-        engine: this.engine,
-        config: this.sandboxConfig,
-      })
+      const { sandbox, details } = await this.ensureRunning()
       this.collected.push(...sandbox.warnings)
-      const details = await this.engine.inspectContainer({ id: sandbox.id })
       this.imageEnv = details.config.env
       this.onStatus?.({ state: ESandboxState.Running, ports: details.ports })
       return sandbox
@@ -196,16 +197,46 @@ export class DockerProcessPort implements ProcessPort {
     }
   }
 
+  private async ensureRunning(): Promise<{ sandbox: Sandbox; details: ContainerDetails }> {
+    const ensured = await this.ensureInspected()
+    if (ensured.details.state.running) return ensured
+
+    return await this.ensureInspected()
+  }
+
+  private async ensureInspected(): Promise<{ sandbox: Sandbox; details: ContainerDetails }> {
+    const sandbox = await ensureSandbox({
+      engine: this.engine,
+      config: this.sandboxConfig,
+    })
+    return { sandbox, details: await this.engine.inspectContainer({ id: sandbox.id }) }
+  }
+
   private async startExec(args: SpawnCommand): Promise<RunningExec> {
-    const sandbox = await this.ensure()
+    try {
+      return await this.execIn({ sandbox: await this.ensure(), command: args })
+    } catch (error) {
+      if (!containerStopped(error)) throw error
+
+      this.onStatus?.({ state: ESandboxState.Stopped })
+      this.sandboxStopped()
+      return await this.execIn({ sandbox: await this.ensure(), command: args })
+    }
+  }
+
+  private async execIn(args: { sandbox: Sandbox; command: SpawnCommand }): Promise<RunningExec> {
+    const { sandbox, command } = args
     this.imageEnv ??= (await this.engine.inspectContainer({ id: sandbox.id })).config.env
 
     const pidfile = `/tmp/atlas-exec-${crypto.randomUUID()}.pid`
     const exec = await this.engine.createExec({
       containerId: sandbox.id,
-      cmd: ['sh', '-c', `printf %s $$ > ${pidfile}; exec "$@"`, 'sh', ...args.cmd],
-      cwd: args.cwd,
-      env: args.env === undefined ? {} : execEnvFor({ requested: args.env, imageEnv: this.imageEnv }),
+      cmd: ['sh', '-c', `printf %s $$ > ${pidfile}; exec "$@"`, 'sh', ...command.cmd],
+      cwd: command.cwd,
+      env:
+        command.env === undefined
+          ? {}
+          : execEnvFor({ requested: command.env, imageEnv: this.imageEnv }),
     })
     const demuxed = demuxExecStream({
       stream: await this.engine.startExec({ execId: exec.id }),

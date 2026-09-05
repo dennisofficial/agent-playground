@@ -151,9 +151,10 @@ export function useThreadView(args: {
       ...(seed?.turns === undefined ? {} : { turns: seed.turns }),
       paceReveal,
       priceOf,
+      sandbox: app.containerStatus,
       ...(projectEvents === undefined ? {} : { projectEvents }),
     });
-  }, [app.channel, threadId, paceReveal, priceOf, projectEvents, initial]);
+  }, [app.channel, app.containerStatus, threadId, paceReveal, priceOf, projectEvents, initial]);
 
   /**
    * A conversation swapped for another one arrives as a fresh getter, and the rows it already read

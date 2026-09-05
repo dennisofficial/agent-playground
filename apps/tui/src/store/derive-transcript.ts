@@ -1,5 +1,5 @@
 import { EBlockKind, type Event } from '@dltech/atlas-core'
-import { EStepEnd, type StepSignal, type TurnSpend } from '@dltech/atlas-harness'
+import { ESandboxState, EStepEnd, type StepSignal, type TurnSpend } from '@dltech/atlas-harness'
 
 import { durableEntries } from './durable-entries'
 import { liveSteps, runKey, stepsOfSignals, type InFlightStep } from './in-flight-steps'
@@ -12,11 +12,13 @@ import {
   toolsAboveThoughts,
   type EThinkingVisibility,
 } from './thinking-fold'
+import type { SidebarContainer } from './sidebar-model'
 import {
   EAuthor,
   EEntryKind,
   EMPTY_TRANSCRIPT,
   toolsRanEntry,
+  type SandboxNoticeEntry,
   type StepFailure,
   type TranscriptEntry,
   type TranscriptModel,
@@ -66,6 +68,38 @@ function entriesOfStep(args: { step: InFlightStep; reveal: RevealGate | null }):
   })
 }
 
+const SANDBOX_NOTICE_KEY = 'sandbox-notice'
+
+function sandboxNoticeOf(sandbox: SidebarContainer | null): SandboxNoticeEntry[] {
+  if (sandbox === null) return []
+
+  const shared = {
+    kind: EEntryKind.SandboxNotice,
+    author: EAuthor.Model,
+    key: SANDBOX_NOTICE_KEY,
+  } as const
+
+  if (sandbox.state === ESandboxState.Starting) {
+    return [
+      {
+        ...shared,
+        text: `starting the container — ${sandbox.image} can take minutes to pull the first time`,
+        failed: false,
+      },
+    ]
+  }
+  if (sandbox.state === ESandboxState.Failed) {
+    return [
+      {
+        ...shared,
+        text: `the container failed to start: ${sandbox.reason ?? 'the daemon gave no reason'}`,
+        failed: true,
+      },
+    ]
+  }
+  return []
+}
+
 export function assembleTranscript(args: {
   durable: readonly TranscriptEntry[]
   live: readonly InFlightStep[]
@@ -73,22 +107,26 @@ export function assembleTranscript(args: {
   thinking?: EThinkingVisibility
   pendingTldr?: { anchorSeq: number; text: string } | null | undefined
   tldrStatus?: boolean | undefined
+  sandbox?: SidebarContainer | null | undefined
 }): TranscriptModel {
   const reveal = args.reveal ?? null
   const pending = args.pendingTldr ?? null
-  const entries = foldThoughts({
-    entries: withTldrStatus({
-      entries: withPendingTldr({
-        entries: toolsAboveThoughts([
-          ...args.durable,
-          ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
-        ]),
-        pending,
+  const entries = [
+    ...foldThoughts({
+      entries: withTldrStatus({
+        entries: withPendingTldr({
+          entries: toolsAboveThoughts([
+            ...args.durable,
+            ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
+          ]),
+          pending,
+        }),
+        enabled: args.tldrStatus ?? true,
       }),
-      enabled: args.tldrStatus ?? true,
+      visibility: args.thinking ?? SHIPPED_THINKING,
     }),
-    visibility: args.thinking ?? SHIPPED_THINKING,
-  })
+    ...sandboxNoticeOf(args.sandbox ?? null),
+  ]
   const streaming = args.live.some((step) => step.end === null)
   const failure = failureOf(args.live)
 
@@ -107,6 +145,7 @@ export function deriveTranscript(args: {
   thinking?: EThinkingVisibility
   pendingTldr?: { anchorSeq: number; text: string } | null | undefined
   tldrStatus?: boolean | undefined
+  sandbox?: SidebarContainer | null | undefined
 }): TranscriptModel {
   return assembleTranscript({
     durable: durableEntries({ events: args.events, turns: args.turns }),
@@ -115,6 +154,7 @@ export function deriveTranscript(args: {
     ...(args.thinking === undefined ? {} : { thinking: args.thinking }),
     ...(args.pendingTldr === undefined ? {} : { pendingTldr: args.pendingTldr }),
     ...(args.tldrStatus === undefined ? {} : { tldrStatus: args.tldrStatus }),
+    ...(args.sandbox === undefined ? {} : { sandbox: args.sandbox }),
   })
 }
 

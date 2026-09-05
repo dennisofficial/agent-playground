@@ -22,6 +22,7 @@ export enum EEntryKind {
   AgentEnded = 'agent-ended',
   TldrWritten = 'tldr-written',
   TurnEnded = 'turn-ended',
+  SandboxNotice = 'sandbox-notice',
 }
 
 export type OperatorSaidEntry = {
@@ -162,6 +163,14 @@ export type TurnEndedEntry = {
   interrupted: boolean
 }
 
+export type SandboxNoticeEntry = {
+  kind: EEntryKind.SandboxNotice
+  author: EAuthor.Model
+  key: string
+  text: string
+  failed: boolean
+}
+
 export type TranscriptEntry =
   | OperatorSaidEntry
   | ModelSaidEntry
@@ -176,6 +185,7 @@ export type TranscriptEntry =
   | AgentEndedEntry
   | TldrWrittenEntry
   | TurnEndedEntry
+  | SandboxNoticeEntry
 
 export type StepFailure = { message: string | null }
 

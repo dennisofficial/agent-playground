@@ -1,6 +1,7 @@
 import React from 'react'
 
 import { EEntryKind, type TranscriptEntry } from '../../store'
+import { theme } from '../theme'
 import type { EMark } from '../tool-marks'
 import { AssistantBlock } from './blocks/assistant-block'
 import { CompactedBlock } from './blocks/compacted-block'
@@ -203,6 +204,13 @@ function DerivedEntryView(props: {
           endedAt={entry.endedAt}
           interrupted={entry.interrupted}
         />
+      )
+
+    case EEntryKind.SandboxNotice:
+      return (
+        <box flexDirection="row" marginBottom={1} flexShrink={0}>
+          <text fg={entry.failed ? theme.warn : theme.dim}>{entry.text}</text>
+        </box>
       )
 
     default: {
