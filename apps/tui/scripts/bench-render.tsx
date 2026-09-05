@@ -10,6 +10,8 @@ import {
   type AccountUsage,
   type ThreadId,
 } from '@dltech/atlas-core'
+import type { Event } from '@dltech/atlas-core'
+import type { TurnSpend } from '@dltech/atlas-harness'
 import type { ActiveConversation } from '../src/composition/resume-hint'
 import {
   createAccountUsageService,
@@ -25,6 +27,7 @@ import {
   type DeltaChannel,
 } from '@dltech/atlas-harness'
 import { testRender } from '@opentui/react/test-utils'
+import type { Renderable } from '@opentui/core'
 
 import { App } from '../src/composition/app'
 import type { AtlasApp } from '../src/composition/compose'
@@ -133,6 +136,8 @@ const benchApp = (args: {
 export type BenchRender = {
   framesRendered: () => number
   frameText: () => string
+  flush: () => Promise<void>
+  root: () => Renderable
   close: () => Promise<void>
 }
 
@@ -143,14 +148,24 @@ export const mountBenchRender = async (args: {
   channel: DeltaChannel
   runner: PublishingTurnRunner
   threadId: ThreadId
+  opened?: { events: readonly Event[]; turns: readonly TurnSpend[]; name: string | null }
+  width?: number
+  height?: number
 }): Promise<BenchRender> => {
   await grammarsReady()
+  const opening = args.opened ?? { events: [], turns: [], name: 'bench-visible' }
   const setup = await testRender(
     <App
       app={benchApp(args)}
-      opened={{ threadId: args.threadId, events: [], turns: [], name: 'bench-visible', started: true }}
+      opened={{
+        threadId: args.threadId,
+        events: opening.events,
+        turns: opening.turns,
+        name: opening.name,
+        started: true,
+      }}
     />,
-    { width: 150, height: 40, exitOnCtrlC: false },
+    { width: args.width ?? 150, height: args.height ?? 40, exitOnCtrlC: false },
   )
 
   /**
@@ -163,6 +178,8 @@ export const mountBenchRender = async (args: {
   return {
     framesRendered: () => setup.renderer.getStats().frameCount,
     frameText: () => setup.captureCharFrame(),
+    flush: () => setup.flush(),
+    root: () => setup.renderer.root,
     close: () => teardown(setup),
   }
 }
