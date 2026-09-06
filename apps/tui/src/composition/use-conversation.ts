@@ -33,6 +33,7 @@ import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
 import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
 import { ECompactScope } from './compact-turn'
+import { EOpenMode } from './config'
 import { useRevokeGrant } from './revoke-grant'
 import type { Renaming } from './session-rename'
 import { ETakeBack, takeBackTrailingSaid } from './take-back'
@@ -253,6 +254,14 @@ export function useConversation(args: {
     setFailure,
     forgetUsage,
   })
+
+  const resumeAtLaunch = useRef(app.config.open.mode !== EOpenMode.New)
+
+  useEffect(() => {
+    if (!resumeAtLaunch.current) return
+    resumeAtLaunch.current = false
+    if (turnDriver.isResumable) turnDriver.handleResume()
+  }, [turnDriver])
 
   const { working, drive } = turnDriver
   const { compacting } = compaction

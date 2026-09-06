@@ -66,7 +66,7 @@ import type { AtlasApp } from '../compose'
 import type { ActiveConversation } from '../resume-hint'
 import { heldChoice } from '../model-selection'
 import type { ModelCatalogue } from '../providers'
-import { DEFAULT_MODEL_REF, EOpenMode, type AtlasConfig } from '../config'
+import { DEFAULT_MODEL_REF, EOpenMode, type AtlasConfig, type OpenRequest } from '../config'
 import { createExecutionLocationState } from '../execution-location-state'
 import { createSandboxStatusState } from '../sandbox-status-state'
 import { fakeAgentRegistry, type FakeAgents } from './fake-agents'
@@ -529,6 +529,7 @@ export function fakeApp(args: {
   cwd?: string
   workspace?: WorkspaceIdentity
   pullRequests?: PullRequestPort | null
+  open?: OpenRequest
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
@@ -641,7 +642,11 @@ export function fakeApp(args: {
       return args.summarises ?? null
     },
 
-    config: { ...FAKE_CONFIG, ...(args.cwd === undefined ? {} : { cwd: args.cwd }) },
+    config: {
+      ...FAKE_CONFIG,
+      ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
+      ...(args.open === undefined ? {} : { open: args.open }),
+    },
     workspace: args.workspace ?? { workspace: args.cwd ?? FAKE_CONFIG.cwd, repo: null },
     credentials: alwaysAuthorised(),
     channel,
