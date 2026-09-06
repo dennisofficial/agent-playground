@@ -28,7 +28,7 @@ export function NoticeStack(props: { width: number }): React.ReactNode {
   const cells = props.width - TRANSCRIPT_INSET
 
   return (
-    <box width={props.width} flexDirection="column" alignItems="flex-end" flexShrink={0}>
+    <box width={props.width} flexDirection="column" alignItems="flex-start" flexShrink={0}>
       {notices.map((notice) => (
         <box
           key={notice.key}
