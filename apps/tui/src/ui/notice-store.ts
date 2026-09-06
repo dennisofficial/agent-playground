@@ -16,6 +16,8 @@ export const NOTICE_WARN_MS = 6000
 
 export const NOTICE_KEY_CLASSIFIER_OFFLINE = 'classifier-offline'
 
+export const NOTICE_KEY_QUICK_MODEL_PREFIX = 'quick-model'
+
 export const NOTICE_KEY_LOST_AGENTS = 'lost-agents'
 
 const listeners = new Set<() => void>()

@@ -9,12 +9,6 @@ export const DEFAULT_MODEL_REF: ModelRef = {
   modelId: 'claude-haiku-4-5',
 }
 
-export const TITLER_MODEL_ID = 'claude-haiku-4-5-20251001'
-
-export const SUMMARISER_MODEL_ID = 'claude-sonnet-5'
-
-export const TLDR_MODEL_ID = 'claude-haiku-4-5-20251001'
-
 export enum EOpenMode {
   New = 'new',
   Continue = 'continue',

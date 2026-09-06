@@ -18,6 +18,7 @@ import {
   DEFAULT_WORKTREE_DIRECTORY,
   EServiceStatus,
   ESettingId,
+  EUtilityModelRole,
   EWebSearchBackend,
   backendOf,
   choiceValueOf,
@@ -66,7 +67,6 @@ import {
   AnthropicUsageClient,
   builtinOauthClients,
   createAccountUsageService,
-  createAnthropicOauthModel,
   createDeltaChannel,
   createHarnessContainer,
   atlasDatabaseUrl,
@@ -134,7 +134,7 @@ import {
 import { createPendingQueue, type PendingQueue } from '../store'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
-import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
+import type { AtlasConfig } from './config'
 import { launchSelection, modelPinned } from './model-preference'
 import { executionPinned, resolveExecutionLocation } from './execution-preference'
 import { reachableRootsFor } from './reachable-files'
@@ -146,6 +146,7 @@ import { faultInjected } from './fault-injection'
 import { mcpBootNotice } from './mcp-report'
 import { selectableModel, type ModelChoice } from './model-selection'
 import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
+import { createQuickModel } from './quick-model'
 import { assemblePlugins } from '../plugins/assemble'
 import { PullRequestPort } from '../plugins/github/pure'
 import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
@@ -387,12 +388,6 @@ export async function composeAtlas(args: {
     }),
   })
 
-  container.register(portToken(JudgePort), {
-    useValue: new HaikuJudge({
-      model: createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID }),
-    }),
-  })
-
   container.register(WebSearchBackendToken, {
     useValue: () =>
       backendOf(
@@ -449,6 +444,23 @@ export async function composeAtlas(args: {
       new InferenceAdapter({ credentials, cards: cardsForProvider(INFERENCE_PROVIDER_ID) }),
     ],
     accounts: await accountStore.list(),
+  })
+
+  const titlerModel = createQuickModel({
+    role: EUtilityModelRole.Titler,
+    settings,
+    catalogue: models,
+  })
+  const tldrModel = createQuickModel({
+    role: EUtilityModelRole.Tldr,
+    settings,
+    catalogue: models,
+  })
+
+  container.register(portToken(JudgePort), {
+    useValue: new HaikuJudge({
+      model: createQuickModel({ role: EUtilityModelRole.Judge, settings, catalogue: models }),
+    }),
   })
 
   const model = selectableModel({
@@ -587,13 +599,9 @@ export async function composeAtlas(args: {
 
   let activeThread: ActiveConversation | null = null
 
-  const titlerModel = createAnthropicOauthModel({ credentials, modelId: TITLER_MODEL_ID })
-  const summariserModel = createAnthropicOauthModel({ credentials, modelId: SUMMARISER_MODEL_ID })
-  const tldrModel = createAnthropicOauthModel({ credentials, modelId: TLDR_MODEL_ID })
-
   const summarise: Summariser = ({ events, fromSeq, throughSeq, signal }) =>
     summaryFor({
-      model: summariserModel,
+      model: model.model,
       events,
       fromSeq,
       throughSeq,
@@ -822,7 +830,7 @@ export async function composeAtlas(args: {
         log: withDeltaPublishing({ log, channel }),
         ids,
         model: tldrModel,
-        modelId: TLDR_MODEL_ID,
+        modelId: () => tldrModel.modelId,
         feed: tldrFeed,
         onMishap: () =>
           notify({ tone: ENoticeTone.Warn, text: 'Could not write the tl;dr footer for that turn.' }),

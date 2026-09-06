@@ -32,8 +32,6 @@ import {
   tldrFor,
 } from '@dltech/atlas-harness'
 
-import { TLDR_MODEL_ID } from './composition/config'
-
 const argAfter = (flag: string, fallback: number): number => {
   const at = process.argv.indexOf(flag)
   const value = at === -1 ? undefined : process.argv[at + 1]
@@ -157,7 +155,7 @@ async function main(): Promise<void> {
     const log = container.resolve(portToken(EventLogPort))
     const model = createAnthropicOauthModel({
       credentials: container.resolve(portToken(CredentialPort)),
-      modelId: TLDR_MODEL_ID,
+      modelId: 'claude-haiku-4-5-20251001',
     })
 
     const threads: { id: string; title: string | null }[] = await database.prisma.thread.findMany({

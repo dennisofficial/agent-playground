@@ -18,7 +18,7 @@ export class TldrTurnRunner extends TurnRunner {
   private readonly log: EventLogPort
   private readonly ids: IdPort
   private readonly model: LanguageModel
-  private readonly modelId: string
+  private readonly modelId: () => string
   private readonly feed: TldrFeed | undefined
   private readonly onMishap: ((error: unknown) => void) | undefined
 
@@ -27,7 +27,7 @@ export class TldrTurnRunner extends TurnRunner {
     log: EventLogPort
     ids: IdPort
     model: LanguageModel
-    modelId: string
+    modelId: () => string
     feed?: TldrFeed | undefined
     onMishap?: ((error: unknown) => void) | undefined
   }) {
@@ -92,7 +92,7 @@ export class TldrTurnRunner extends TurnRunner {
             throughSeq: due.throughSeq,
             text: result.text,
             status: result.status,
-            modelId: this.modelId,
+            modelId: this.modelId(),
           },
         ],
       })
