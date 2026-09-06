@@ -147,6 +147,19 @@ const CALLS: Record<string, (width: number) => ToolCall> = {
         exitCode: 0,
       },
     }),
+  'terminal-wide': (width) =>
+    call({
+      name: 'bash',
+      input: {
+        command: `echo 界界界界界界界界界界界界\necho ${'w'.repeat(width)}`,
+        description: 'Wide characters',
+      },
+      output: {
+        command: '…',
+        stdout: 'ok',
+        exitCode: 0,
+      },
+    }),
   'detail-output': () =>
     call({
     name: 'bash',
@@ -219,6 +232,7 @@ const DETAILS: Record<string, EDetail> = {
   'read-edge': EDetail.File,
   'created-file': EDetail.Created,
   'terminal-multi': EDetail.Terminal,
+  'terminal-wide': EDetail.Terminal,
   'detail-output': EDetail.Output,
   'detail-matches': EDetail.Matches,
   'detail-paths': EDetail.Paths,
@@ -258,6 +272,7 @@ const SENTINELS: Record<string, string> = {
   'read-edge': 'const narrow',
   'created-file': 'readFileSync',
   'terminal-multi': 'bun run build',
+  'terminal-wide': '界',
   'detail-output': 'first line of output',
   'detail-matches': ':68',
   'detail-paths': 'theme.ts',
@@ -272,6 +287,7 @@ const HIGHLIGHTED = new Set([
   'read-edge',
   'created-file',
   'terminal-multi',
+  'terminal-wide',
 ])
 
 const tick = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
