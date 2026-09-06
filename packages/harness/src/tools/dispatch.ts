@@ -16,6 +16,7 @@ import {
   type ToolCall,
   type ToolDefinition,
   type ToolOutcome,
+  type OnToolOutput,
   type WorkspacePort,
   type HookOutcome,
 } from '@dltech/atlas-core'
@@ -44,6 +45,7 @@ export abstract class ToolDispatcher {
     homeDirectory?: string | undefined
     events: readonly Event[]
     activeWorktree?: ActiveWorktree | undefined
+    onOutput?: OnToolOutput | undefined
   }): Promise<readonly EventDraft[]>
 }
 
@@ -85,8 +87,9 @@ export class HookedToolDispatcher extends ToolDispatcher {
     homeDirectory?: string | undefined
     events: readonly Event[]
     activeWorktree?: ActiveWorktree | undefined
+    onOutput?: OnToolOutput | undefined
   }): Promise<readonly EventDraft[]> {
-    const { call, signal, projectDirectory, homeDirectory, activeWorktree, events } = args
+    const { call, signal, projectDirectory, homeDirectory, activeWorktree, events, onOutput } = args
     const definition = this.registry.find(call.name)
     if (definition === undefined) return [this.unknownToolDraft({ call })]
 
@@ -140,6 +143,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
       homeDirectory,
       activeWorktree,
       threadId: call.threadId,
+      onOutput,
     })
 
     return [
@@ -241,6 +245,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     homeDirectory: string | undefined
     activeWorktree: ActiveWorktree | undefined
     threadId: ThreadId
+    onOutput: OnToolOutput | undefined
   }): Promise<ToolOutcome> {
     try {
       return await args.definition.invoke({
@@ -251,6 +256,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
         homeDirectory: args.homeDirectory,
         activeWorktree: args.activeWorktree,
         threadId: args.threadId,
+        onOutput: args.onOutput,
       })
     } catch (error) {
       return { ok: false, reason: `the ${args.call.name} tool threw: ${messageOf(error)}` }

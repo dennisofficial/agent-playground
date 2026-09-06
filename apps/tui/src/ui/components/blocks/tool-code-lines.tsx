@@ -8,7 +8,7 @@
  */
 
 import { pathToFiletype, StyledText, type TextChunk } from '@opentui/core'
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { cachedHighlight, fitDiffChunks, highlightRows } from '../../markdown/highlight-rows'
 import { theme } from '../../theme'
@@ -29,27 +29,58 @@ export function codeLinesOf(body: readonly string[]): CodeLine[] {
 
 type Rows = readonly (readonly TextChunk[])[] | null
 
-export function useHighlighted(args: {
-  lines: readonly string[]
-  filetype: string
-}): readonly (readonly TextChunk[] | null)[] {
+type Settled = { key: string; rows: Rows }
+
+const sameSettled = (current: Settled | null, next: Settled): Settled =>
+  current !== null && current.key === next.key && current.rows === next.rows ? current : next
+
+export type LineChunks = readonly (readonly TextChunk[] | null)[]
+
+/**
+ * Highlighting is asynchronous, so a row is drawn plain first and coloured when tree-sitter answers.
+ * The effect is keyed on the CONTENT, never on the array carrying it: a caller that rebuilds its
+ * lines every render must not restart the pass, and an answer that matches what is already held
+ * must not schedule a render, or the block re-renders itself forever.
+ */
+export function useHighlighted(args: { lines: readonly string[]; filetype: string }): LineChunks {
   const { lines, filetype } = args
   const key = useMemo(() => `${filetype} ${lines.join('\n')}`, [lines, filetype])
-  const cached = useMemo(() => cachedHighlight({ lines, filetype }) ?? null, [lines, filetype])
-  const [settled, setSettled] = useState<{ key: string; rows: Rows } | null>(null)
+  const cached = useMemo(() => cachedHighlight({ lines, filetype }), [lines, filetype])
+  const [settled, setSettled] = useState<Settled | null>(null)
+  const latest = useRef({ lines, filetype })
+  latest.current = { lines, filetype }
 
   useEffect(() => {
+    if (cachedHighlight(latest.current) !== undefined) return
     let live = true
-    void highlightRows({ lines, filetype }).then((rows) => {
-      if (live) setSettled({ key, rows })
+    void highlightRows(latest.current).then((rows) => {
+      if (live) setSettled((current) => sameSettled(current, { key, rows }))
     })
     return () => {
       live = false
     }
-  }, [key, lines, filetype])
+  }, [key])
 
-  const rows = settled?.key === key ? settled.rows : cached
-  return lines.map((_unused, index) => rows?.[index] ?? null)
+  const rows = settled?.key === key ? settled.rows : (cached ?? null)
+  return useMemo(() => lines.map((_unused, index) => rows?.[index] ?? null), [lines, rows])
+}
+
+export function useStyledRows(args: {
+  texts: readonly string[]
+  chunks: LineChunks
+  columns: number
+}): readonly StyledText[] {
+  const { texts, chunks, columns } = args
+  return useMemo(
+    () =>
+      texts.map(
+        (text, index) =>
+          new StyledText([
+            ...fitDiffChunks({ chunks: chunksFor({ text, chunks: chunks[index] ?? null }), columns }),
+          ]),
+      ),
+    [texts, chunks, columns],
+  )
 }
 
 export function CodeLines(props: {
@@ -66,30 +97,21 @@ export function CodeLines(props: {
     ...props.lines.map((line) => (line.number === null ? 0 : String(line.number).length)),
   )
   const columns = Math.max(1, props.inner - props.indent.length - digits - 1)
+  const styled = useStyledRows({ texts, chunks, columns })
 
   return (
     <>
-      {props.lines.map((line, index) => (
-        <box key={index} flexDirection="row" height={1} flexShrink={0}>
-          <text wrapMode="none" flexShrink={0} fg={theme.rule}>
-            {`${props.indent}${(line.number === null ? '' : String(line.number)).padStart(digits)} `}
-          </text>
-          <text
-            wrapMode="none"
-            width={columns}
-            flexShrink={0}
-            fg={theme.body}
-            content={
-              new StyledText([
-                ...fitDiffChunks({
-                  chunks: chunksFor({ text: line.text, chunks: chunks[index] ?? null }),
-                  columns,
-                }),
-              ])
-            }
-          />
-        </box>
-      ))}
+      {styled.map((content, index) => {
+        const number = props.lines[index]?.number ?? null
+        return (
+          <box key={index} flexDirection="row" height={1} flexShrink={0}>
+            <text wrapMode="none" flexShrink={0} fg={theme.rule}>
+              {`${props.indent}${(number === null ? '' : String(number)).padStart(digits)} `}
+            </text>
+            <text wrapMode="none" width={columns} flexShrink={0} fg={theme.body} content={content} />
+          </box>
+        )
+      })}
     </>
   )
 }

@@ -10,7 +10,7 @@ import {
 } from '@dltech/atlas-core'
 import type { KeyEvent, PasteEvent } from '@opentui/core'
 import { usePaste } from '@opentui/react'
-import { useCallback, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 
 import type { Span } from '../ui/components/spans'
 import { isPrintable } from '../ui/keys/printable'
@@ -120,5 +120,10 @@ export function useSecretPrompt(args: {
     ),
   )
 
-  return { prompt, origin: secrets.origin(), displayOf, open, close, handleKey }
+  const origin = secrets.origin()
+
+  return useMemo(
+    () => ({ prompt, origin, displayOf, open, close, handleKey }),
+    [close, displayOf, handleKey, open, origin, prompt],
+  )
 }

@@ -11,7 +11,7 @@
  * changed". Line numbers and the filetype's own highlighting are the whole of it.
  */
 
-import React from 'react'
+import React, { useMemo } from 'react'
 
 import type { ToolCall } from '../../../store'
 import { dictatedContentOf, inputOf, relativise, str } from '../../../store/tools'
@@ -47,12 +47,15 @@ export function ToolCreatedFile(props: {
   expand?: Expander
 }): React.ReactNode {
   const content = dictatedContentOf(props.call)
+  const expand = props.expand ?? NOT_EXPANDABLE
+  const rows = useMemo(() => {
+    const body = (content ?? '').replace(/\n$/, '').split('\n')
+    const shown = shownOf({ body, cap: MAX_ROWS, expand })
+    return { total: body.length, lines: codeLinesOf(shown.map((line, index) => `${index + 1}\t${line}`)) }
+  }, [content, expand.expanded])
   if (content === undefined) return null
 
-  const expand = props.expand ?? NOT_EXPANDABLE
   const path = relativise(str(inputOf(props.call).path) ?? props.call.name, props.cwd)
-  const body = content.replace(/\n$/, '').split('\n')
-  const shown = shownOf({ body, cap: MAX_ROWS, expand })
   const width = Math.max(24, props.inner - PANEL_PAD)
 
   return (
@@ -62,15 +65,10 @@ export function ToolCreatedFile(props: {
         fill={theme.panelBg}
         band={theme.diff.bandBg}
         width={width}
-        header={<Header path={path} lines={body.length} />}
+        header={<Header path={path} lines={rows.total} />}
       >
-        <CodeLines
-          lines={codeLinesOf(shown.map((line, index) => `${index + 1}\t${line}`))}
-          path={path}
-          inner={Math.max(1, width - CHROME)}
-          indent=""
-        />
-        <MoreToggle hidden={body.length - MAX_ROWS} indent="" expand={expand} />
+        <CodeLines lines={rows.lines} path={path} inner={Math.max(1, width - CHROME)} indent="" />
+        <MoreToggle hidden={rows.total - MAX_ROWS} indent="" expand={expand} />
       </Panel>
     </box>
   )

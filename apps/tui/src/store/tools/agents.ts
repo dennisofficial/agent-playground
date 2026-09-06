@@ -50,32 +50,6 @@ const agentNameOf = (args: { call: ToolCall; cwd: string }): string => {
   return str(input.agentType) ?? str(input.agentId) ?? 'a sub-agent'
 }
 
-/**
- * agent_spawn takes one child at the top level or a wave under `agents`, and a wave carries no
- * intent of its own. The count is read from what was asked for rather than from what started, so a
- * batch that half failed cannot claim more than it set out to spawn.
- */
-const spawnedInBatch = (call: ToolCall): readonly Record<string, unknown>[] =>
-  records(inputOf(call).agents)
-
-function batchSpawn(args: {
-  call: ToolCall
-  asked: readonly Record<string, unknown>[]
-}): Classification {
-  const { call, asked } = args
-  const started = records(outputOf(call).agents).length
-
-  return {
-    klass: EToolClass.External,
-    gather: null,
-    line: `Spawned ${plural(asked.length, 'sub-agent')}`,
-    failed: call.state !== ECallState.Ok,
-    note: call.state === ECallState.Ok ? `${started}/${asked.length} running` : 'failed',
-    metric: asked.length,
-    detail: EDetail.Output,
-  }
-}
-
 type Tally = { listed: number; running: number; blocked: number; ended: number }
 
 function tallied(call: ToolCall): Tally {
@@ -114,11 +88,6 @@ function agentListing(call: ToolCall): Classification {
 
 export function agentCall(args: { call: ToolCall; cwd: string }): Classification | null {
   const { call } = args
-
-  if (call.name === 'agent_spawn') {
-    const asked = spawnedInBatch(call)
-    if (asked.length > 1) return batchSpawn({ call, asked })
-  }
 
   if (call.name === 'agent_list') return agentListing(call)
 

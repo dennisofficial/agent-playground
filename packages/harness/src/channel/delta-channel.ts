@@ -1,4 +1,4 @@
-import type { ThreadId, ChunkFilter, Event, EventOfType, EventRef } from '@dltech/atlas-core'
+import type { CallId, ThreadId, ChunkFilter, Event, EventOfType, EventRef } from '@dltech/atlas-core'
 
 import {
   EStepEnd,
@@ -16,6 +16,7 @@ export type Unsubscribe = () => void
 export type ThreadPublisher = {
   readonly threadId: ThreadId
   readonly onChunk: ChunkFilter
+  toolOutput(args: { callId: CallId; text: string }): void
   settleAppend(args: { events: readonly Event[] }): void
   close(args: { end: EStepEnd }): void
   retrying(notice: Omit<RetryWaitingSignal, 'type'>): void
@@ -149,6 +150,10 @@ export function createDeltaChannel(): DeltaChannel {
           const stepId = state.stepId ?? startStep({ threadId, state })
           publish({ state, signal: { type: 'chunk', stepId, chunk: kept } })
           return kept
+        },
+
+        toolOutput({ callId, text }) {
+          publish({ state: stateFor(threadId), signal: { type: 'tool-output', callId, text } })
         },
 
         settleAppend({ events }) {

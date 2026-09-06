@@ -7,7 +7,7 @@
  */
 
 import { collapseUnchanged } from '@dltech/atlas-core'
-import React from 'react'
+import React, { useMemo } from 'react'
 
 import type { ToolCall } from '../../../store'
 import {
@@ -105,13 +105,16 @@ function FileRead(props: {
   expand: Expander
 }): React.ReactNode {
   const body = detailOf(props.call)
-  const shown = shownOf({ body, cap: MAX_ROWS, expand: props.expand })
+  const lines = useMemo(
+    () => codeLinesOf(shownOf({ body: detailOf(props.call), cap: MAX_ROWS, expand: props.expand })),
+    [props.call, props.expand.expanded],
+  )
   const named = outputOf(props.call).path
   const path = typeof named === 'string' ? named : (targetOf({ call: props.call, cwd: props.cwd }) ?? '')
 
   return (
     <>
-      <CodeLines lines={codeLinesOf(shown)} path={path} inner={props.inner} indent={INDENT} />
+      <CodeLines lines={lines} path={path} inner={props.inner} indent={INDENT} />
       <More hidden={body.length - MAX_ROWS} inner={props.inner} expand={props.expand} />
     </>
   )
@@ -212,19 +215,20 @@ function Tests(props: { call: ToolCall; inner: number; expand: Expander }): Reac
 const DIFF_INSET = 2
 
 function Diff(props: { call: ToolCall; inner: number; cwd: string }): React.ReactNode {
-  const file = diffOf(props.call)
+  const file = useMemo(() => {
+    const parsed = diffOf(props.call)
+    if (parsed === null) return null
+    return {
+      ...parsed,
+      path: relativise(parsed.path, props.cwd),
+      hunks: parsed.hunks.map((hunk) => collapseUnchanged({ hunk, context: DIFF_CONTEXT })),
+    }
+  }, [props.call, props.cwd])
   if (file === null) return null
 
   return (
     <box marginLeft={DIFF_INSET} marginTop={1}>
-      <InlineDiff
-        file={{
-          ...file,
-          path: relativise(file.path, props.cwd),
-          hunks: file.hunks.map((hunk) => collapseUnchanged({ hunk, context: DIFF_CONTEXT })),
-        }}
-        width={Math.max(24, props.inner - DIFF_INSET)}
-      />
+      <InlineDiff file={file} width={Math.max(24, props.inner - DIFF_INSET)} />
     </box>
   )
 }

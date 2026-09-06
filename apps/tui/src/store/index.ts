@@ -95,4 +95,13 @@ export {
   type SidebarTeammate,
 } from './sidebar-model'
 export { type SidebarCrewFold, type SidebarSubagent } from './subagent-row'
+export {
+  IDLE_PROGRESS,
+  turnAdvanced,
+  turnInterrupting,
+  turnObserved,
+  turnSettled,
+  turnStarted,
+  type TurnProgress,
+} from './turn-progress'
 export { classifierFold, type ClassifierFold } from './classifier-fold'

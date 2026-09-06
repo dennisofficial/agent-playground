@@ -271,7 +271,7 @@ export function useTurnDriver(args: {
 
     stamp(turnInterrupting)
     controller.abort()
-  }, [cancelCompaction])
+  }, [cancelCompaction, stamp])
 
   const handleRewindTo = useCallback((toSeq: number) => void rewindTo(toSeq), [rewindTo])
 

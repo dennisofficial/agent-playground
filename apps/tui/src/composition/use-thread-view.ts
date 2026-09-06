@@ -16,15 +16,11 @@ import {
   type EThinkingVisibility,
   type SidebarModel,
   type TranscriptModel,
+  type TurnProgress,
 } from "../store";
 import type { TurnClock } from "../ui/components/transcript";
 import type { AtlasApp } from "./compose";
 import { readThreadSpend } from "./thread-spend";
-import {
-  IDLE_PROGRESS,
-  turnObserved,
-  type TurnProgress,
-} from "./turn-progress";
 
 /**
  * Which rows of a thread the view reads.
@@ -49,7 +45,6 @@ export type ThreadView = {
   sidebar: SidebarModel;
   events: readonly Event[];
   turn: TurnClock;
-  progress: TurnProgress;
   refresh: () => Promise<void>;
   setEvents: (events: readonly Event[]) => void;
   stamp: (advance: (progress: TurnProgress) => TurnProgress) => void;
@@ -113,33 +108,13 @@ export function useThreadView(args: {
     heldEvents.current = next;
     setEventsState(next);
   }, []);
-  const [progress, setProgress] = useState<TurnProgress>(IDLE_PROGRESS);
-  const characters = useRef(0);
-
-  /**
-   * `characters` counts for the token estimate but is not itself on screen, so a chunk that moves
-   * only it must not cost a render — the ref keeps the count while the state keeps the clock. The
-   * clock is compared ahead of dispatch for the same reason: the OpenTUI reconciler commits even
-   * when an updater returns its current value, so an unchanged clock never reaches setProgress.
-   */
-  const heldProgress = useRef(progress);
-  const stamp = useCallback(
-    (advance: (progress: TurnProgress) => TurnProgress) => {
-      const current = heldProgress.current;
-      const next = advance({ characters: characters.current, clock: current.clock });
-      characters.current = next.characters;
-      if (next.clock === current.clock) return;
-
-      heldProgress.current = next;
-      setProgress(next);
-    },
-    [],
-  );
-
   const priceOf = useCallback(
     (ref: ModelRef) => app.models.cardFor(ref)?.cost,
     [app.models],
   );
+
+  const clock = useRef(readClock);
+  clock.current = readClock;
 
   const store = useMemo(() => {
     const seed = initial?.();
@@ -152,9 +127,15 @@ export function useThreadView(args: {
       paceReveal,
       priceOf,
       sandbox: app.containerStatus,
+      readClock: () => clock.current(),
       ...(projectEvents === undefined ? {} : { projectEvents }),
     });
   }, [app.channel, app.containerStatus, threadId, paceReveal, priceOf, projectEvents, initial]);
+
+  const stamp = useCallback(
+    (advance: (progress: TurnProgress) => TurnProgress) => store.stampTurn(advance),
+    [store],
+  );
 
   /**
    * A conversation swapped for another one arrives as a fresh getter, and the rows it already read
@@ -208,8 +189,6 @@ export function useThreadView(args: {
       app.channel.subscribe({
         threadId,
         listener: (signal) => {
-          stamp((current) => turnObserved({ progress: current, signal, now: readClock() }));
-
           if (signal.type === "chunk" && signal.chunk.type === "finish") {
             const { usage } = signal.chunk;
             if (usage !== undefined) onUsage?.(usage);
@@ -230,15 +209,12 @@ export function useThreadView(args: {
           }
         },
       }),
-    [app.channel, onUsage, readClock, refresh, stamp, threadId],
+    [app.channel, onUsage, refresh, threadId],
   );
 
   const model = useSyncExternalStore(store.subscribe, store.getSnapshot);
   const sidebar = useSyncExternalStore(store.subscribe, store.getSidebar);
-
-  const turn = progress.clock;
-
-  useEffect(() => store.setTurn(turn), [store, turn]);
+  const turn = useSyncExternalStore(store.subscribe, store.getTurn);
 
   return {
     store,
@@ -246,7 +222,6 @@ export function useThreadView(args: {
     sidebar,
     events,
     turn,
-    progress,
     refresh,
     setEvents,
     stamp,
