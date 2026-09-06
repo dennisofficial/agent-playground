@@ -23,10 +23,12 @@ import {
   composerTone,
   EComposerTone,
 } from '../components/composer'
+import { composerNoticeCells } from '../components/composer-title'
 import { FRAME_INSET } from '../components/frame'
 import { PANEL_INSET, PANEL_PAD } from '../components/panel'
 import { ComposerHints, type Hint } from '../components/composer-hints'
 import { useDraft } from '../hooks/use-draft'
+import { dismissNotice, notify } from '../notice-store'
 import { grammarsReady, teardown } from '../markdown/__tests__/harness'
 import { glyph, theme } from '../theme'
 import { drawn, frameOf, HEIGHT } from './transcript-fixture'
@@ -52,6 +54,7 @@ function Draft(props: {
   title?: string
   width?: number
   accent?: string
+  notices?: boolean
 }): React.ReactNode {
   const draft = useDraft(props.text ?? '')
   return (
@@ -63,6 +66,7 @@ function Draft(props: {
       {...(props.maxRows === undefined ? {} : { maxRows: props.maxRows })}
       {...(props.title === undefined ? {} : { title: props.title })}
       {...(props.accent === undefined ? {} : { accent: props.accent })}
+      {...(props.notices === true ? { notices: true } : {})}
     />
   )
 }
@@ -271,6 +275,34 @@ describe('the claude composer', () => {
   })
 })
 
+describe('composerNoticeCells', () => {
+  it('spends the row on the title first and hands the notice what is left', () => {
+    const whole = composerNoticeCells({ width: WIDTH, badge: null, title: null })
+    const shared = composerNoticeCells({ width: WIDTH, badge: null, title: TITLE })
+
+    expect(shared).toBeGreaterThan(0)
+    expect(shared).toBeLessThan(whole)
+  })
+
+  it('reports no room when the badge and title take the row between them', () => {
+    expect(
+      composerNoticeCells({ width: 20, badge: '⋯ 3 more rows', title: TITLE }),
+    ).toBe(0)
+  })
+
+  it('gives the corner its column back on a bordered edge', () => {
+    const slab = composerNoticeCells({ width: WIDTH, badge: null, title: TITLE })
+    const bordered = composerNoticeCells({
+      width: WIDTH,
+      badge: null,
+      title: TITLE,
+      edge: EComposerEdge.Bordered,
+    })
+
+    expect(bordered).toBe(slab - 1)
+  })
+})
+
 describe('composerTitle', () => {
   it('keeps a title that fits the head row whole', () => {
     expect(composerTitle({ title: TITLE, width: WIDTH, badge: null })).toBe(TITLE)
@@ -318,6 +350,45 @@ describe('the composer title', () => {
     const frame = await frameOf(<Draft />, WIDTH)
     const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
     expect(head).toBe(`${RAIL_HEAD}${PANEL_TOP_EDGE.repeat(WIDTH - 1)}`)
+  })
+})
+
+describe('the composer notice slab', () => {
+  it('sits the newest notice at the left of the line the title closes', async () => {
+    notify({ text: 'copied 3 lines' })
+    const frame = await frameOf(<Draft title={TITLE} notices />, WIDTH)
+    dismissNotice()
+
+    const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD)) ?? ''
+    expect(head.indexOf('✓ copied 3 lines')).toBeGreaterThan(0)
+    expect(head.indexOf('✓ copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
+  })
+
+  it('sets the notice into the top rule on a bordered edge too', async () => {
+    applyComposerEdge(EComposerEdge.Bordered)
+    notify({ text: 'copied 3 lines' })
+    const frame = await frameOf(<Draft title={TITLE} notices />, WIDTH)
+    dismissNotice()
+
+    const head = frame.split('\n').find((row) => row.startsWith(FRAME_TOP_LEFT)) ?? ''
+    expect(head.indexOf('✓ copied 3 lines')).toBeGreaterThan(0)
+    expect(head.indexOf('✓ copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
+  })
+
+  it('keeps the head row to the title alone unless notices live on the edge', async () => {
+    notify({ text: 'copied 3 lines' })
+    const frame = await frameOf(<Draft title={TITLE} />, WIDTH)
+    dismissNotice()
+
+    expect(frame).not.toContain('copied 3 lines')
+  })
+
+  it('takes no room from the title while nothing is being said', async () => {
+    dismissNotice()
+    const frame = await frameOf(<Draft title={TITLE} notices />, WIDTH)
+    const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
+
+    expect(head).toContain(`${PANEL_TOP_EDGE} ${TITLE} ${PANEL_TOP_EDGE}`)
   })
 })
 

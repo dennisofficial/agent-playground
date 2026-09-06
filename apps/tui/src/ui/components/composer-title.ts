@@ -38,3 +38,27 @@ export function composerTitle(args: {
 
   return truncateCells({ text: args.title, cells: room })
 }
+
+const NOTICE_RUNWAY = 2
+
+/**
+ * What is left of the head row for a notice slab once the badge and title have taken their end:
+ * the slab grows from the left pad toward them and stops NOTICE_RUNWAY short, so the two never
+ * share a cell. Zero means the title already spent the row and the slab stays home.
+ */
+export function composerNoticeCells(args: {
+  width: number
+  badge: string | null
+  title: string | null
+  edge?: EComposerEdge
+}): number {
+  const closing = args.edge === EComposerEdge.Bordered ? CLOSING_RULE_COLUMNS : 0
+  const spent =
+    PANEL_PAD * 2 +
+    closing +
+    NOTICE_RUNWAY +
+    (args.badge === null ? 0 : slabCells(args.badge) + 1) +
+    (args.title === null ? 0 : slabCells(args.title))
+
+  return Math.max(0, args.width - spent)
+}

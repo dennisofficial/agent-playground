@@ -21,6 +21,11 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 
 import { appearanceOf, applyAppearance, type Appearance } from '../ui/appearance'
 import {
+  noticePositionOf,
+  SHIPPED_NOTICE_POSITION,
+  type ENoticePosition,
+} from '../ui/notice-store'
+import {
   EFooterMeters,
   footerMetersOf,
   SHIPPED_FOOTER_METERS,
@@ -58,6 +63,7 @@ export type SettingsControl = {
   autoCompactAtPercent: number
   autoRestart: boolean
   noticeSeconds: number
+  noticePosition: ENoticePosition
   paceReveal: boolean
   thinking: EThinkingVisibility
   tldrStatus: boolean
@@ -78,6 +84,7 @@ type Preferences = Pick<
   | 'autoCompactAtPercent'
   | 'autoRestart'
   | 'noticeSeconds'
+  | 'noticePosition'
   | 'paceReveal'
   | 'footerMeters'
   | 'usageWarn'
@@ -100,6 +107,9 @@ const preferencesOf = (resolution: SettingsResolution): Preferences => ({
   }),
   autoRestart: toggleValueOf({ resolution, id: ESettingId.AutoRestart }),
   noticeSeconds: rangeValueOf({ resolution, id: ESettingId.NoticeSeconds, fallback: NOTICE_SECONDS }),
+  noticePosition: noticePositionOf(
+    choiceValueOf({ resolution, id: ESettingId.NoticePosition, fallback: SHIPPED_NOTICE_POSITION }),
+  ),
   paceReveal: toggleValueOf({ resolution, id: ESettingId.SmoothStreaming }),
   footerMeters: footerMetersOf(
     choiceValueOf({ resolution, id: ESettingId.FooterMeters, fallback: SHIPPED_FOOTER_METERS }),
