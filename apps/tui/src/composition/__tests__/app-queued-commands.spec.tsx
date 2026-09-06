@@ -11,6 +11,8 @@ const slowly = () =>
 
 const STEER = 'check the tests too'
 
+const WELCOME = 'Describe the work'
+
 describe('a settled command typed mid-turn', () => {
   it('waits in the queue as a row, then runs when the turn settles', async () => {
     const mounted = await open({ app: slowly() })
@@ -35,7 +37,7 @@ describe('a settled command typed mid-turn', () => {
       expect(queued).toBe(true)
 
       const swapped = await until({
-        holds: async () => (await mounted.frame()).includes('Ask anything'),
+        holds: async () => (await mounted.frame()).includes(WELCOME),
         within: 20_000,
       })
       expect(swapped).toBe(true)
@@ -79,7 +81,7 @@ describe('a settled command typed mid-turn', () => {
       expect(steered).toBe(true)
 
       const swapped = await until({
-        holds: async () => (await mounted.frame()).includes('Ask anything'),
+        holds: async () => (await mounted.frame()).includes(WELCOME),
         within: 20_000,
       })
       expect(swapped).toBe(true)

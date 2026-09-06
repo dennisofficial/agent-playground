@@ -139,8 +139,6 @@ import { useExecutionLocation } from './use-execution-location'
 import { useThreads } from './use-threads'
 import { useUsageMeters } from './use-usage-meters'
 
-const PLACEHOLDER = 'Ask anything'
-
 const STEER_PLACEHOLDER = 'Steer the turn'
 
 const SUBAGENT_PLACEHOLDER = 'Message this sub-agent'
@@ -159,9 +157,12 @@ enum EChromePanel {
   LostAgents = 'lost-agents',
 }
 
-const composerPlaceholder = (args: { addressingChild: boolean; working: boolean }): string => {
+const composerPlaceholder = (args: {
+  addressingChild: boolean
+  working: boolean
+}): string | undefined => {
   if (args.addressingChild) return SUBAGENT_PLACEHOLDER
-  return args.working ? STEER_PLACEHOLDER : PLACEHOLDER
+  return args.working ? STEER_PLACEHOLDER : undefined
 }
 
 const readoutOf = (args: {
@@ -1231,7 +1232,7 @@ function Workspace(props: {
               draft={draft}
               width={composerWidth}
               tone={tone}
-              placeholder={placeholder}
+              {...(placeholder === undefined ? {} : { placeholder })}
               maxRows={composerRows(height)}
               focused={!overlaid}
               highlights={highlights}

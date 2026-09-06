@@ -24,7 +24,7 @@ const CWD = '/Users/dennis/Developer/atlas'
 
 const THREAD = toThreadId('opened-thread')
 
-const COMPOSER = 'Ask anything'
+const WORKSPACE = 'Describe the work'
 
 const CURTAIN_MS = INK_MS + SETTLE_MS + LIFT_MS
 
@@ -63,7 +63,7 @@ async function framesUntilLifted(setup: Mounted): Promise<string[]> {
     await setup.flush()
     const frame = setup.captureCharFrame()
     frames.push(frame)
-    if (frame.includes(COMPOSER)) return frames
+    if (frame.includes(WORKSPACE)) return frames
     await settle(POLL_MS)
   }
 
@@ -82,7 +82,7 @@ describe('the startup curtain over a booting harness', () => {
       const frame = setup.captureCharFrame()
       expect(frame).toContain('Developer/atlas')
       expect(frame).toContain('opening the conversation')
-      expect(frame).not.toContain(COMPOSER)
+      expect(frame).not.toContain(WORKSPACE)
     } finally {
       await teardown(setup)
     }
@@ -142,12 +142,11 @@ describe('the startup curtain over a booting harness', () => {
 
     try {
       const frames = await framesUntilLifted(setup)
-      const lifted = frames.findIndex((frame) => frame.includes(COMPOSER))
+      const lifted = frames.findIndex((frame) => frame.includes(WORKSPACE))
 
       expect(lifted).toBeGreaterThan(0)
       for (const frame of frames.slice(0, lifted)) {
-        expect(frame).not.toContain(COMPOSER)
-        expect(frame).not.toContain('Describe the work')
+        expect(frame).not.toContain(WORKSPACE)
       }
     } finally {
       await teardown(setup)
@@ -163,8 +162,7 @@ describe('the startup curtain over a booting harness', () => {
       await setup.flush()
 
       const frame = setup.captureCharFrame()
-      expect(frame).toContain(COMPOSER)
-      expect(frame).toContain('Describe the work')
+      expect(frame).toContain(WORKSPACE)
       expect(frame).not.toContain('opening the conversation')
     } finally {
       await teardown(setup)

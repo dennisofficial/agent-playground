@@ -12,8 +12,6 @@ const MESSAGE = 'undo this one'
 
 const SPOKEN = 'The loop keeps its position in the log, so nothing has to remember it.'
 
-const PROMPT = 'Ask anything'
-
 const WORKING = 'esc to interrupt'
 
 const CALL = 'write_file'
@@ -74,7 +72,6 @@ describe('escape on a turn that committed nothing', () => {
 
       const frame = await mounted.frame()
       expect(frame).toContain(MESSAGE)
-      expect(frame).not.toContain(PROMPT)
       expect(frame).not.toContain('Thinking')
       expect(frame).toContain('Describe the work')
     } finally {
@@ -110,7 +107,8 @@ describe('escape on a turn that committed nothing', () => {
       const events = await mounted.app.log.read({ threadId: THREAD })
       expect(events.map((event) => event.type)).toEqual(['user-said', 'assistant-said'])
       expect(events[0]?.type === 'user-said' ? events[0].text : '').toBe(MESSAGE)
-      expect(await mounted.frame()).toContain(PROMPT)
+      await mounted.frame()
+      expect(mounted.draftText()).toBe('')
     } finally {
       await mounted.done()
     }

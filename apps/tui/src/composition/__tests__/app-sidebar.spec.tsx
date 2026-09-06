@@ -23,7 +23,8 @@ const REPLY = 'Atlas derives every prompt from the event log.'
 /** The wordmark is the sidebar's alone — the footer carries where you are and what answers. */
 const SIDEBAR_MARK = '● atlas'
 
-const PLACEHOLDER = 'Ask anything'
+/** Typed into the composer so its body row can be found in a captured frame. */
+const DRAFT = 'the composer row'
 
 const WIDE = 140
 
@@ -272,9 +273,10 @@ describe('the sidebar', () => {
     try {
       await setup.flush()
       await settle(250)
+      await setup.mockInput.typeText(DRAFT)
       await setup.flush()
 
-      const grounds = groundsAcross({ frame: setup.captureSpans(), needle: PLACEHOLDER })
+      const grounds = groundsAcross({ frame: setup.captureSpans(), needle: DRAFT })
       const edge = WIDE - SIDEBAR_WIDTH
       const ground = hexOf(parseColor(theme.appBg))
       const panel = hexOf(parseColor(theme.panelBg))
@@ -346,14 +348,15 @@ describe('the sidebar', () => {
     try {
       await setup.flush()
       await settle(250)
+      await setup.mockInput.typeText(DRAFT)
       await setup.flush()
 
-      const uncovered = groundsAcross({ frame: setup.captureSpans(), needle: PLACEHOLDER })
+      const uncovered = groundsAcross({ frame: setup.captureSpans(), needle: DRAFT })
 
       await pressCtrlB(setup)
       await settle(250)
 
-      const covered = groundsAcross({ frame: setup.captureSpans(), needle: PLACEHOLDER })
+      const covered = groundsAcross({ frame: setup.captureSpans(), needle: DRAFT })
       expect(covered[4]).not.toBe(uncovered[4])
     } finally {
       await teardown(setup)
