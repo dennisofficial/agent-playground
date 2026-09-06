@@ -10,6 +10,7 @@
  * arguments; the output joins when the command has run.
  */
 
+import { StyledText } from '@opentui/core'
 import React, { useMemo } from 'react'
 
 import type { ToolCall } from '../../../store'
@@ -19,7 +20,7 @@ import { tailOfPath } from '../../paths'
 import { theme } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
-import { useHighlighted, useStyledRows } from './tool-code-lines'
+import { useHighlighted, useRowChunks } from './tool-code-lines'
 
 const CHROME = PANEL_INSET + PANEL_PAD
 
@@ -27,10 +28,11 @@ const MAX_ROWS = 12
 
 const PROMPT = '$ '
 
-function CommandRows(props: { command: string; columns: number }): React.ReactNode {
+export function CommandRows(props: { command: string; columns: number }): React.ReactNode {
   const lines = useMemo(() => props.command.replace(/\n$/, '').split('\n'), [props.command])
   const chunks = useHighlighted({ lines, filetype: 'bash' })
-  const styled = useStyledRows({ texts: lines, chunks, columns: props.columns })
+  const rows = useRowChunks({ texts: lines, chunks, columns: props.columns })
+  const styled = useMemo(() => rows.map((row) => new StyledText([...row])), [rows])
 
   return (
     <>
