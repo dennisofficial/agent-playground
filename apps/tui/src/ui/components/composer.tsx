@@ -82,7 +82,6 @@ function DerivedComposer(props: {
   focused?: boolean
   title?: string
   accent?: string
-  notices?: boolean
   foot?: ComposerFoot
   highlights?: readonly HighlightSpan[]
   onCursorMoved?: (() => void) | undefined
@@ -224,12 +223,9 @@ function DerivedComposer(props: {
   const frameFoot = foot === null ? undefined : footNode({ fg: theme.caretFg, bg: rail })
   const panelFoot = foot === null ? undefined : footNode({ fg: rail, bg: theme.panelBg })
 
-  const label =
-    props.notices === true
-      ? (bg: string): React.ReactNode => (
-          <NoticeSlab bg={bg} cells={composerNoticeCells({ width: props.width, badge, title, edge })} />
-        )
-      : null
+  const label = (bg: string): React.ReactNode => (
+    <NoticeSlab bg={bg} cells={composerNoticeCells({ width: props.width, badge, title, edge })} />
+  )
 
   const draft = (
     <textarea
@@ -265,7 +261,7 @@ function DerivedComposer(props: {
               ),
             }
           : {})}
-        {...(label === null ? {} : { label: label(theme.appBg) })}
+        label={label(theme.appBg)}
         {...(badge === null
           ? {}
           : { badge: <text fg={theme.hint} bg={theme.appBg}>{` ${badge} `}</text> })}
@@ -286,7 +282,7 @@ function DerivedComposer(props: {
       width={props.width}
       rail={rail}
       fill={theme.panelBg}
-      {...(label === null ? {} : { label: label(theme.panelBg) })}
+      label={label(theme.panelBg)}
       {...(badge === null
         ? {}
         : { badge: <text fg={theme.hint} bg={theme.panelBg}>{` ${badge} `}</text> })}

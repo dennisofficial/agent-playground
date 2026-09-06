@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
 import { NoticeSlab } from '../components/notice-slab'
-import { dismissNotice, ENoticeTone, notify } from '../notice-store'
+import { dismissNotice, ENoticePosition, ENoticeTone, notify } from '../notice-store'
 import { theme } from '../theme'
 import { frameOf } from './transcript-fixture'
 
@@ -12,6 +12,9 @@ const slab = (cells: number = WIDTH): React.ReactNode => (
   <NoticeSlab bg={theme.appBg} cells={cells} />
 )
 
+const onTheEdge = (args: Parameters<typeof notify>[0]): void =>
+  notify({ ...args, position: ENoticePosition.Composer })
+
 describe('the notice slab', () => {
   it('takes no room at all while nothing is being said', async () => {
     dismissNotice()
@@ -20,17 +23,18 @@ describe('the notice slab', () => {
     expect(frame.trim()).toBe('')
   })
 
-  it('says the thing that happened, marked with its tone', async () => {
-    notify({ text: 'copied 3 lines' })
+  it('says the thing that happened, unmarked when the words already say it went fine', async () => {
+    onTheEdge({ text: 'copied 3 lines' })
     const frame = await frameOf(slab(), WIDTH)
     dismissNotice()
 
-    expect(frame).toContain('✓ copied 3 lines')
+    expect(frame).toContain('copied 3 lines')
+    expect(frame).not.toContain('✓')
   })
 
   it('says only the newest when several stand at once', async () => {
-    notify({ text: 'first' })
-    notify({ text: 'second' })
+    onTheEdge({ text: 'first' })
+    onTheEdge({ text: 'second' })
     const frame = await frameOf(slab(), WIDTH)
     dismissNotice()
 
@@ -38,8 +42,16 @@ describe('the notice slab', () => {
     expect(frame).not.toContain('first')
   })
 
+  it('leaves notices bound for the tray to the tray', async () => {
+    notify({ text: 'a tray notice' })
+    const frame = await frameOf(slab(), WIDTH)
+    dismissNotice()
+
+    expect(frame.trim()).toBe('')
+  })
+
   it('marks a warning apart from a confirmation', async () => {
-    notify({ text: 'clipboard unavailable', tone: ENoticeTone.Warn })
+    onTheEdge({ text: 'clipboard unavailable', tone: ENoticeTone.Warn })
     const frame = await frameOf(slab(), WIDTH)
     dismissNotice()
 
@@ -47,7 +59,7 @@ describe('the notice slab', () => {
   })
 
   it('cuts a notice too long for the room it was given rather than wrapping it', async () => {
-    notify({ text: 'x'.repeat(WIDTH * 2) })
+    onTheEdge({ text: 'x'.repeat(WIDTH * 2) })
     const frame = await frameOf(slab(), WIDTH)
     dismissNotice()
 
@@ -57,7 +69,7 @@ describe('the notice slab', () => {
   })
 
   it('says nothing when the row has no room left to say it in', async () => {
-    notify({ text: 'copied 3 lines' })
+    onTheEdge({ text: 'copied 3 lines' })
     const frame = await frameOf(slab(4), WIDTH)
     dismissNotice()
 

@@ -3,7 +3,7 @@ import { useRenderer, useSelectionHandler } from '@opentui/react'
 import { useRef } from 'react'
 
 import { copyToClipboard } from '../clipboard'
-import { ENoticeTone, notify } from '../notice-store'
+import { ENoticePosition, ENoticeTone, notify } from '../notice-store'
 import { glyph } from '../theme'
 import { selectedText } from './selected-text'
 
@@ -26,10 +26,15 @@ export function useCopyOnSelect(): void {
     last.current = { selection, text }
 
     if (!copyToClipboard({ renderer, text })) {
-      notify({ key: 'copy', text: 'clipboard unavailable', tone: ENoticeTone.Warn })
+      notify({
+        key: 'copy',
+        text: 'clipboard unavailable',
+        tone: ENoticeTone.Warn,
+        position: ENoticePosition.Composer,
+      })
       return
     }
 
-    notify({ key: 'copy', text: copiedLabel(text) })
+    notify({ key: 'copy', text: copiedLabel(text), position: ENoticePosition.Composer })
   })
 }

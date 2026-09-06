@@ -6,6 +6,7 @@ import {
   clearNotice,
   currentNotices,
   dismissNotice,
+  ENoticePosition,
   ENoticeTone,
   notify,
   tickNotices,
@@ -91,6 +92,14 @@ describe('the notice stack', () => {
     const secondRow = rows.findIndex((row) => row.includes('second'))
     expect(firstRow).toBeGreaterThanOrEqual(0)
     expect(secondRow).toBeGreaterThan(firstRow)
+  })
+
+  it('leaves notices bound for the composer edge to the edge', async () => {
+    notify({ text: 'copied 3 lines', position: ENoticePosition.Composer })
+    const frame = await frameOf(stack(), WIDTH)
+    dismissNotice()
+
+    expect(frame.trim()).toBe('')
   })
 
   it('says nothing when the room is too narrow to say it in', async () => {
