@@ -3,11 +3,13 @@ import { createHash } from 'node:crypto'
 import { mountBind, type Mount } from '../image/mounts'
 import { dockerfileImageReference, ensureBuiltImage, type DockerfileBuild } from '../image/build'
 import {
+  SandboxEnvChanged,
   SandboxImageChanged,
   SandboxMountsChanged,
   declaredMountsDrift,
   declaredMountsLabel,
   encodeDeclaredMounts,
+  envDrift,
   missingIdentityMounts,
 } from './mount-drift'
 import { publishPlanFor } from './ports'
@@ -61,6 +63,7 @@ export type SandboxConfig = {
   setup?: string | undefined
   start?: string | undefined
   dockerfile?: DockerfileBuild | undefined
+  env?: Record<string, string> | undefined
   mounts?: readonly Mount[] | undefined
   atlasHomeSubtrees?: readonly string[] | undefined
 }
@@ -120,6 +123,11 @@ export function sandboxCreateBody(config: SandboxConfig): CreateContainerBody {
     }
     env.push(`GNUPGHOME=${CONTAINER_GNUPG_HOME}`)
   }
+
+  const declared = Object.entries(config.env ?? {})
+  const computed = env.filter((entry) => !config.env?.[entry.slice(0, entry.indexOf('='))])
+  env.length = 0
+  env.push(...computed, ...declared.map(([key, value]) => `${key}=${value}`))
 
   return {
     Image: config.image,
@@ -208,18 +216,22 @@ export async function ensureSandbox(args: {
         : await dockerfileImageReference({ dockerfile: args.config.dockerfile })
     const drifted = declaredMountsDrift({ config: args.config, details, prefix })
     const imageChanged = details.config.image !== wanted
+    const envChanged = envDrift({ declared: args.config.env ?? {}, actual: details.config.env })
 
-    if (drifted || imageChanged) {
+    if (drifted || imageChanged || envChanged) {
       if (details.state.running) {
-        throw drifted
-          ? new SandboxMountsChanged({ name })
-          : new SandboxImageChanged({ name, image: wanted })
+        if (drifted) throw new SandboxMountsChanged({ name })
+        if (imageChanged) throw new SandboxImageChanged({ name, image: wanted })
+        throw new SandboxEnvChanged({ name })
       }
       await args.engine.removeContainer({ id: existing.id })
+      const reason = drifted
+        ? 'the declared mounts changed'
+        : imageChanged
+          ? `the image changed to ${wanted}`
+          : 'the declared env changed'
       recreated.push(
-        drifted
-          ? `recreated ${name}: the declared mounts changed since it was created, and it was stopped, so nothing live was lost`
-          : `recreated ${name}: the image changed to ${wanted} since it was created, and it was stopped, so nothing live was lost`,
+        `recreated ${name}: ${reason} since it was created, and it was stopped, so nothing live was lost`,
       )
     } else {
       if (!details.state.running) await args.engine.startContainer({ id: existing.id })

@@ -192,6 +192,42 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     expect(sandbox.warnings.some((one) => one.includes('recreated'))).toBe(true)
   })
 
+  it('refuses reuse of a running container whose declared env changed, recreates a stopped one', async () => {
+    const config = { ...FAKE_CONFIG, env: { TURBO_CACHE_DIR: '/tmp/turbo-cache' } }
+    const running = fakeEngine({
+      existing: {
+        id: 'kept-1',
+        state: 'running',
+        mounts: systemMounts,
+        env: ['TURBO_CACHE_DIR=/old'],
+      },
+    })
+    await expect(ensureSandbox({ engine: running.engine, config })).rejects.toThrow(/new container/)
+
+    const stopped = fakeEngine({
+      existing: {
+        id: 'stale-1',
+        state: 'exited',
+        mounts: systemMounts,
+        env: ['TURBO_CACHE_DIR=/old'],
+      },
+    })
+    const recreated = await ensureSandbox({ engine: stopped.engine, config })
+    expect(stopped.removals).toEqual(['stale-1'])
+    expect(recreated.created).toBe(true)
+
+    const matching = fakeEngine({
+      existing: {
+        id: 'kept-1',
+        state: 'running',
+        mounts: systemMounts,
+        env: ['HOME=/Users/operator', 'TURBO_CACHE_DIR=/tmp/turbo-cache'],
+      },
+    })
+    const reused = await ensureSandbox({ engine: matching.engine, config })
+    expect(reused.created).toBe(false)
+  })
+
   it('refuses reuse of a running container when the configured image no longer matches', async () => {
     const { engine, execs, removals } = fakeEngine({
       existing: {

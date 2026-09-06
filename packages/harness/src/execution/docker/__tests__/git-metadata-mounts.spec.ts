@@ -69,6 +69,7 @@ describe('Git metadata in host sandbox configuration', () => {
       atlasHomeSubtrees: [],
       resolution: {
         image: { kind: EImageKind.Image, reference: 'node:22-trixie-slim' },
+        env: {},
         mounts: [{ path: metadata, mode }],
         source: EConfigSource.ContainerJson,
         notes: [],

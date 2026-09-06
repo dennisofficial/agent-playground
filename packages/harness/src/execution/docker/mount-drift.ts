@@ -22,6 +22,23 @@ export class SandboxImageChanged extends Error {
   }
 }
 
+export class SandboxEnvChanged extends Error {
+  constructor(args: { name: string }) {
+    super(
+      `the declared env changed since ${args.name} was created, and container env is baked at creation — ${args.name} is still running, so recreating it would kill its shells: stop it and the next command creates a new container`,
+    )
+    this.name = 'SandboxEnvChanged'
+  }
+}
+
+export const envDrift = (args: {
+  declared: Record<string, string>
+  actual: readonly string[]
+}): boolean =>
+  Object.entries(args.declared).some(
+    ([key, value]) => !args.actual.includes(`${key}=${value}`),
+  )
+
 export const declaredMountsLabel = (prefix: string): string => `${prefix}.mounts`
 
 export const encodeDeclaredMounts = (mounts: readonly Mount[]): string =>
