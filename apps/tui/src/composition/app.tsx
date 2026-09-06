@@ -46,6 +46,7 @@ import { footerLayout } from '../ui/footer-layout'
 import { Screen } from '../ui/components/screen'
 import { HeaderBar } from '../ui/components/header-bar'
 import { useDiffStat } from '../ui/hooks/use-diff-stat'
+import { useTerminalFocus } from '../ui/hooks/use-terminal-focus'
 import { AgentTypes } from '../ui/components/agent-types'
 import { LostChildren } from '../ui/components/lost-children'
 import { hasLostChildren, lostChildrenNotice } from '../ui/lost-children-model'
@@ -486,6 +487,7 @@ function Workspace(props: {
   const headerDiff = useDiffStat({
     projectDirectory: conversation.projectDirectory,
     working: conversation.working,
+    focus: useTerminalFocus(),
   })
   const docked = wide && !welcome
   const contentWidth = contentWidthOf({ width, sidebarWidth, docked })

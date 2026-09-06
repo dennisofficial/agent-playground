@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import React, { act, useState } from 'react'
 
 import type { DiffStat } from '../../header-bar'
+import { ETerminalFocus } from '../../focus-store'
 import { useDiffStat, type DiffStatProbe } from '../use-diff-stat'
 import { settle, teardown } from '../../markdown/__tests__/harness'
 
@@ -12,6 +13,7 @@ type Probe = {
   stat: DiffStat | null | undefined
   setDirectory: ((directory: string) => void) | null
   setWorking: ((working: boolean) => void) | null
+  setFocused: ((focus: ETerminalFocus) => void) | null
 }
 
 function Watcher(props: {
@@ -21,10 +23,17 @@ function Watcher(props: {
 }): React.ReactNode {
   const [directory, setDirectory] = useState(props.directory)
   const [working, setWorking] = useState(false)
+  const [focus, setFocused] = useState(ETerminalFocus.Unknown)
 
   props.probe.setDirectory = setDirectory
   props.probe.setWorking = setWorking
-  props.probe.stat = useDiffStat({ projectDirectory: directory, working, probe: props.askGit })
+  props.probe.setFocused = setFocused
+  props.probe.stat = useDiffStat({
+    projectDirectory: directory,
+    working,
+    focus,
+    probe: props.askGit,
+  })
 
   return <text>{props.probe.stat === null ? 'clean' : 'dirty'}</text>
 }
@@ -34,7 +43,7 @@ async function mounted(args: { askGit: DiffStatProbe; directory?: string }): Pro
   flush: () => Promise<void>
   done: () => Promise<void>
 }> {
-  const probe: Probe = { stat: undefined, setDirectory: null, setWorking: null }
+  const probe: Probe = { stat: undefined, setDirectory: null, setWorking: null, setFocused: null }
 
   const setup = await testRender(
     <Watcher probe={probe} askGit={args.askGit} directory={args.directory ?? '/work/atlas'} />,
@@ -107,6 +116,27 @@ describe('what makes useDiffStat ask git again', () => {
       await flush()
 
       expect(askGit.calls).toEqual(['/work/atlas', '/work/atlas/.claude/worktrees/thing'])
+    } finally {
+      await done()
+    }
+  })
+
+  it('re-probes when the terminal regains focus, but not on first focus or on blur', async () => {
+    const askGit = countingProbe({ added: 3, removed: 1 })
+    const { probe, flush, done } = await mounted({ askGit })
+
+    try {
+      act(() => probe.setFocused?.(ETerminalFocus.Focused))
+      await flush()
+      expect(askGit.calls).toHaveLength(1)
+
+      act(() => probe.setFocused?.(ETerminalFocus.Blurred))
+      await flush()
+      expect(askGit.calls).toHaveLength(1)
+
+      act(() => probe.setFocused?.(ETerminalFocus.Focused))
+      await flush()
+      expect(askGit.calls).toEqual(['/work/atlas', '/work/atlas'])
     } finally {
       await done()
     }
