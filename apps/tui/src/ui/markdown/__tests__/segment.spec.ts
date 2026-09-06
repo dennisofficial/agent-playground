@@ -158,6 +158,18 @@ describe('steadySegments', () => {
     expect(shapeOf('~~~ts\nconst a = 1\nconst b')).toEqual(['fence(ts):const a = 1'])
     expect(shapeOf('```ts\nconst a = 1\n`````')).toEqual(['fence(ts):const a = 1'])
   })
+
+  it('hands back the same fence object while the partial last line is all that changes', () => {
+    const resting = steady('```ts\nconst a = 1\n').at(-1)
+    const typing = steady('```ts\nconst a = 1\nconst b').at(-1)
+    const typingMore = steady('```ts\nconst a = 1\nconst b = 2').at(-1)
+    const landed = steady('```ts\nconst a = 1\nconst b = 2\n').at(-1)
+
+    expect(typing).toBe(resting)
+    expect(typingMore).toBe(resting)
+    expect(landed).not.toBe(resting)
+    expect(steady('```py\nconst a = 1\n').at(-1)).not.toBe(resting)
+  })
 })
 
 describe('growingSegments', () => {
