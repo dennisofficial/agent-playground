@@ -12,16 +12,19 @@ import {
   EWebSearchBackend,
   backendOf,
   EventLogPort,
+  refKey,
+  textValueOf,
   toThreadId,
   WorkspaceFactsPort,
   type ClassifierPolicy,
   type CorpusFile,
   type Event,
+  type ModelRef,
 } from '@dltech/atlas-core'
 import {
   atlasDatabaseUrl,
-  createAnthropicOauthModel,
   createHarnessContainer,
+  createNotifyingModel,
   createSecurityKeychainReader,
   critiqueConfiguration,
   disposeAll,
@@ -46,7 +49,7 @@ import {
 
 import { replayLines } from './classify-report'
 import { CLASSIFY_USAGE, EClassifyTask, type ClassifyRequest } from './classify'
-import { TITLER_MODEL_ID } from './config'
+import { judgeModel, judgeRefFor } from './judge-model'
 import { loadSettings } from './settings-binding'
 
 const REFUSED = 1
@@ -67,8 +70,12 @@ const complain = (line: string): void => {
   process.stderr.write(`${line}\n`)
 }
 
+const faultMessage = (fault: unknown): string =>
+  fault instanceof Error ? fault.message : String(fault)
+
 type Bench = {
   container: DependencyContainer
+  judgeRef: ModelRef
   policy: ClassifierPolicy
   projectDirectory: string
   launchDirectory: string
@@ -88,6 +95,9 @@ async function openBench({
     resolution: settled,
     id: ESettingId.WorktreeDirectory,
     fallback: DEFAULT_WORKTREE_DIRECTORY,
+  })
+  const judgeRef = judgeRefFor({
+    override: textValueOf({ resolution: settled, id: ESettingId.QuickModel }),
   })
 
   container.register(WorkspaceRoot, { useValue: cwd })
@@ -111,6 +121,7 @@ async function openBench({
 
   return {
     container,
+    judgeRef,
     projectDirectory: cwd,
     launchDirectory: workspace.repo ?? cwd,
     policy: {
@@ -131,16 +142,26 @@ async function openBench({
   }
 }
 
-const judgeOver = ({ bench }: { bench: Bench }): JudgeMemo =>
-  new JudgeMemo({
+const judgeOver = ({ bench }: { bench: Bench }): JudgeMemo => {
+  let reported = false
+
+  return new JudgeMemo({
     judge: new HaikuJudge({
-      model: createAnthropicOauthModel({
-        credentials: bench.container.resolve(portToken(CredentialPort)),
-        modelId: TITLER_MODEL_ID,
+      model: createNotifyingModel({
+        model: judgeModel({
+          ref: bench.judgeRef,
+          credentials: bench.container.resolve(portToken(CredentialPort)),
+        }),
+        onFault: ({ providerId, modelId, fault }) => {
+          if (reported) return
+          reported = true
+          complain(`the judge model ${providerId}/${modelId} failed: ${faultMessage(fault)}`)
+        },
       }),
     }),
     policy: () => bench.policy,
   })
+}
 
 function capture({
   directory,
@@ -234,15 +255,17 @@ async function runCritique({ bench }: { bench: Bench }): Promise<number> {
   say([NETWORK_NOTICE, ''])
 
   const critique = await critiqueConfiguration({
-    model: createAnthropicOauthModel({
+    model: judgeModel({
+      ref: bench.judgeRef,
       credentials: bench.container.resolve(portToken(CredentialPort)),
-      modelId: TITLER_MODEL_ID,
     }),
     policy: bench.policy,
   })
 
   if (critique.kind === ECritique.Unreachable) {
-    complain(`the model could not review the configuration: ${critique.fault}`)
+    complain(
+      `the judge model ${refKey(bench.judgeRef)} could not review the configuration: ${critique.fault}`,
+    )
     return REFUSED
   }
 
