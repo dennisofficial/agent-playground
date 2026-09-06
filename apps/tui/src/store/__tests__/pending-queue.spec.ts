@@ -209,3 +209,88 @@ describe('the queue a message waits in until the loop takes it', () => {
     expect(first?.id).not.toBe(second?.id)
   })
 })
+
+describe('commands queued between the messages', () => {
+  const queueWith = () => createPendingQueue<{ name: string }>()
+
+  it('holds commands and messages in the order they were submitted', () => {
+    const queue = queueWith()
+
+    queue.enqueue({ text: 'check the tests too' })
+    queue.enqueueCommand({ text: '/compact', command: { name: 'compact' } })
+    queue.enqueue({ text: 'and the fixtures' })
+
+    expect(queue.getSnapshot().map((entry) => entry.text)).toEqual([
+      'check the tests too',
+      '/compact',
+      'and the fixtures',
+    ])
+  })
+
+  it('drains only the messages for the loop, leaving the commands queued', () => {
+    const queue = queueWith()
+    queue.enqueueCommand({ text: '/new', command: { name: 'new' } })
+    queue.enqueue({ text: 'wait, do X instead' })
+
+    expect(queue.drain().map((said) => said.text)).toEqual(['wait, do X instead'])
+    expect(queue.getSnapshot().map((entry) => entry.text)).toEqual([
+      '/new',
+      'wait, do X instead',
+    ])
+  })
+
+  it('hands the settle drain every command in order and keeps the messages', () => {
+    const queue = queueWith()
+    queue.enqueue({ text: 'still thinking out loud' })
+    queue.enqueueCommand({ text: '/compact', command: { name: 'compact' } })
+    queue.enqueueCommand({ text: '/new', command: { name: 'new' } })
+
+    const drained = queue.drainCommands()
+
+    expect(drained.map((entry) => entry.text)).toEqual(['/compact', '/new'])
+    expect(queue.getSnapshot().map((entry) => entry.text)).toEqual(['still thinking out loud'])
+  })
+
+  it('gives a queued command back to the composer on take-back, like any message', () => {
+    const queue = queueWith()
+    queue.enqueueCommand({ text: '/new', command: { name: 'new' } })
+
+    expect(queue.takeBackLast()).toEqual({ text: '/new', images: [], taken: false })
+    expect(queue.getSnapshot()).toEqual([])
+  })
+
+  it('takes back the latest submission, whatever kind it is', () => {
+    const queue = queueWith()
+    queue.enqueue({ text: 'first a message' })
+    queue.enqueueCommand({ text: '/rewind', command: { name: 'rewind' } })
+
+    expect(queue.takeBackLast()?.text).toBe('/rewind')
+    expect(queue.takeBackLast()?.text).toBe('first a message')
+    expect(queue.takeBackLast()).toBeNull()
+  })
+})
+
+describe('a message the loop has taken', () => {
+  it('is marked durable once the log holds it, and stays queued until it is answered', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'check the tests too' })
+    queue.drain()
+
+    queue.settleTaken({ events: log([{ type: 'user-said', text: 'check the tests too' }]) })
+
+    const held = queue.getSnapshot()[0]
+    expect(held?.kind === 'message' && held.durable).toBe(true)
+    expect(textsOf(queue)).toEqual(['check the tests too'])
+  })
+
+  it('is not durable while the log does not have it yet', () => {
+    const queue = createPendingQueue()
+    queue.enqueue({ text: 'check the tests too' })
+    queue.drain()
+
+    queue.settleTaken({ events: log([]) })
+
+    const held = queue.getSnapshot()[0]
+    expect(held?.kind === 'message' && held.durable).toBe(false)
+  })
+})

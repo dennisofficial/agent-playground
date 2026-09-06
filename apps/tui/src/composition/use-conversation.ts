@@ -25,22 +25,10 @@ import {
 import type { Compacting } from '../ui/components/compacting'
 import type { TurnClock } from '../ui/turn-clock'
 import { publishProjections } from '../plugins/projection'
-import {
-  clearNotice,
-  ENoticeTone,
-  NOTICE_KEY_QUEUED_COMMANDS,
-  NOTICE_WARN_MS,
-  notify,
-} from '../ui/notice-store'
+import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { createAwakeClock } from './awake-clock'
+import { droppedNotice, type QueuedSettled } from './commands'
 import { ECommandEffect } from './commands/local-command'
-import {
-  createSettledQueue,
-  droppedNotice,
-  queuedNotice,
-  unqueuedNotice,
-  type QueuedSettled,
-} from './commands/settled-queue'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
 import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
@@ -154,28 +142,27 @@ export function useConversation(args: {
 
   const pending = useMemo(() => app.pending.forThread({ threadId }), [app.pending, threadId])
 
-  const settledQueue = useMemo(() => createSettledQueue(), [])
-
   /**
-   * Settled commands drain in the driver's own settle path, before `working` flips: a wake or an
-   * auto-compaction reacting to the settle must find the queued work already running, not beat it.
-   * A command that swaps the thread out strands whatever was queued behind it, so it says so and
-   * ends the drain.
+   * Settled commands wait in the same queue as the messages, but drain in the driver's own settle
+   * path, before `working` flips: a wake or an auto-compaction reacting to the settle must find
+   * the queued work already running, not beat it. A command that swaps the thread out strands the
+   * commands queued behind it, so it says so and ends the drain.
    */
   const drainSettledCommands = useCallback(async (): Promise<void> => {
-    const queuedCommands = settledQueue.drain()
+    const queuedCommands = pending.drainCommands()
     if (queuedCommands.length === 0) return
 
-    clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
-
-    for (const [index, item] of queuedCommands.entries()) {
-      if (item.dropsQueue) {
+    for (const [index, entry] of queuedCommands.entries()) {
+      const { command } = entry
+      if (command.dropsQueue) {
         const dropped = droppedNotice({
-          command: item.name,
-          messages: item.losesWaiting
-            ? pending.getSnapshot().filter((message) => !message.taken).length
+          command: command.name,
+          messages: command.losesWaiting
+            ? pending
+                .getSnapshot()
+                .filter((one) => one.kind === 'message' && !one.taken).length
             : 0,
-          commands: queuedCommands.slice(index + 1).map((one) => one.name),
+          commands: queuedCommands.slice(index + 1).map((one) => one.command.name),
         })
         if (dropped !== null) {
           notify({
@@ -187,35 +174,22 @@ export function useConversation(args: {
         }
       }
 
-      const effect = await item.run()
+      const effect = await command.run()
       if (effect.type === ECommandEffect.Refused) {
         notify({ text: effect.reason, tone: ENoticeTone.Warn, ttlMs: NOTICE_WARN_MS })
       } else if (effect.type === ECommandEffect.Ran && effect.notice !== undefined) {
         notify({ text: effect.notice })
       }
 
-      if (item.dropsQueue) return
+      if (command.dropsQueue) return
     }
-  }, [pending, settledQueue])
+  }, [pending])
 
   const handleQueueSettled = useCallback(
     (entry: QueuedSettled): void => {
-      settledQueue.toggle(entry)
-      const names = settledQueue.names()
-      if (names.length === 0) {
-        clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
-        notify({ text: unqueuedNotice(entry.name) })
-        return
-      }
-
-      notify({
-        key: NOTICE_KEY_QUEUED_COMMANDS,
-        text: queuedNotice(names),
-        tone: ENoticeTone.Info,
-        sticky: true,
-      })
+      pending.enqueueCommand({ text: entry.text, command: entry })
     },
-    [settledQueue],
+    [pending],
   )
 
   /**
@@ -382,8 +356,6 @@ export function useConversation(args: {
    */
   const adopt = useCallback(
     (next: OpenedConversation) => {
-      settledQueue.clear()
-      clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
       turnDriver.settle()
       setFailure(null)
       setReported(null)
@@ -392,7 +364,7 @@ export function useConversation(args: {
       setName(next.name)
       setOpened(next)
     },
-    [setEvents, setName, settledQueue, turnDriver],
+    [setEvents, setName, turnDriver],
   )
 
   const { handleNewConversation, handleOpenThread } = useThreadSwap({
@@ -448,7 +420,7 @@ export function useConversation(args: {
   }, [name, workspace.projectDirectory])
 
   const rows = useMemo(
-    () => pendingRows({ messages: queued, notices, agents: agentNotices, services: serviceNotices }),
+    () => pendingRows({ entries: queued, notices, agents: agentNotices, services: serviceNotices }),
     [agentNotices, notices, queued, serviceNotices],
   )
 

@@ -60,6 +60,7 @@ import { FileBrowser } from '@dltech/atlas-harness'
 import type { PullRequestPort } from '../../plugins/github/pure'
 
 import { createPendingQueues } from '../../store'
+import type { QueuedSettled } from '../commands'
 import { userSaidDraft } from '../user-said'
 import type { AtlasApp } from '../compose'
 import type { ActiveConversation } from '../resume-hint'
@@ -534,7 +535,7 @@ export function fakeApp(args: {
   const threads = fakeThreadStore({ log })
   const ids = new RandomIds()
   const ledger = fakeLedger()
-  const pending = createPendingQueues()
+  const pending = createPendingQueues<QueuedSettled>()
   const shells = fakeShellRegistry()
   const agents = fakeAgentRegistry()
   const services = fakeServiceRegistry()

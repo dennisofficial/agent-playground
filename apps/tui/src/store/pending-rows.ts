@@ -7,7 +7,7 @@ import {
 } from '@dltech/atlas-harness'
 
 import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
-import type { PendingMessage } from './pending-queue'
+import type { PendingEntry } from './pending-queue'
 import { serviceEndedLine, serviceEndingFailed } from './service-ended-line'
 import {
   shellAwaitingInputLine,
@@ -19,6 +19,7 @@ import {
 
 export enum EPendingKind {
   Operator = 'operator',
+  Command = 'command',
   BackgroundShell = 'background-shell',
   Agent = 'agent',
   Service = 'service',
@@ -26,6 +27,7 @@ export enum EPendingKind {
 
 export type PendingRow =
   | { kind: EPendingKind.Operator; id: string; text: string }
+  | { kind: EPendingKind.Command; id: string; text: string }
   | { kind: EPendingKind.BackgroundShell; id: string; text: string; failed: boolean }
   | { kind: EPendingKind.Agent; id: string; text: string; failed: boolean }
   | { kind: EPendingKind.Service; id: string; text: string; failed: boolean }
@@ -97,15 +99,25 @@ function pendingServiceRow(notice: ServiceSnapshot): PendingRow {
   }
 }
 
+const operatorRows = (entries: readonly PendingEntry<unknown>[]): readonly PendingRow[] =>
+  entries.flatMap((entry): PendingRow[] => {
+    if (entry.kind === 'command') {
+      return [{ kind: EPendingKind.Command, id: entry.id, text: entry.text }]
+    }
+
+    if (entry.taken && entry.durable) return []
+    return [{ kind: EPendingKind.Operator, id: entry.id, text: entry.text }]
+  })
+
 export function pendingRows(args: {
-  messages: readonly PendingMessage[]
+  entries: readonly PendingEntry<unknown>[]
   notices: readonly PendingShellNotice[]
   agents: readonly AgentSnapshot[]
   services: readonly ServiceSnapshot[]
 }): readonly PendingRow[] {
   const { agents, services } = args
   if (
-    args.messages.length === 0 &&
+    args.entries.length === 0 &&
     args.notices.length === 0 &&
     agents.length === 0 &&
     services.length === 0
@@ -114,13 +126,7 @@ export function pendingRows(args: {
   }
 
   return [
-    ...args.messages.map(
-      (message): PendingRow => ({
-        kind: EPendingKind.Operator,
-        id: message.id,
-        text: message.text,
-      }),
-    ),
+    ...operatorRows(args.entries),
     ...args.notices.map((notice): PendingRow => pendingShellRow(notice)),
     ...agents.map((notice): PendingRow => pendingAgentRow(notice)),
     ...services.map((notice): PendingRow => pendingServiceRow(notice)),

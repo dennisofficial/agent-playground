@@ -45,6 +45,7 @@ import {
 } from '../src/composition/__tests__/fake-app'
 import { fakeServiceRegistry } from '../src/composition/__tests__/fake-services'
 import { createPendingQueues } from '../src/store'
+import type { QueuedSettled } from '../src/composition/commands'
 import { grammarsReady, teardown } from '../src/ui/markdown/__tests__/harness'
 
 declare global {
@@ -98,7 +99,7 @@ const benchApp = (args: {
     threads: args.harness.threads,
     ledger: args.harness.ledger,
     ids: args.harness.ids,
-    pending: createPendingQueues(),
+    pending: createPendingQueues<QueuedSettled>(),
     shells: args.shells,
     agents: fakeAgentRegistry(),
     services: fakeServiceRegistry(),
