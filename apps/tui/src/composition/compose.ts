@@ -37,6 +37,7 @@ import {
   toThreadId,
   type ThreadId,
   type EventDraft,
+  type SaidImage,
   type SecretsPort,
   type WorkspaceIdentity,
 } from '@dltech/atlas-core'
@@ -161,7 +162,11 @@ import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
 import { userSaidDraft } from './user-said'
 import { createWarpReporter, WarpThreadOpenHook } from './warp-reporter'
 
-export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
+export type SessionTitler = (args: {
+  text: string
+  images?: readonly SaidImage[] | undefined
+  signal?: AbortSignal | undefined
+}) => Promise<string | null>
 
 export type { SandboxControl } from './sandbox-binding'
 
@@ -756,7 +761,7 @@ export async function composeAtlas(args: {
       activeThread = active
     },
     activeThread: () => activeThread,
-    titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
+    titler: ({ text, images, signal }) => titleFor({ model: titlerModel, text, images, signal }),
     summarise,
     settings,
     secrets: container.resolve(SecretsStoreToken),

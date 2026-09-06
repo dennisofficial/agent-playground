@@ -255,7 +255,7 @@ export function useConversation(args: {
 
       if (working) {
         pending.enqueue({ text, images })
-        nameSession({ said: text, opened: ALREADY_OPEN })
+        nameSession({ said: text, opened: ALREADY_OPEN, images, context: args.context })
         return
       }
 
@@ -263,7 +263,7 @@ export function useConversation(args: {
         ...(args.context ?? []),
         ...[...pending.drain(), { text, images }].map(userSaidDraft),
       ])
-      nameSession({ said: text, opened })
+      nameSession({ said: text, opened, images, context: args.context })
     },
     [drive, nameSession, pending, working],
   )

@@ -1,4 +1,5 @@
 import type { LanguageModelV4GenerateResult } from '@ai-sdk/provider'
+import type { SaidImage } from '@dltech/atlas-core'
 import { MockLanguageModelV4 } from 'ai/test'
 import { describe, expect, it } from 'bun:test'
 
@@ -30,6 +31,19 @@ const promptTextOf = (model: MockLanguageModelV4): string => {
   const user = model.doGenerateCalls[0]?.prompt.find((message) => message.role === 'user')
   const part = user?.content.find((content) => content.type === 'text')
   return part?.type === 'text' ? part.text : ''
+}
+
+const promptFilePartsOf = (model: MockLanguageModelV4) => {
+  const user = model.doGenerateCalls[0]?.prompt.find((message) => message.role === 'user')
+  return user?.content.filter((content) => content.type === 'file') ?? []
+}
+
+const SCREENSHOT: SaidImage = {
+  path: '/tmp/rewind-blank-pane.png',
+  mediaType: 'image/png',
+  data: 'aGVsbG8=',
+  width: 800,
+  height: 600,
 }
 
 describe('sanitizedTitle', () => {
@@ -113,5 +127,39 @@ describe('titleFor', () => {
     const model = modelRaising(new Error('no credential on this machine'))
 
     expect(await titleFor({ model, text: 'rotate the token' })).toBeNull()
+  })
+
+  it('shows a picture attached to the opening message to the model naming it', async () => {
+    const model = modelSaying('Rewind pane blanks out')
+
+    expect(
+      await titleFor({
+        model,
+        text: 'look at this screenshot, can we fix this bug',
+        images: [SCREENSHOT],
+      }),
+    ).toBe('Rewind pane blanks out')
+
+    const files = promptFilePartsOf(model)
+    expect(files).toHaveLength(1)
+    expect(files[0]?.mediaType).toBe('image/png')
+    expect(promptTextOf(model)).toContain('look at this screenshot')
+  })
+
+  it('names from the text alone when the attached picture is too heavy to inline', async () => {
+    const tooWide: SaidImage = { ...SCREENSHOT, width: 9000, height: 80 }
+    const model = modelSaying('Wide panorama')
+
+    expect(await titleFor({ model, text: 'what is this', images: [tooWide] })).toBe('Wide panorama')
+    expect(promptFilePartsOf(model)).toHaveLength(0)
+  })
+
+  it('still names a session whose opening message is only a picture', async () => {
+    const model = modelSaying('Screenshot of the crash')
+
+    expect(await titleFor({ model, text: '  ', images: [SCREENSHOT] })).toBe(
+      'Screenshot of the crash',
+    )
+    expect(promptFilePartsOf(model)).toHaveLength(1)
   })
 })
