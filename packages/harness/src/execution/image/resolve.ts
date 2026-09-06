@@ -27,6 +27,7 @@ export type ContainerResolution = {
   image: ImageRef
   setup?: string | undefined
   start?: string | undefined
+  env: Record<string, string>
   mounts: readonly Mount[]
   source: EConfigSource
   notes: readonly string[]
@@ -79,6 +80,7 @@ export async function resolveContainerConfig(args: {
         },
         setup: parsed.config.setup,
         start: parsed.config.start,
+        env: parsed.config.env ?? {},
         mounts: parsed.mounts,
         source: EConfigSource.ContainerJson,
         notes,
@@ -105,6 +107,7 @@ export async function resolveContainerConfig(args: {
         },
         setup: parsed.setup,
         start: undefined,
+        env: {},
         mounts: [],
         source: EConfigSource.DevcontainerJson,
         notes,
@@ -122,6 +125,7 @@ export async function resolveContainerConfig(args: {
     notes.push(dockerfileNote(dockerfile))
     return {
       image: { kind: EImageKind.Dockerfile, path: dockerfile, context: EBuildContext.Directory },
+      env: {},
       mounts: [],
       source: EConfigSource.Dockerfile,
       notes,
@@ -139,6 +143,7 @@ export async function resolveContainerConfig(args: {
           path: userDockerfile,
           context: EBuildContext.DockerfileOnly,
         },
+        env: {},
         mounts: [],
         source: EConfigSource.Dockerfile,
         notes,
@@ -149,6 +154,7 @@ export async function resolveContainerConfig(args: {
 
   return {
     image: { kind: EImageKind.Image, reference: DEFAULT_SANDBOX_IMAGE },
+    env: {},
     mounts: [],
     source: EConfigSource.BuiltIn,
     notes,

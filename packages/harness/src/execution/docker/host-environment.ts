@@ -137,6 +137,7 @@ export function sandboxConfigFromHost(args: {
     gitconfigPath: host.gitconfigPath,
     setup: args.resolution?.setup,
     start: args.resolution?.start,
+    env: args.resolution?.env,
     mounts: mountsWithGitMetadata({ worktree: args.worktree, declared: args.resolution?.mounts ?? [] }),
     atlasHomeSubtrees:
       args.atlasHomeSubtrees ??

@@ -6,6 +6,7 @@ import {
   declaredMountsDrift,
   declaredMountsLabel,
   encodeDeclaredMounts,
+  envDrift,
   missingIdentityMounts,
 } from './mount-drift'
 import { publishPlanFor } from './ports'
@@ -59,6 +60,7 @@ export type SandboxConfig = {
   setup?: string | undefined
   start?: string | undefined
   dockerfile?: DockerfileBuild | undefined
+  env?: Record<string, string> | undefined
   mounts?: readonly Mount[] | undefined
   atlasHomeSubtrees?: readonly string[] | undefined
 }
@@ -118,6 +120,11 @@ export function sandboxCreateBody(config: SandboxConfig): CreateContainerBody {
     }
     env.push(`GNUPGHOME=${CONTAINER_GNUPG_HOME}`)
   }
+
+  const declared = Object.entries(config.env ?? {})
+  const computed = env.filter((entry) => !config.env?.[entry.slice(0, entry.indexOf('='))])
+  env.length = 0
+  env.push(...computed, ...declared.map(([key, value]) => `${key}=${value}`))
 
   return {
     Image: config.image,
@@ -206,12 +213,15 @@ export async function ensureSandbox(args: {
         : await dockerfileImageReference({ dockerfile: args.config.dockerfile })
     const drifted = declaredMountsDrift({ config: args.config, details, prefix })
     const imageChanged = details.config.image !== wanted
+    const envChanged = envDrift({ declared: args.config.env ?? {}, actual: details.config.env })
 
-    if (drifted || imageChanged) {
+    if (drifted || imageChanged || envChanged) {
       await args.engine.removeContainer({ id: existing.id })
       const why = drifted
         ? 'the declared mounts changed since it was created'
-        : `the image changed to ${wanted} since it was created`
+        : imageChanged
+          ? `the image changed to ${wanted} since it was created`
+          : 'the declared env changed since it was created'
       recreated.push(
         details.state.running
           ? `recreated ${name}: ${why} — it was running, so its shells were killed; anything long-lived in there needs a restart`

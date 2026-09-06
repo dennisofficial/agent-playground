@@ -147,10 +147,24 @@ describe('hostSandboxEnvironment', () => {
     image,
     setup: 'bun install',
     start: 'docker compose up -d',
+    env: {},
     mounts: [{ path: '/Users/operator/Developer/shared-lib', mode: EMountMode.ReadOnly }],
     source: EConfigSource.ContainerJson,
     notes: [],
     refusals: [],
+  })
+
+  it('carries declared container env into the sandbox config', () => {
+    const config = sandboxConfigFromHost({
+      worktree: '/Users/operator/Developer/project',
+      limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
+      resolution: {
+        ...resolution({ kind: EImageKind.Image, reference: 'repo/toolchain:latest' }),
+        env: { TURBO_CACHE_DIR: '/tmp/turbo-cache' },
+      },
+    })
+
+    expect(config.env).toEqual({ TURBO_CACHE_DIR: '/tmp/turbo-cache' })
   })
 
   it('maps a resolved container config onto the sandbox config', () => {

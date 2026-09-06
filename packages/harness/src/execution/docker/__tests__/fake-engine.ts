@@ -22,6 +22,7 @@ export const fakeEngine = (args?: {
     id: string
     state: string
     image?: string
+    env?: readonly string[]
     mounts: readonly { source: string; destination: string; readOnly: boolean }[]
     labels?: Record<string, string>
   }
@@ -58,7 +59,7 @@ export const fakeEngine = (args?: {
       state: { running: args?.existing?.state === 'running' },
       config: {
         labels: args?.existing?.labels ?? created?.labels ?? {},
-        env: [],
+        env: args?.existing?.env ?? [],
         image: args?.existing?.image ?? created?.image ?? FAKE_CONFIG.image,
       },
       mounts: args?.existing?.mounts ?? [],

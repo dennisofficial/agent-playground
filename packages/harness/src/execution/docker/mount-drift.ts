@@ -4,6 +4,14 @@ import { EMountMode, type Mount } from '../image/mounts'
 import { CONTAINER_GNUPG_HOME, type SandboxConfig } from './sandbox'
 import type { ContainerDetails, ContainerMount } from './engine'
 
+export const envDrift = (args: {
+  declared: Record<string, string>
+  actual: readonly string[]
+}): boolean =>
+  Object.entries(args.declared).some(
+    ([key, value]) => !args.actual.includes(`${key}=${value}`),
+  )
+
 export const declaredMountsLabel = (prefix: string): string => `${prefix}.mounts`
 
 export const encodeDeclaredMounts = (mounts: readonly Mount[]): string =>

@@ -199,6 +199,33 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     expect(sandbox.warnings.some((one) => one.includes('recreated'))).toBe(true)
   })
 
+  it('recreates a container whose declared env changed, and reuses one whose env matches', async () => {
+    const config = { ...FAKE_CONFIG, env: { TURBO_CACHE_DIR: '/tmp/turbo-cache' } }
+    const drifted = fakeEngine({
+      existing: {
+        id: 'stale-1',
+        state: 'running',
+        mounts: systemMounts,
+        env: ['TURBO_CACHE_DIR=/old'],
+      },
+    })
+    const recreated = await ensureSandbox({ engine: drifted.engine, config })
+    expect(drifted.removals).toEqual(['stale-1'])
+    expect(recreated.created).toBe(true)
+    expect(recreated.warnings.some((one) => one.includes('declared env changed'))).toBe(true)
+
+    const matching = fakeEngine({
+      existing: {
+        id: 'kept-1',
+        state: 'running',
+        mounts: systemMounts,
+        env: ['HOME=/Users/operator', 'TURBO_CACHE_DIR=/tmp/turbo-cache'],
+      },
+    })
+    const reused = await ensureSandbox({ engine: matching.engine, config })
+    expect(reused.created).toBe(false)
+  })
+
   it('recreates a running container when the configured image no longer matches, warning that its shells died', async () => {
     const { engine, removals, creates } = fakeEngine({
       existing: {

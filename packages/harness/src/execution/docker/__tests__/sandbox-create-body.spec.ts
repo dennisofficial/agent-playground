@@ -29,6 +29,16 @@ const bindsOf = (config: SandboxConfig): readonly string[] => {
 }
 
 describe('sandboxCreateBody', () => {
+  it('appends declared env after the computed env, winning any collision', () => {
+    const env = sandboxCreateBody({
+      ...CONFIG,
+      env: { HOME: '/declared/home', TURBO_CACHE_DIR: '/tmp/turbo-cache' },
+    }).Env ?? []
+
+    expect(env).toContain('TURBO_CACHE_DIR=/tmp/turbo-cache')
+    expect(env.filter((one) => one.startsWith('HOME='))).toEqual(['HOME=/declared/home'])
+  })
+
   it('bind-mounts the worktree at its identical absolute path', () => {
     const body = sandboxCreateBody(CONFIG)
     const binds = body.HostConfig?.Binds ?? []
