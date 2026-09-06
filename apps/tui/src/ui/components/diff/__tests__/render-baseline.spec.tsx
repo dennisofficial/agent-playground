@@ -138,11 +138,11 @@ async function readBaseline(): Promise<Baseline | null> {
   return (await file.json()) as Baseline
 }
 
-async function writeBaseline(baseline: Baseline): Promise<void> {
-  await Bun.write(FIXTURE_URL.pathname, `${JSON.stringify(baseline, null, 2)}\n`)
+async function writeBaseline(args: { baseline: Baseline; path: string }): Promise<void> {
+  await Bun.write(args.path, `${JSON.stringify(args.baseline, null, 2)}\n`)
 }
 
-const writing = process.env.DIFF_BASELINE_WRITE === '1'
+const writeTo = process.env.DIFF_BASELINE_WRITE
 
 const inline = (width: number) => <InlineDiff file={CORPUS} width={width} />
 
@@ -167,8 +167,9 @@ describe('diff render baseline', () => {
     cases['inline-resize-before-80'] = resized.before
     cases['inline-resize-after-120'] = resized.after
 
-    if (writing) {
-      await writeBaseline(cases)
+    if (writeTo !== undefined && writeTo !== '') {
+      const path = writeTo === '1' ? FIXTURE_URL.pathname : writeTo
+      await writeBaseline({ baseline: cases, path })
       return
     }
 
