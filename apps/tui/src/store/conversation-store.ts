@@ -44,10 +44,6 @@ export type ConversationStore = {
   getSidebar(): SidebarModel
   getTurn(): TurnClock
   setEvents(args: { events: readonly Event[]; turns?: readonly TurnSpend[] | undefined }): void
-  /**
-   * What the channel cannot say about the turn — that a keystroke began it, that an interrupt is
-   * pending, that it settled. Published at once; a chunk's advance waits for the paced frame.
-   */
   stampTurn(advance: (progress: TurnProgress) => TurnProgress): void
   supersedeFailure(): void
   resetSteps(): void
@@ -127,12 +123,8 @@ export function createConversationStore(args: {
     for (const listener of [...listeners]) listener();
   };
 
-  const sameFailure = (
-    left: StepFailure | null,
-    right: StepFailure | null,
-  ): boolean =>
-    left === right ||
-    (left !== null && right !== null && left.message === right.message);
+  const sameFailure = (left: StepFailure | null, right: StepFailure | null): boolean =>
+    left === right || (left !== null && right !== null && left.message === right.message);
 
   const settled = (derived: TranscriptModel): TranscriptModel => {
     const entries = stabilisedEntries({
@@ -260,9 +252,7 @@ export function createConversationStore(args: {
       const next = advance(progress);
       const clockMoved = next.clock !== progress.clock;
       progress = next;
-      if (!clockMoved) return;
-
-      republish();
+      if (clockMoved) republish();
     },
 
     supersedeFailure() {

@@ -530,10 +530,6 @@ function Workspace(props: {
     }
   }, [accountRows, accountsOpen, usage])
 
-  /**
-   * Keyed on the usage version so the memoised overlay repaints when a refresh lands: the rows are
-   * read straight out of the service, and nothing else about the overlay's props moves.
-   */
   const accountMeters = useMemo(
     () =>
       (row: AccountRow): readonly Span[] => {

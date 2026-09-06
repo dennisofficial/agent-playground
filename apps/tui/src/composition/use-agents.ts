@@ -122,11 +122,6 @@ export function useAgents({
   const now = useTickingNow(own.some(subagentShowsElapsed) || graceIsRunning({ members, viewing }))
   const spend = useAgentSpend({ app, children: own })
 
-  /**
-   * The crew is folded apart from the sidebar it is folded into: the sidebar moves with every paced
-   * frame of a streaming turn, and re-partitioning the crew on each of those would be work whose
-   * answer had not changed.
-   */
   const crew = useMemo(() => {
     const subagents = subagentRows({ snapshots: own, now, spend, viewing })
     const { standings } = partitionCrew({

@@ -134,11 +134,6 @@ export function usePullRequest(args: {
     }
   }, [probe, working])
 
-  /**
-   * Keyed on the service's version rather than on what it hands back: the readings are read out of
-   * the service at build time, so the version is the only thing that says they moved. A fresh list
-   * per render would rebuild the footer pill and the sidebar section on every commit of the app.
-   */
   const entries = useMemo(() => {
     const reading = checkout === null ? null : service.snapshot({ key: checkoutKey(checkout) })
     return pullRequestEntries({

@@ -113,12 +113,6 @@ export function useThreadView(args: {
     [app.models],
   );
 
-  /**
-   * The turn clock lives in the store rather than in React state so that a chunk's advance commits
-   * with the paced frame that reveals its text, instead of costing the whole app a render of its own
-   * per chunk. The store reads the channel itself, so the clock follows the stream without anything
-   * here stamping it; `stamp` is for what the channel cannot say.
-   */
   const clock = useRef(readClock);
   clock.current = readClock;
 
