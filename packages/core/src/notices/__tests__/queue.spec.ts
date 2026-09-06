@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { ENoticeTone, type Notice, type NoticeDraft } from '../notice'
+import { ENoticePosition, ENoticeTone, type Notice, type NoticeDraft } from '../notice'
 import { clearNotice, expireNotices, nextExpiryAtMs, postNotice } from '../queue'
 
 const draft = (over: Partial<NoticeDraft> & { key: string }): NoticeDraft => ({
@@ -18,6 +18,13 @@ describe('postNotice', () => {
     const notices = post(post([], { key: 'a' }), { key: 'b' })
 
     expect(notices.map((notice) => notice.key)).toEqual(['a', 'b'])
+  })
+
+  it('lands a notice in the tray unless its draft names the composer edge', () => {
+    const notices = post(post([], { key: 'a' }), { key: 'b', position: ENoticePosition.Composer })
+
+    expect(notices[0]?.position).toBe(ENoticePosition.Tray)
+    expect(notices[1]?.position).toBe(ENoticePosition.Composer)
   })
 
   it('replaces a standing key in place rather than stacking a twin', () => {

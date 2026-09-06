@@ -13,8 +13,9 @@ void mock.module('../../clipboard', () => ({
   },
 }))
 
-const { NoticeStack } = await import('../../components/notice-stack')
+const { NoticeSlab } = await import('../../components/notice-slab')
 const { dismissNotice } = await import('../../notice-store')
+const { theme } = await import('../../theme')
 const { useCopyOnSelect } = await import('../use-copy-on-select')
 const { useWordSelect } = await import('../use-word-select')
 
@@ -34,7 +35,7 @@ function Harness(): React.ReactNode {
     <box flexDirection="column" onMouse={handleMouse}>
       <text>{FIRST}</text>
       <text>{SECOND}</text>
-      <NoticeStack width={WIDTH} />
+      <NoticeSlab bg={theme.appBg} cells={WIDTH} />
     </box>
   )
 }
@@ -77,7 +78,7 @@ beforeEach(() => {
 })
 
 describe('copy on select', () => {
-  it('puts a finished selection on the clipboard and says so above the composer', async () => {
+  it('puts a finished selection on the clipboard and says so on the composer edge', async () => {
     const setup = await mount()
     try {
       await drag(setup, [0, 0], [10, 0])

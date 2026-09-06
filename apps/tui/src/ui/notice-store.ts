@@ -1,5 +1,6 @@
 import {
   clearNotice as withoutNotice,
+  ENoticePosition,
   ENoticeTone,
   expireNotices,
   nextExpiryAtMs,
@@ -7,7 +8,7 @@ import {
   postNotice,
 } from '@dltech/atlas-core'
 
-export { ENoticeTone }
+export { ENoticePosition, ENoticeTone }
 export type { Notice }
 
 export const NOTICE_MS = 2000
@@ -17,16 +18,6 @@ export const NOTICE_WARN_MS = 6000
 export const NOTICE_KEY_CLASSIFIER_OFFLINE = 'classifier-offline'
 
 export const NOTICE_KEY_LOST_AGENTS = 'lost-agents'
-
-export enum ENoticePosition {
-  Tray = 'tray',
-  Composer = 'composer',
-}
-
-export const SHIPPED_NOTICE_POSITION = ENoticePosition.Tray
-
-export const noticePositionOf = (value: string): ENoticePosition =>
-  value === ENoticePosition.Composer ? ENoticePosition.Composer : ENoticePosition.Tray
 
 const listeners = new Set<() => void>()
 
@@ -82,6 +73,7 @@ export function configureNotices(args: { ttlMs: number }): void {
 export function notify(args: {
   text: string
   tone?: ENoticeTone
+  position?: ENoticePosition
   key?: string
   ttlMs?: number
   sticky?: boolean
@@ -94,6 +86,7 @@ export function notify(args: {
       key: args.key ?? `notice-${issued}`,
       text: args.text,
       tone: args.tone ?? ENoticeTone.Done,
+      ...(args.position === undefined ? {} : { position: args.position }),
       ttlMs: args.sticky === true ? null : (args.ttlMs ?? defaultTtlMs),
     },
     issuedAtMs: Date.now(),

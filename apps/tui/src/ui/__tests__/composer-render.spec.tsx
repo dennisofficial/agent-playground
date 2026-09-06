@@ -28,7 +28,7 @@ import { FRAME_INSET } from '../components/frame'
 import { PANEL_INSET, PANEL_PAD } from '../components/panel'
 import { ComposerHints, type Hint } from '../components/composer-hints'
 import { useDraft } from '../hooks/use-draft'
-import { dismissNotice, notify } from '../notice-store'
+import { dismissNotice, ENoticePosition, notify } from '../notice-store'
 import { grammarsReady, teardown } from '../markdown/__tests__/harness'
 import { glyph, theme } from '../theme'
 import { drawn, frameOf, HEIGHT } from './transcript-fixture'
@@ -54,7 +54,6 @@ function Draft(props: {
   title?: string
   width?: number
   accent?: string
-  notices?: boolean
 }): React.ReactNode {
   const draft = useDraft(props.text ?? '')
   return (
@@ -66,7 +65,6 @@ function Draft(props: {
       {...(props.maxRows === undefined ? {} : { maxRows: props.maxRows })}
       {...(props.title === undefined ? {} : { title: props.title })}
       {...(props.accent === undefined ? {} : { accent: props.accent })}
-      {...(props.notices === true ? { notices: true } : {})}
     />
   )
 }
@@ -354,9 +352,9 @@ describe('the composer title', () => {
 })
 
 describe('the composer notice slab', () => {
-  it('sits the newest notice at the left of the line the title closes', async () => {
-    notify({ text: 'copied 3 lines' })
-    const frame = await frameOf(<Draft title={TITLE} notices />, WIDTH)
+  it('sits the newest edge-bound notice at the left of the line the title closes', async () => {
+    notify({ text: 'copied 3 lines', position: ENoticePosition.Composer })
+    const frame = await frameOf(<Draft title={TITLE} />, WIDTH)
     dismissNotice()
 
     const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD)) ?? ''
@@ -366,8 +364,8 @@ describe('the composer notice slab', () => {
 
   it('sets the notice into the top rule on a bordered edge too', async () => {
     applyComposerEdge(EComposerEdge.Bordered)
-    notify({ text: 'copied 3 lines' })
-    const frame = await frameOf(<Draft title={TITLE} notices />, WIDTH)
+    notify({ text: 'copied 3 lines', position: ENoticePosition.Composer })
+    const frame = await frameOf(<Draft title={TITLE} />, WIDTH)
     dismissNotice()
 
     const head = frame.split('\n').find((row) => row.startsWith(FRAME_TOP_LEFT)) ?? ''
@@ -375,17 +373,17 @@ describe('the composer notice slab', () => {
     expect(head.indexOf('✓ copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
   })
 
-  it('keeps the head row to the title alone unless notices live on the edge', async () => {
-    notify({ text: 'copied 3 lines' })
+  it('keeps the head row to the title alone while the notice is bound for the tray', async () => {
+    notify({ text: 'a tray notice' })
     const frame = await frameOf(<Draft title={TITLE} />, WIDTH)
     dismissNotice()
 
-    expect(frame).not.toContain('copied 3 lines')
+    expect(frame).not.toContain('a tray notice')
   })
 
   it('takes no room from the title while nothing is being said', async () => {
     dismissNotice()
-    const frame = await frameOf(<Draft title={TITLE} notices />, WIDTH)
+    const frame = await frameOf(<Draft title={TITLE} />, WIDTH)
     const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD))
 
     expect(head).toContain(`${PANEL_TOP_EDGE} ${TITLE} ${PANEL_TOP_EDGE}`)
