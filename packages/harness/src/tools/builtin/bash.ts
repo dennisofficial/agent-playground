@@ -149,6 +149,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
     signal,
     projectDirectory,
     threadId,
+    onOutput,
   }: ToolRun<typeof inputSchema>): Promise<ToolOutcome> {
     if (signal.aborted) return { ok: false, reason: 'the developer interrupted the turn before the command started' }
 
@@ -228,7 +229,11 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
 
     let read: ShellOutput
     try {
-      read = await readShell({ shell, limit: MAXIMUM_OUTPUT_CHARACTERS })
+      read = await readShell({
+        shell,
+        limit: MAXIMUM_OUTPUT_CHARACTERS,
+        ...(onOutput === undefined ? {} : { onOutput }),
+      })
     } catch (error) {
       return { ok: false, reason: `the command could not be read back: ${messageOf(error)}` }
     } finally {

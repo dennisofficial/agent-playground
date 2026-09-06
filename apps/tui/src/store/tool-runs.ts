@@ -27,6 +27,11 @@ export type ToolCall = {
   note: string | null
   at: string | null
   settledAt: string | null
+  /**
+   * What a still-running call has printed so far, pushed live from the tool rather than read off
+   * the result. Absent once the call settles — the durable output takes over.
+   */
+  liveOutput?: string | undefined
 }
 
 /**

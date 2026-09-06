@@ -1,4 +1,4 @@
-import type { ProcessHandle, ProcessPort, ThreadId } from '@dltech/atlas-core'
+import type { ProcessHandle, ProcessPort, ThreadId, ToolOutputChunk } from '@dltech/atlas-core'
 
 import { LocalProcessPort } from '../execution/local-process'
 import { atlasBinDirectory } from '../store/paths'
@@ -99,11 +99,19 @@ export function drainInto(args: {
   }
 }
 
-export function drainTail(args: { stream: ReadableStream<Uint8Array>; limit: number }): Drain & {
+export function drainTail(args: {
+  stream: ReadableStream<Uint8Array>
+  limit: number
+  onChunk?: ((chunk: string) => void) | undefined
+}): Drain & {
   tail: () => Tail
 } {
   const buffer = tailBuffer(args.limit)
-  return { ...drainInto({ stream: args.stream, append: buffer.append }), tail: buffer.tail }
+  const append = (chunk: string): void => {
+    buffer.append(chunk)
+    if (chunk !== '') args.onChunk?.(chunk)
+  }
+  return { ...drainInto({ stream: args.stream, append }), tail: buffer.tail }
 }
 
 export async function withinReadGrace(reads: Promise<unknown>): Promise<void> {
@@ -121,9 +129,18 @@ export async function withinReadGrace(reads: Promise<unknown>): Promise<void> {
  * holder has exited - long after the shell itself was killed. Measured at 61 s for a `sleep 61` the
  * shell left behind under a 400 ms timeout.
  */
-export async function readShell(args: { shell: Shell; limit: number }): Promise<ShellOutput> {
-  const stdout = drainTail({ stream: args.shell.stdout, limit: args.limit })
-  const stderr = drainTail({ stream: args.shell.stderr, limit: args.limit })
+export async function readShell(args: {
+  shell: Shell
+  limit: number
+  onOutput?: ((chunk: ToolOutputChunk) => void) | undefined
+}): Promise<ShellOutput> {
+  const tapFor = (stream: ToolOutputChunk['stream']): ((chunk: string) => void) | undefined =>
+    args.onOutput === undefined
+      ? undefined
+      : (chunk) => args.onOutput?.({ stream, text: chunk })
+
+  const stdout = drainTail({ stream: args.shell.stdout, limit: args.limit, onChunk: tapFor('stdout') })
+  const stderr = drainTail({ stream: args.shell.stderr, limit: args.limit, onChunk: tapFor('stderr') })
 
   const exitCode = await args.shell.exited
   await withinReadGrace(Promise.all([stdout.done, stderr.done]))
