@@ -196,7 +196,33 @@ export function steadySegments(args: {
   if (last.state === EFenceState.Naming) return settled
 
   const body = last.state === EFenceState.Resting ? last.source : wholeLinesOf(last.source)
-  return body.length === 0 ? settled : [...settled, { ...last, source: body }]
+  return body.length === 0 ? settled : [...settled, steadiedFence({ last, body })]
+}
+
+type FenceSegment = Extract<MarkdownSegment, { kind: 'fence' }>
+
+const STEADIED_LIMIT = 4
+
+const steadiedFences = new Map<string, FenceSegment>()
+
+/**
+ * The whole-line body of an open fence changes only when a newline lands, so between newlines every
+ * republish would otherwise mint a fresh segment for the same drawn block — and everything keyed on
+ * the segment's identity downstream would miss. The raw and state are those of the first sighting;
+ * nothing past this point reads the state, and the raw lags by at most the undrawn partial line.
+ */
+function steadiedFence(args: { last: FenceSegment; body: string }): FenceSegment {
+  const key = `${args.last.language}\0${args.last.filename}\0${args.body}`
+  const hit = steadiedFences.get(key)
+  if (hit !== undefined) return hit
+
+  const steadied: FenceSegment = { ...args.last, source: args.body }
+  if (steadiedFences.size >= STEADIED_LIMIT) {
+    const oldest = steadiedFences.keys().next()
+    if (!oldest.done) steadiedFences.delete(oldest.value)
+  }
+  steadiedFences.set(key, steadied)
+  return steadied
 }
 
 function wholeLinesOf(source: string): string {

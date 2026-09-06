@@ -66,35 +66,60 @@ export type ProseBlock =
 const FOOTNOTE_DEFINITION = /^\[\^([^\]\s]+)\]:[ \t]*(.*)$/
 const DEFINITION_LINE = /^:[ \t]+(.*)$/
 
-type Context = { readonly order: ReadonlyMap<string, number> }
+export type Context = { readonly order: ReadonlyMap<string, number> }
 
 export type SourcedBlock = { readonly block: ProseBlock; readonly raw: string }
+
+export type LiftedFootnotes = {
+  readonly body: string
+  readonly definitions: ReadonlyMap<string, string>
+}
 
 export function proseBlocks(source: string): readonly ProseBlock[] {
   return sourcedProseBlocks(source).map((sourced) => sourced.block)
 }
 
 export function sourcedProseBlocks(source: string): readonly SourcedBlock[] {
-  const { body, definitions } = liftFootnotes(source)
-  const order = new Map([...definitions.keys()].map((label, index) => [label, index + 1]))
-  const context: Context = { order }
+  const lifted = liftFootnotes(source)
+  const context = contextFor(lifted)
+  return withFootnotes({
+    sourced: sourcedFromTokens({ tokens: marked.lexer(lifted.body), context }),
+    lifted,
+    context,
+  })
+}
 
-  const sourced = marked
-    .lexer(body)
-    .flatMap((token) => blockOf({ token, context }).map((block) => ({ block, raw: token.raw })))
-  if (definitions.size === 0) return sourced
+export function contextFor(lifted: LiftedFootnotes): Context {
+  return {
+    order: new Map([...lifted.definitions.keys()].map((label, index) => [label, index + 1])),
+  }
+}
 
-  const notes = [...definitions].map(([label, text]) => ({
+export function sourcedFromTokens(args: {
+  tokens: readonly Token[]
+  context: Context
+}): readonly SourcedBlock[] {
+  return args.tokens.flatMap((token) =>
+    blockOf({ token, context: args.context }).map((block) => ({ block, raw: token.raw })),
+  )
+}
+
+export function withFootnotes(args: {
+  sourced: readonly SourcedBlock[]
+  lifted: LiftedFootnotes
+  context: Context
+}): readonly SourcedBlock[] {
+  if (args.lifted.definitions.size === 0) return args.sourced
+
+  const { order } = args.context
+  const notes = [...args.lifted.definitions].map(([label, text]) => ({
     marker: superscriptNumber(order.get(label) ?? 0),
     content: inlineNodes({ tokens: marked.lexer(text), order }),
   }))
-  return [...sourced, { block: { kind: EProseBlock.Footnotes, notes }, raw: '' }]
+  return [...args.sourced, { block: { kind: EProseBlock.Footnotes, notes }, raw: '' }]
 }
 
-function liftFootnotes(source: string): {
-  body: string
-  definitions: Map<string, string>
-} {
+export function liftFootnotes(source: string): LiftedFootnotes {
   const definitions = new Map<string, string>()
   const kept: string[] = []
   let open: string | null = null

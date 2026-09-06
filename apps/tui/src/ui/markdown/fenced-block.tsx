@@ -59,7 +59,7 @@ export function FencedBlock(props: {
 
   const available = Math.max(4, props.width - RIGHT_MARGIN)
   const wrap = wrapsFence(props.language)
-  const gutter = gutterWidth(props.source)
+  const gutter = useMemo(() => gutterWidth(props.source), [props.source])
   const lead = wrap ? 0 : gutter
 
   const view = useMemo(

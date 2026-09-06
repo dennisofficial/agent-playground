@@ -106,7 +106,7 @@ export function MarkdownView(props: {
   )
 }
 
-function Segment(
+const Segment = React.memo(function Segment(
   props: Colours & {
     segment: MarkdownSegment
     width: number
@@ -160,4 +160,4 @@ function Segment(
       />
     </box>
   )
-}
+})

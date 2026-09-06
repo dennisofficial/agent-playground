@@ -3,6 +3,7 @@ import React from 'react'
 
 import type { FencedBlockView, FencedRenderArgs, FencedRenderer } from '../registry'
 import { codeSyntaxStyleFor } from '../syntax-style'
+import { cachingTreeSitterClient } from './highlight-client'
 
 function highlightedView(args: FencedRenderArgs): FencedBlockView {
   const lines = args.source.split('\n')
@@ -21,6 +22,7 @@ function highlightedView(args: FencedRenderArgs): FencedBlockView {
       <code
         streaming={args.streaming}
         drawUnstyledText={!args.streaming}
+        treeSitterClient={cachingTreeSitterClient()}
         content={args.source}
         filetype={filetype}
         syntaxStyle={codeSyntaxStyleFor(filetype)}
