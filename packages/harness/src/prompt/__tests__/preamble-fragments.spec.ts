@@ -54,7 +54,8 @@ the shell gives you nothing that is tracked at all. edit needs no prior read, be
 has to match — an unanchored change fails rather than lands.
 
 Every file you have read is watched. If it changes underneath you, the next write or edit to it is
-refused until you have read it again.`
+refused until you have read it again. A read vouches only for the exact path it read: the same
+file under another checkout or worktree is a different file, and is unread until you read it there.`
 
 const READ_WIDE = `Read a file whole unless you already know it is enormous. Slicing it into offsets costs a round
 trip each and leaves you holding a partial view, which is the one thing that will not unlock a
@@ -299,6 +300,10 @@ describe('the rule the file guard enforces, said once where the model reads it',
   it('says what a search buys and what a shell read does not', () => {
     expect(READ_BEFORE_WRITE).toContain('grep gives you only the lines it matched')
     expect(READ_BEFORE_WRITE).toContain('the shell gives you nothing that is tracked at all')
+  })
+
+  it('says a read vouches only for the exact path it read', () => {
+    expect(READ_BEFORE_WRITE).toContain('A read vouches only for the exact path it read')
   })
 })
 
