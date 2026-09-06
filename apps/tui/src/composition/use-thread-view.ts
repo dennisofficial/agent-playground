@@ -79,8 +79,6 @@ export function useThreadView(args: {
   initial?: (() => ThreadSeed) | undefined;
   paceReveal?: boolean;
   projectEvents?: ((args: { events: readonly Event[] }) => void) | undefined;
-  /** Fired after every read, for a caller holding something the rows settle. */
-  afterRead?: ((events: readonly Event[]) => void) | undefined;
   /**
    * What the model reported spending. Only a conversation passes this: a child runs its own window
    * and folding its usage into the parent's meter would make the parent's remaining context a lie.
@@ -89,7 +87,7 @@ export function useThreadView(args: {
 }): ThreadView {
   const { app, threadId, rows, thinking, readClock, initial } = args;
   const tldrStatus = args.tldrStatus ?? true;
-  const { afterRead, onUsage, projectEvents } = args;
+  const { onUsage, projectEvents } = args;
 
   const paceReveal = args.paceReveal ?? false;
 
@@ -168,8 +166,7 @@ export function useThreadView(args: {
     ]);
     store.setEvents({ events: read, turns: spent.turns });
     setEvents(read);
-    afterRead?.(read);
-  }, [afterRead, app.ledger, readRows, store, threadId]);
+  }, [app.ledger, readRows, store, threadId]);
 
   /**
    * A thread nobody handed rows for reads them itself, once, on the way in. The channel replays the

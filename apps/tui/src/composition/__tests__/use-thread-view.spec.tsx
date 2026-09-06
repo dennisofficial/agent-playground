@@ -22,9 +22,6 @@ function ThreadViewProbe(props: { app: FakeApp; probe: Probe }): React.ReactNode
     rows: EThreadRows.Own,
     thinking: SHIPPED_THINKING,
     readClock: () => 0,
-    afterRead: () => {
-      props.probe.reads += 1
-    },
   })
   props.probe.renders += 1
   props.probe.entries = view.model.entries.length
@@ -35,8 +32,11 @@ function ThreadViewProbe(props: { app: FakeApp; probe: Probe }): React.ReactNode
 const append = (args: { app: FakeApp; drafts: readonly EventDraft[] }): Promise<Event[]> =>
   args.app.log.append({ threadId: THREAD, runId: toRunId('run-1'), drafts: args.drafts })
 
-const readsPast = async (args: { probe: Probe; count: number }): Promise<void> => {
-  const seen = await until({ holds: async () => args.probe.reads >= args.count, within: 5_000 })
+const readsPast = async (args: { app: FakeApp; count: number }): Promise<void> => {
+  const seen = await until({
+    holds: async () => args.app.log.ownReads.length >= args.count,
+    within: 5_000,
+  })
   if (!seen) throw new Error(`the view never read the log a ${args.count}th time`)
 }
 
@@ -52,14 +52,14 @@ describe('a thread view told the log moved', () => {
     })
 
     try {
-      await readsPast({ probe, count: 1 })
+      await readsPast({ app, count: 1 })
       await settle(RENDER_MS)
       await setup.flush()
 
       const settled = probe.renders
 
       app.channel.publisherFor({ threadId: THREAD }).settleAppend({ events: [] })
-      await readsPast({ probe, count: 2 })
+      await readsPast({ app, count: 2 })
       await settle(RENDER_MS)
       await setup.flush()
 
@@ -70,7 +70,7 @@ describe('a thread view told the log moved', () => {
         drafts: [{ type: 'assistant-said', parts: [{ type: 'text', text: 'answered' }] }],
       })
       app.channel.publisherFor({ threadId: THREAD }).settleAppend({ events: [] })
-      await readsPast({ probe, count: 3 })
+      await readsPast({ app, count: 3 })
       await settle(RENDER_MS)
       await setup.flush()
 

@@ -100,13 +100,12 @@ function pendingServiceRow(notice: ServiceSnapshot): PendingRow {
 }
 
 const operatorRows = (entries: readonly PendingEntry<unknown>[]): readonly PendingRow[] =>
-  entries.flatMap((entry): PendingRow[] => {
+  entries.map((entry): PendingRow => {
     if (entry.kind === 'command') {
-      return [{ kind: EPendingKind.Command, id: entry.id, text: entry.text }]
+      return { kind: EPendingKind.Command, id: entry.id, text: entry.text }
     }
 
-    if (entry.taken && entry.durable) return []
-    return [{ kind: EPendingKind.Operator, id: entry.id, text: entry.text }]
+    return { kind: EPendingKind.Operator, id: entry.id, text: entry.text }
   })
 
 export function pendingRows(args: {

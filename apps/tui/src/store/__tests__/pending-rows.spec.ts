@@ -12,12 +12,10 @@ import {
 
 import { EPendingKind, pendingRows } from '../pending-rows'
 
-const typed = (id: string, text: string, taken = false, durable = false) => ({
+const typed = (id: string, text: string) => ({
   kind: 'message' as const,
   id,
   text,
-  taken,
-  durable,
   images: [],
 })
 
@@ -267,25 +265,4 @@ describe('what waits under the working indicator', () => {
     expect(rows[1]).toEqual({ kind: EPendingKind.Command, id: 'p2', text: '/new' })
   })
 
-  it('hides a taken message once the log holds it, so it never renders twice', () => {
-    const rows = pendingRows({
-      entries: [typed('p1', 'check the tests too', true, true)],
-      notices: [],
-      agents: [],
-      services: [],
-    })
-
-    expect(rows).toEqual([])
-  })
-
-  it('keeps a taken message on screen while the log does not have it yet', () => {
-    const rows = pendingRows({
-      entries: [typed('p1', 'check the tests too', true, false)],
-      notices: [],
-      agents: [],
-      services: [],
-    })
-
-    expect(rows.map((row) => row.kind)).toEqual([EPendingKind.Operator])
-  })
 })

@@ -28,9 +28,7 @@ export function createPendingQueues<Command = never>(): PendingQueues<Command> {
     waitingCount() {
       let count = 0
       for (const queue of queues.values()) {
-        count += queue
-          .getSnapshot()
-          .filter((entry) => entry.kind === 'message' && !entry.taken).length
+        count += queue.getSnapshot().filter((entry) => entry.kind === 'message').length
       }
       return count
     },
