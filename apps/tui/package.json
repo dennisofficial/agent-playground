@@ -23,6 +23,7 @@
     "test": "bun scripts/test-shards.ts",
     "test:serial": "bun test",
     "grammars:update": "bun scripts/update-grammars.ts",
+    "grammars:build-dockerfile": "bun scripts/build-dockerfile-grammar.ts",
     "build:prepare": "bun run --filter @dltech/atlas-harness db:ensure && bun scripts/generate-manifest.ts && bun scripts/generate-skills.ts && bun scripts/generate-plugins.ts",
     "build": "bun run build:prepare && bun scripts/build.ts",
     "skills:generate": "bun scripts/generate-skills.ts",
