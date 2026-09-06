@@ -258,19 +258,6 @@ export function ToolRunBlock(props: {
           />
         )
       })}
-          <AloneBlock
-            key={segment.key}
-            read={segment.read}
-            repeats={segment.repeats}
-            inner={inner}
-            cwd={props.cwd}
-            mark={mark}
-            opensCluster={index === 0 && props.continues !== true}
-            opened={opened}
-            onToggle={onToggle}
-          />
-        )
-      })}
       {Array.from({ length: Math.max(0, reserved - rows) }, (_unused, index) => (
         <text key={`hold${index}`}> </text>
       ))}
