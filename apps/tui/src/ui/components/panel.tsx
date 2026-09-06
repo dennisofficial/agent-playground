@@ -57,6 +57,7 @@ function Edge(props: {
   label?: ReactNode
   badge?: ReactNode
   title?: ReactNode
+  foot?: ReactNode
   head: boolean
 }): ReactNode {
   return (
@@ -81,6 +82,11 @@ function Edge(props: {
       {props.label === undefined ? null : (
         <box position="absolute" top={0} left={PANEL_PAD} zIndex={5}>
           {props.label}
+        </box>
+      )}
+      {props.foot === undefined ? null : (
+        <box position="absolute" top={0} left={PANEL_PAD} zIndex={5}>
+          {props.foot}
         </box>
       )}
       <RightSlot
@@ -157,8 +163,8 @@ function FooterBand(props: { rail?: string; fill: string; children: ReactNode })
  * else in the app does. `fill` is separate: it raises a slab out of the transcript, capped at both
  * ends by a half row.
  *
- * `label`, `badge` and `title` are set into the head band, so they need their own background to
- * stand clear of the `▄` behind them. A `header` instead spends a whole row on its own ground,
+ * `label`, `badge` and `title` are set into the head band, and `foot` into the tail one, so they
+ * need their own background to stand clear of the half-row cap behind them. A `header` instead spends a whole row on its own ground,
  * seamed off the body below it whenever `band` is a different colour from `fill`. A `footer` is
  * the mirror of that at the bottom: seamed off the body onto `band`, and the panel then closes
  * on `band` rather than `fill`.
@@ -170,6 +176,7 @@ export function Panel(props: {
   label?: ReactNode
   badge?: ReactNode
   title?: ReactNode
+  foot?: ReactNode
   header?: ReactNode
   footer?: ReactNode
   width?: number
@@ -248,6 +255,7 @@ export function Panel(props: {
           head={false}
           fill={footed ? band : props.fill}
           {...(props.rail === undefined ? {} : { rail: props.rail })}
+          {...(props.foot === undefined ? {} : { foot: props.foot })}
         />
       ) : null}
     </box>

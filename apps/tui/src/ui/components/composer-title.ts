@@ -39,6 +39,36 @@ export function composerTitle(args: {
   return truncateCells({ text: args.title, cells: room })
 }
 
+export type ComposerFoot = { model: string; effort: string | null }
+
+const FOOT_MIN_CELLS = 8
+
+const FOOT_RUNWAY = 4
+
+const FOOT_SEPARATOR_CELLS = 3
+
+/**
+ * The mirror of `composerTitle` on the tail rule: the effort word sheds first, the model truncates
+ * only after it is alone, and below FOOT_MIN_CELLS the rule stays bare rather than clipping a name
+ * to nothing. The inset and runway hold the label clear of the corners the way the title's do.
+ */
+export function composerFoot(args: {
+  foot: ComposerFoot
+  width: number
+  edge?: EComposerEdge
+}): ComposerFoot | null {
+  const closing = args.edge === EComposerEdge.Bordered ? CLOSING_RULE_COLUMNS : 0
+  const room = args.width - PANEL_PAD - FOOT_RUNWAY - closing - TITLE_PAD * 2
+  if (room < FOOT_MIN_CELLS) return null
+
+  const effortCells =
+    args.foot.effort === null ? 0 : FOOT_SEPARATOR_CELLS + cellsOf(args.foot.effort)
+  if (cellsOf(args.foot.model) + effortCells <= room) return args.foot
+  if (cellsOf(args.foot.model) <= room) return { model: args.foot.model, effort: null }
+
+  return { model: truncateCells({ text: args.foot.model, cells: room }), effort: null }
+}
+
 const NOTICE_RUNWAY = 2
 
 /**

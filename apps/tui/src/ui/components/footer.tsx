@@ -7,13 +7,10 @@ import {
   footerLayout,
   isMeasured,
   type FooterContext,
-  type FooterEffort,
-  type FooterInstruments,
   type FooterLayout,
   type FooterReadout,
 } from '../footer-layout'
 import type { FooterStripState } from '../footer-strip'
-import { HINT_SEPARATOR } from '../hint-layout'
 import { useAppearance } from '../hooks/use-appearance'
 import { meterTone } from '../meter-tone'
 import { theme } from '../theme'
@@ -21,13 +18,7 @@ import type { FooterMeter } from '../usage-meters'
 import { FooterStrip } from './footer-strip'
 import { Spans, type Span } from './spans'
 
-export type { FooterContext, FooterEffort }
-
-function separated(groups: readonly (readonly Span[])[]): Span[] {
-  return groups
-    .filter((group) => group.length > 0)
-    .flatMap((group, index) => [...(index === 0 ? [] : [{ text: ' ' }]), ...group])
-}
+export type { FooterContext }
 
 function meterSpans(meters: readonly FooterMeter[]): Span[] {
   return meters.flatMap((meter) => [
@@ -42,18 +33,8 @@ function readoutSpans(args: { readout: FooterReadout; context: FooterContext }):
   return [{ text: args.readout.text, fg }, ...meterSpans(args.readout.meters)]
 }
 
-function factSpans(args: { instruments: FooterInstruments }): Span[][] {
-  const { model, effort } = args.instruments
-  return [
-    model === null ? [] : [{ text: model, fg: theme.hover }],
-    effort === null ? [] : [{ text: effort, fg: theme.court.external }],
-  ]
-}
-
 function DerivedFooter(props: {
   width: number
-  model: string
-  effort?: FooterEffort | null
   items?: readonly FooterItem[]
   context?: FooterContext | null
   strip?: FooterStripState | null
@@ -65,8 +46,6 @@ function DerivedFooter(props: {
     props.layout ??
     footerLayout({
       width: props.width,
-      model: props.model,
-      ...(props.effort === undefined ? {} : { effort: props.effort }),
       ...(props.items === undefined ? {} : { items: props.items }),
       ...(props.context === undefined ? {} : { context: props.context }),
     })
@@ -76,8 +55,6 @@ function DerivedFooter(props: {
       ? []
       : readoutSpans({ readout, context: props.context })
 
-  const facts = separated(factSpans({ instruments: layout.instruments }))
-
   return (
     <box
       flexDirection="row"
@@ -85,12 +62,8 @@ function DerivedFooter(props: {
       paddingLeft={FOOTER_GUTTER}
       paddingRight={FOOTER_GUTTER}
     >
-      <text flexShrink={0}>
-        <Spans spans={facts} />
-      </text>
       <FooterStrip
         items={layout.instruments.items}
-        lead={facts.length > 0}
         selectedId={props.strip?.itemId ?? null}
         {...(props.onActivateItem === undefined ? {} : { onActivate: props.onActivateItem })}
       />

@@ -1,15 +1,10 @@
-import type { EEffort } from '@dltech/atlas-core'
-
 import { COMPACT_COMMAND, isContextWarning } from './context-bar'
-import { EFFORT_ABBREVIATION } from './effort-label'
 import { footerItemCells, itemLadder, NO_FOOTER_ITEMS, type FooterItem } from './footer-item'
-import { cellsOf, HINT_SEPARATOR } from './hint-layout'
+import { cellsOf } from './hint-layout'
 import { formatTokens, glyph } from './theme'
 import type { FooterMeter } from './usage-meters'
 
 export const FOOTER_GUTTER = 1
-
-export type FooterEffort = EEffort
 
 export type FooterContext = {
   percent: number
@@ -33,8 +28,6 @@ export function meterText(meter: FooterMeter): string {
 }
 
 export type FooterInstruments = {
-  model: string | null
-  effort: string | null
   items: readonly FooterItem[]
   context: FooterReadout | null
 }
@@ -42,10 +35,6 @@ export type FooterInstruments = {
 export type FooterLayout = {
   instruments: FooterInstruments
   instrumentCells: number
-}
-
-export function effortSegment(effort: FooterEffort): string {
-  return EFFORT_ABBREVIATION[effort]
 }
 
 export function readouts(context: FooterContext): readonly FooterReadout[] {
@@ -103,98 +92,54 @@ export function readoutCells(args: { readout: FooterReadout }): number {
 const CHIP_GAP_CELLS = 1
 
 /**
- * Everything on the row is a single space apart — facts, chips, the read-out and its meters. The
- * one separator dot left is the one between the facts and the chips, marking where the
- * instruments end and the pressable row begins.
+ * The chips sit a single space apart and the read-out trails at the far edge; what separates the
+ * strip from the figures is the flexible gap between them, not a glyph.
  */
 export function instrumentCells(args: { instruments: FooterInstruments }): number {
-  const { model, effort, items, context } = args.instruments
-
-  const facts = [
-    ...(model === null ? [] : [cellsOf(model)]),
-    ...(effort === null ? [] : [cellsOf(effort)]),
-  ]
-  const factsCells =
-    facts.reduce((total, cells) => total + cells, 0) + Math.max(0, facts.length - 1)
+  const { items, context } = args.instruments
 
   const itemsCells =
     items.reduce((total, item) => total + footerItemCells(item), 0) +
     Math.max(0, items.length - 1) * CHIP_GAP_CELLS
 
-  const lead = factsCells > 0 && items.length > 0 ? cellsOf(HINT_SEPARATOR) : 0
   const contextCells = context === null ? 0 : readoutCells({ readout: context })
 
-  return factsCells + lead + itemsCells + contextCells
+  return itemsCells + contextCells
 }
 
-type Facts = { model: string; effort: string | null }
-
 const BARE: FooterInstruments = {
-  model: null,
-  effort: null,
   items: NO_FOOTER_ITEMS,
   context: null,
 }
 
 /**
- * Widest first, each rung strictly narrower than the one above it: the read-out gives up its tail
- * and then its meter, then effort leaves, then the model. A read-out that is still spelling out a
- * warning outranks both facts — what it says is why the footer is worth reading at all — so the
- * forms are split at the first one that has dropped its meter, and the facts leave in between.
- */
-function instrumentLadder(args: {
-  facts: Facts
-  context: FooterContext | null
-}): readonly FooterInstruments[] {
-  const forms = args.context === null ? [null] : readouts(args.context)
-  const bareIndex = forms.findIndex((form) => form === null || !form.full)
-  const kept = forms.slice(0, bareIndex + 1)
-  const shortened = forms.slice(bareIndex + 1)
-  const narrowest = kept[kept.length - 1] ?? null
-  const items = NO_FOOTER_ITEMS
-
-  return [
-    ...kept.map((context) => ({ ...args.facts, items, context })),
-    { model: args.facts.model, effort: null, items, context: narrowest },
-    { model: null, effort: null, items, context: narrowest },
-    ...shortened.map((context) => ({ model: null, effort: null, items, context })),
-    BARE,
-  ]
-}
-
-/**
- * Items hang off the widest rung alone, so the row sheds every pill before any instrument degrades.
- * The model is therefore always spelled beside a pill and the renderer never has to draw a leading
- * item; the effort and the read-out ride along only when the caller supplied them at all.
+ * Items hang off the widest read-out rung alone, so the row sheds every pill before the read-out
+ * degrades a step. A read-out that is still spelling out a warning is why the footer is worth
+ * reading at all, so nothing outranks it; the narrower forms never carry a pill.
  */
 function dropLadder(args: {
-  facts: Facts
   items: readonly FooterItem[]
   context: FooterContext | null
 }): readonly FooterInstruments[] {
-  const rungs = instrumentLadder({ facts: args.facts, context: args.context })
-  const [widest, ...narrower] = rungs
-  if (widest === undefined) return [BARE]
+  const forms: readonly (FooterReadout | null)[] =
+    args.context === null ? [null] : readouts(args.context)
+  const [widest, ...narrower] = forms
 
   return [
-    ...itemLadder(args.items).map((items) => ({ ...widest, items })),
-    ...narrower.map((instruments) => ({ ...instruments, items: NO_FOOTER_ITEMS })),
+    ...itemLadder(args.items).map((items) => ({ items, context: widest ?? null })),
+    ...narrower.map((context) => ({ items: NO_FOOTER_ITEMS, context })),
+    BARE,
   ]
 }
 
 export function footerLayout(args: {
   width: number
-  model: string
-  effort?: FooterEffort | null
   items?: readonly FooterItem[]
   context?: FooterContext | null
 }): FooterLayout {
   const inner = Math.max(0, args.width - FOOTER_GUTTER * 2)
-  const effort =
-    args.effort === undefined || args.effort === null ? null : effortSegment(args.effort)
 
   const ladder = dropLadder({
-    facts: { model: args.model, effort },
     items: args.items ?? NO_FOOTER_ITEMS,
     context: args.context ?? null,
   })
