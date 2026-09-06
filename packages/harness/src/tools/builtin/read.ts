@@ -28,18 +28,10 @@ const BINARY_SNIFF_LENGTH = 4096
 
 const NUL_BYTE = 0
 
-const regionSchema = z.strictObject({
-  x: z.number().int().min(0),
-  y: z.number().int().min(0),
-  width: z.number().int().min(1),
-  height: z.number().int().min(1),
-})
-
 const inputSchema = z.strictObject({
   path: filePathSchema,
   offset: z.number().int().min(1).optional(),
   limit: z.number().int().min(1).optional(),
-  region: regionSchema.optional(),
 })
 
 const description = [
@@ -51,10 +43,6 @@ const description = [
   `At most ${DEFAULT_LINE_LIMIT} lines come back at a time and each line is clipped at ${MAX_LINE_CHARS} characters;`,
   'when that happens the result says so and names the line to resume from.',
   'Use grep to find what you need in a file too large to take in one read.',
-  'On an image, region cuts one rectangle out of it and sends only that,',
-  'given as x and y for the top-left corner and width and height in pixels of the original.',
-  'Prefer it whenever the answer is in one pane of a screenshot: the crop arrives at full resolution',
-  'and costs a fraction of the frame, where the whole frame is downscaled and its text can turn to mush.',
 ].join(' ')
 
 export type ReadOutput = { path: string; lines: number; truncated: boolean }
@@ -227,12 +215,7 @@ export class ReadTool extends SchemaTool<typeof inputSchema> {
         byteLength: stats.size,
         head,
         files: this.files,
-        ...(input.region === undefined ? {} : { region: input.region }),
       })
-    }
-
-    if (input.region !== undefined) {
-      return { ok: false, reason: `${path} is not an image, so region does not apply to it.` }
     }
 
     if (head.includes(NUL_BYTE)) {
