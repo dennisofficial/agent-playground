@@ -118,6 +118,7 @@ async function spawn(args: {
           : { modelFor: () => fixedModelPort({ modelId: pinned, text: 'the pinned model' }) }),
       }),
     }),
+    launchDirectory: PROJECT_DIRECTORY,
   })
 
   const parent = (await harness.threads.create({})).id

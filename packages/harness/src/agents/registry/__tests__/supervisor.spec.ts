@@ -41,6 +41,7 @@ const supervisorOver = (
       clock: harness.clock,
       agentTypes: [EXPLORE, BUILDER],
       runners: runners.source,
+      launchDirectory: '/launch',
     }),
   }
 }

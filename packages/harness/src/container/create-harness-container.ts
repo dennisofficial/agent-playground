@@ -52,6 +52,7 @@ import {
   ModelCardSourceToken,
   PrismaClientToken,
   SecretsStoreToken,
+  WorkspaceRoot,
 } from './tokens'
 
 export const ChildRunnerDepsToken: InjectionToken<ChildRunnerDepsSource> =
@@ -74,6 +75,7 @@ function registerAgents({ container }: { container: DependencyContainer }): void
         clock: resolver.resolve(portToken(ClockPort)),
         agentTypes: resolver.resolve(AgentTypesToken),
         runners: childRunnerSource({ deps: () => resolver.resolve(ChildRunnerDepsToken)() }),
+        launchDirectory: resolver.resolve(WorkspaceRoot),
       })
       return live
     }),

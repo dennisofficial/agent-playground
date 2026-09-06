@@ -336,6 +336,15 @@ because the plumbing's existence otherwise reads as enforcement. What it buys is
 which finds a one-line fix can simply be told to make it, instead of reporting a fix somebody else
 has to apply.
 
+**A child works in the directory the parent was in when it spawned.** The worktree tools are denied
+to children, so a child's own log never holds a `worktree-entered`, and folding it with the process
+launch directory would anchor a child to a checkout the session has since left — its prompt, its
+relative path resolution and the outside-project nudge would all name the wrong directory. The
+supervisor therefore snapshots `projectDirectoryOf` over the *parent's* log at spawn and hands it
+down as the child's `launchDirectory`, so the fold every consumer already runs lands on the session's
+real directory. The snapshot does not follow a parent that moves worktrees mid-child: children are
+briefed against the directory at spawn and are short-lived.
+
 **What the model has seen of a file is per thread, and delegation is what forced it.**
 `ToolCall` carries a required `threadId` and `FileReadStatePort` keys its views on
 `{ threadId, path }`, so a child reading a file no longer vouches for its parent's write. Sharing

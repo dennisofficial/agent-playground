@@ -2,6 +2,7 @@ import {
   EAgentStatus,
   EKilledBy,
   EMessageOrigin,
+  projectDirectoryOf,
   type ClockPort,
   type EventDraft,
   type EventLogPort,
@@ -39,6 +40,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   private readonly notices = new AgentNoticeQueue()
   private readonly steps: ChildSteps
   private readonly recovery: ChildRecovery
+  private readonly launchDirectory: string
 
   constructor(args: {
     log: EventLogPort
@@ -47,6 +49,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     clock: ClockPort
     agentTypes: readonly AgentType[]
     runners: ChildRunnerSource
+    launchDirectory: string
   }) {
     super()
     this.log = args.log
@@ -54,6 +57,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     this.ids = args.ids
     this.clock = args.clock
     this.agentTypes = args.agentTypes
+    this.launchDirectory = args.launchDirectory
     this.steps = new ChildSteps({
       runners: args.runners,
       roster: this.roster,
@@ -118,6 +122,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       abort: new AbortController(),
       pending: [],
       context: undefined,
+      projectDirectory: await this.directoryOf({ threadId }),
     }
     this.roster.add(child)
 
@@ -168,6 +173,7 @@ export class AgentSupervisor extends AgentRegistryPort {
         },
       ],
     })
+    child.projectDirectory ??= await this.directoryOf({ threadId })
     this.steps.take({
       child,
       agentType,
@@ -195,6 +201,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       return { ok: false, reason: retiredAgentType(child.agentType) }
     }
 
+    child.projectDirectory ??= await this.directoryOf({ threadId })
     this.steps.take({
       child,
       agentType,
@@ -305,6 +312,13 @@ export class AgentSupervisor extends AgentRegistryPort {
   }): ChildState | undefined {
     const child = this.roster.find(agentId)
     return child === undefined || child.spawnedBy !== threadId ? undefined : child
+  }
+
+  private async directoryOf({ threadId }: { threadId: ThreadId }): Promise<string> {
+    return projectDirectoryOf({
+      events: await this.log.read({ threadId }),
+      launchDirectory: this.launchDirectory,
+    })
   }
 
   private typeNamed(name: string): AgentType | undefined {

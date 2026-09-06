@@ -121,6 +121,7 @@ export class ChildSteps {
     return this.runners({
       agentType,
       threadId: child.agentId,
+      projectDirectory: child.projectDirectory,
       observe: (drafts) => this.record({ child, drafts }),
       observeContext: ({ tokens, window }) => this.measure({ child, tokens, window }),
       steering: () => child.pending.splice(0),

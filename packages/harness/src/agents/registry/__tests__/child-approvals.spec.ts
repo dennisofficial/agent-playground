@@ -64,6 +64,7 @@ async function childAsked(): Promise<{ harness: AtlasHarness; threadId: ThreadId
   const runner = buildChildRunner({
     agentType: agentTypeNamed({ name: 'explore' }),
     threadId,
+    projectDirectory: undefined,
     observe: () => {},
     observeContext: () => {},
     steering: () => [],

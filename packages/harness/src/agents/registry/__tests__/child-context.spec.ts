@@ -197,6 +197,7 @@ async function openRealChild(): Promise<RealChild> {
         assemblyFor: () => assembly,
       }),
     }),
+    launchDirectory: PROJECT_DIRECTORY,
   })
 
   const parent = (await harness.threads.create({})).id

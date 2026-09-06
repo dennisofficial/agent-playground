@@ -83,6 +83,7 @@ async function childTurn(args: {
   const runner = buildChildRunner({
     agentType: agentTypeNamed({ name: 'explore' }),
     threadId,
+    projectDirectory: undefined,
     observe: () => undefined,
     observeContext: () => undefined,
     steering: () => steering.splice(0),
