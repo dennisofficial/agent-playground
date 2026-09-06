@@ -43,6 +43,7 @@ function announcing(inner: DeltaChannel): { channel: DeltaChannel; announced: Ev
         return {
           threadId: publisher.threadId,
           onChunk: publisher.onChunk,
+          toolOutput: (outputArgs) => publisher.toolOutput(outputArgs),
           settleAppend: ({ events }) => {
             announced.push(...events)
             publisher.settleAppend({ events })

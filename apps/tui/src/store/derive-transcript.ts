@@ -1,4 +1,4 @@
-import { EBlockKind, type Event } from '@dltech/atlas-core'
+import { EBlockKind, type CallId, type Event } from '@dltech/atlas-core'
 import { ESandboxState, EStepEnd, type StepSignal, type TurnSpend } from '@dltech/atlas-harness'
 
 import { durableEntries } from './durable-entries'
@@ -68,6 +68,41 @@ function entriesOfStep(args: { step: InFlightStep; reveal: RevealGate | null }):
   })
 }
 
+/**
+ * What a running call has printed so far, attached where the transcript can read it.
+ *
+ * Live output arrives on its own signal, keyed by call rather than by step — a tool runs BETWEEN
+ * steps, so the step tracker has no home for it. Both sides of the transcript carry the call it
+ * belongs to: a call still being dictated is a live run, and one dispatched and executing is a
+ * durable run, so the attachment reads every ToolsRan entry rather than picking a side.
+ */
+function withLiveOutputs(
+  entries: readonly TranscriptEntry[],
+  outputs: ReadonlyMap<CallId, string>,
+): readonly TranscriptEntry[] {
+  if (outputs.size === 0) return entries
+
+  return entries.map((entry) => {
+    if (entry.kind !== EEntryKind.ToolsRan) return entry
+    if (!entry.run.calls.some((call) => outputs.has(call.callId))) return entry
+
+    return {
+      ...entry,
+      run: {
+        ...entry.run,
+        calls: entry.run.calls.map((call) => {
+          const liveOutput = outputs.get(call.callId)
+          return liveOutput === undefined || call.liveOutput === liveOutput
+            ? call
+            : { ...call, liveOutput }
+        }),
+      },
+    }
+  })
+}
+
+const NO_OUTPUTS: ReadonlyMap<CallId, string> = new Map()
+
 const SANDBOX_NOTICE_KEY = 'sandbox-notice'
 
 function sandboxNoticeOf(sandbox: SidebarContainer | null): SandboxNoticeEntry[] {
@@ -108,6 +143,7 @@ export function assembleTranscript(args: {
   pendingTldr?: { anchorSeq: number; text: string } | null | undefined
   tldrStatus?: boolean | undefined
   sandbox?: SidebarContainer | null | undefined
+  outputs?: ReadonlyMap<CallId, string> | undefined
 }): TranscriptModel {
   const reveal = args.reveal ?? null
   const pending = args.pendingTldr ?? null
@@ -115,10 +151,13 @@ export function assembleTranscript(args: {
     ...foldThoughts({
       entries: withTldrStatus({
         entries: withPendingTldr({
-          entries: toolsAboveThoughts([
-            ...args.durable,
-            ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
-          ]),
+          entries: withLiveOutputs(
+            toolsAboveThoughts([
+              ...args.durable,
+              ...args.live.flatMap((step) => entriesOfStep({ step, reveal })),
+            ]),
+            args.outputs ?? NO_OUTPUTS,
+          ),
           pending,
         }),
         enabled: args.tldrStatus ?? true,
@@ -146,6 +185,7 @@ export function deriveTranscript(args: {
   pendingTldr?: { anchorSeq: number; text: string } | null | undefined
   tldrStatus?: boolean | undefined
   sandbox?: SidebarContainer | null | undefined
+  outputs?: ReadonlyMap<CallId, string> | undefined
 }): TranscriptModel {
   return assembleTranscript({
     durable: durableEntries({ events: args.events, turns: args.turns }),
@@ -155,6 +195,7 @@ export function deriveTranscript(args: {
     ...(args.pendingTldr === undefined ? {} : { pendingTldr: args.pendingTldr }),
     ...(args.tldrStatus === undefined ? {} : { tldrStatus: args.tldrStatus }),
     ...(args.sandbox === undefined ? {} : { sandbox: args.sandbox }),
+    ...(args.outputs === undefined ? {} : { outputs: args.outputs }),
   })
 }
 

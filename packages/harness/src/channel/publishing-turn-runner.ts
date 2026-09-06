@@ -64,6 +64,10 @@ export class PublishingTurnRunner extends TurnRunner {
     const runner = new LoopTurnRunner({
       ...this.deps,
       onChunk: publisher.onChunk,
+      onToolOutput: (output) => {
+        publisher.toolOutput(output)
+        this.deps.onToolOutput?.(output)
+      },
       retry: {
         ...this.deps.retry,
         onWaiting: (notice) => {

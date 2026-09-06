@@ -129,7 +129,6 @@ const AloneBlock = React.memo(function AloneBlock(props: {
     reading.detail === EDetail.Diff ||
     reading.detail === EDetail.Created ||
     reading.detail === EDetail.Image ||
-    reading.detail === EDetail.Terminal ||
     props.opened.has(call.callId)
   /**
    * A call still being dictated shows what it is dictating, not the streaming tail: the content is
