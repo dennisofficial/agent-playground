@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
+import { RAIL } from '../../ui/borders'
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
 import { open, until, THREAD, REPLY, THINKING } from './app-fixture'
 import {
@@ -22,7 +23,7 @@ describe('the app you can actually open', () => {
       const frame = await mounted.frame()
       expect(frame).toContain(FAKE_CONFIG.cwd)
       expect(frame).toContain('Describe the work')
-      expect(frame).toContain('Ask anything')
+      expect(frame).toContain(RAIL)
     } finally {
       await mounted.done()
     }

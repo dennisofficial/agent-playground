@@ -3,7 +3,7 @@ import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { grammarsReady, teardown } from '../../ui/markdown/__tests__/harness'
+import { grammarsReady, settle, teardown } from '../../ui/markdown/__tests__/harness'
 import { frameShowing, frameWhen } from '../../ui/__tests__/waiting'
 import { App } from '../app'
 import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
@@ -14,11 +14,13 @@ const THREAD = toThreadId('opened-thread')
 
 const WIDE = { width: 150, height: 40 }
 
-const COMPOSER_IDLE = 'Ask anything'
+const WELCOME = 'Describe the work'
 
 const REWIND_TITLE = 'Rewind the conversation to an earlier point'
 
 const COMPACTING = 'Compacting for'
+
+const SETTLE_CEILING_MS = 10_000
 
 type Mounted = Awaited<ReturnType<typeof testRender>>
 
@@ -33,31 +35,55 @@ async function opened(app: FakeApp): Promise<Mounted> {
     <App app={app} opened={{ threadId: THREAD, events: [], turns: [], name: null, started: true }} />,
     WIDE,
   )
-  await frameShowing({ setup, text: COMPOSER_IDLE })
+  await frameShowing({ setup, text: WELCOME })
   return setup
 }
 
-const saidOpening = async (setup: Mounted, text: string, opens: string): Promise<string> => {
-  await said(setup, text, opens)
+const saidOpening = async (
+  setup: Mounted,
+  app: FakeApp,
+  text: string,
+  opens: string,
+): Promise<string> => {
+  await said(setup, app, text, opens)
   return setup.captureCharFrame()
 }
 
-async function said(setup: Mounted, text: string, settlesOn = COMPOSER_IDLE): Promise<void> {
+/**
+ * A send settles in the log, not on the screen: the reply stays in the transcript after the turn,
+ * so a frame match cannot tell this turn's reply from the last one. The composer showing idle again
+ * is the other settle signal, and it reads off the log just as directly.
+ */
+async function said(setup: Mounted, app: FakeApp, text: string, settlesOn?: string): Promise<void> {
   await setup.mockInput.typeText(text)
   await frameShowing({ setup, text })
+  const before = (await app.log.read({ threadId: THREAD })).length
   setup.mockInput.pressEnter()
-  await frameShowing({ setup, text: settlesOn })
+
+  if (settlesOn !== undefined) {
+    await frameShowing({ setup, text: settlesOn })
+    return
+  }
+
+  const deadline = Date.now() + SETTLE_CEILING_MS
+  for (;;) {
+    const events = await app.log.read({ threadId: THREAD })
+    if (events.length > before && events.at(-1)?.type === 'assistant-said') return
+    if (Date.now() >= deadline) throw new Error('waited past the ceiling for the turn to settle')
+    await settle(5)
+  }
 }
 
 describe('the rewind command', () => {
   it('offers the messages the operator sent, newest first', async () => {
-    const setup = await opened(appWith())
+    const app = appWith()
+    const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
 
-      const frame = await saidOpening(setup, '/rewind', REWIND_TITLE)
+      const frame = await saidOpening(setup, app, '/rewind', REWIND_TITLE)
       expect(frame).toContain(REWIND_TITLE)
       expect(frame).toContain('now the lexer')
       expect(frame).toContain('build the parser')
@@ -67,10 +93,11 @@ describe('the rewind command', () => {
   }, 60_000)
 
   it('does not open on a conversation nobody has spoken into', async () => {
-    const setup = await opened(appWith())
+    const app = appWith()
+    const setup = await opened(app)
 
     try {
-      await said(setup, '/rewind')
+      await said(setup, app, '/rewind', WELCOME)
 
       expect(setup.captureCharFrame()).not.toContain(REWIND_TITLE)
     } finally {
@@ -83,9 +110,9 @@ describe('the rewind command', () => {
     const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
-      await said(setup, '/rewind', REWIND_TITLE)
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
+      await said(setup, app, '/rewind', REWIND_TITLE)
 
       setup.mockInput.pressEnter()
       expect(await frameShowing({ setup, text: 'rewind to here' })).toContain('rewind to here')
@@ -111,9 +138,9 @@ describe('the compact command', () => {
     const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
-      await said(setup, '/compact', 'context compacted')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
+      await said(setup, app, '/compact', 'context compacted')
 
       const frame = setup.captureCharFrame()
       expect(frame).toContain('context compacted')
@@ -125,10 +152,11 @@ describe('the compact command', () => {
   }, 60_000)
 
   it('says nothing at all when there is genuinely nothing to compact', async () => {
-    const setup = await opened(appWith())
+    const app = appWith()
+    const setup = await opened(app)
 
     try {
-      await said(setup, '/compact')
+      await said(setup, app, '/compact', WELCOME)
 
       expect(setup.captureCharFrame()).not.toContain('failed')
     } finally {
@@ -137,11 +165,12 @@ describe('the compact command', () => {
   }, 60_000)
 
   it('refuses an argument it does not understand, and says so', async () => {
-    const setup = await opened(appWith())
+    const app = appWith()
+    const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, '/compact sideways', 'not sideways')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, '/compact sideways', 'not sideways')
 
       expect(setup.captureCharFrame()).toContain('not sideways')
     } finally {
@@ -159,29 +188,30 @@ describe('while a compaction is running', () => {
     })
 
   it('says it is compacting, and offers a way out', async () => {
-    const setup = await opened(slow())
+    const app = slow()
+    const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
 
-      const frame = await saidOpening(setup, '/compact', COMPACTING)
+      const frame = await saidOpening(setup, app, '/compact', COMPACTING)
       expect(frame).toContain(COMPACTING)
       expect(frame).toContain('esc to interrupt')
-      expect(frame).not.toContain('Ask anything')
     } finally {
       await teardown(setup)
     }
   }, 60_000)
 
   it('takes focus off the composer, so no caret is left drawing over the card', async () => {
-    const setup = await opened(slow())
+    const app = slow()
+    const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
 
-      expect(await saidOpening(setup, '/compact', COMPACTING)).toContain(COMPACTING)
+      expect(await saidOpening(setup, app, '/compact', COMPACTING)).toContain(COMPACTING)
 
       await setup.mockInput.typeText('typed over the card')
       await setup.flush()
@@ -197,11 +227,11 @@ describe('while a compaction is running', () => {
     const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
       const before = (await app.log.read({ threadId: THREAD })).length
 
-      await saidOpening(setup, '/compact', COMPACTING)
+      await saidOpening(setup, app, '/compact', COMPACTING)
 
       setup.mockInput.pressEscape()
       await frameWhen({
@@ -220,19 +250,18 @@ describe('while a compaction is running', () => {
 
 describe('the compaction clock', () => {
   it('counts up from zero even when the conversation sat idle first', async () => {
-    const setup = await opened(
-      fakeApp({
-        model: scriptedModelPort({ script: { thinking: 'weighing it', reply: 'done' } }),
-        summarises: 'the earlier work, summarised',
-        summariseDelayMs: 3_000,
-      }),
-    )
+    const app = fakeApp({
+      model: scriptedModelPort({ script: { thinking: 'weighing it', reply: 'done' } }),
+      summarises: 'the earlier work, summarised',
+      summariseDelayMs: 3_000,
+    })
+    const setup = await opened(app)
 
     try {
-      await said(setup, 'build the parser')
-      await said(setup, 'now the lexer')
+      await said(setup, app, 'build the parser')
+      await said(setup, app, 'now the lexer')
 
-      const frame = await saidOpening(setup, '/compact', COMPACTING)
+      const frame = await saidOpening(setup, app, '/compact', COMPACTING)
       expect(frame).toContain(COMPACTING)
       expect(frame).not.toContain('for -')
     } finally {
