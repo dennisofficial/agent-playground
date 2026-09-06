@@ -8,13 +8,14 @@
 
 import { settled, type ToolCall } from '../tool-runs'
 import { classify } from './classify'
-import { CLAUSES, EGather, EToolClass, type Classification } from './kinds'
+import { CLAUSES, EDetail, EGather, EToolClass, type Classification } from './kinds'
 
 export type Read = { call: ToolCall; reading: Classification }
 
 export type Segment =
   | { kind: 'sentence'; key: string; reads: readonly Read[] }
   | { kind: 'alone'; key: string; read: Read; repeats: number }
+  | { kind: 'merged'; key: string; reads: readonly Read[] }
 
 /**
  * A named command that happened three times in a row is one fact, not three rows.
@@ -37,6 +38,27 @@ const repeats = (segment: Segment | undefined, reading: Classification): boolean
  */
 const joinsSentence = (reading: Classification): boolean =>
   reading.klass === EToolClass.Gathered && !reading.failed
+
+/**
+ * Two passes at one file, one card.
+ *
+ * A step that edits the same file twice draws two cards over two diffs of two different versions of
+ * the file — the second patch's line numbers already count the first patch. Stacked into one panel
+ * with a seam between them they read the way GitHub draws a file's hunks: one file, every place it
+ * moved. Only a settled change with a diff to show can join — a dictating edit and an edit from an
+ * older transcript without a patch keep their own rows.
+ */
+const mergeable = (reading: Classification): boolean =>
+  reading.klass === EToolClass.Change && reading.detail === EDetail.Diff
+
+const joinsMerged = (open: Segment | undefined, reading: Classification): boolean => {
+  if (!mergeable(reading)) return false
+  if (open?.kind === 'merged') return open.reads[0]?.reading.line === reading.line
+  if (open?.kind === 'alone') {
+    return mergeable(open.read.reading) && open.read.reading.line === reading.line
+  }
+  return false
+}
 
 /**
  * A sentence covers a run of ADJACENT gathered calls, and a classified command breaks it.
@@ -64,6 +86,17 @@ export function segmentsOf(args: { calls: readonly ToolCall[]; cwd: string }): S
       continue
     }
 
+    if (joinsMerged(open, reading)) {
+      if (open?.kind === 'merged') {
+        segments[segments.length - 1] = { ...open, reads: [...open.reads, read] }
+        continue
+      }
+      if (open?.kind === 'alone') {
+        segments[segments.length - 1] = { kind: 'merged', key: open.key, reads: [open.read, read] }
+        continue
+      }
+    }
+
     if (reading.klass === EToolClass.Command && repeats(open, reading) && open?.kind === 'alone') {
       segments[segments.length - 1] = { ...open, read, repeats: open.repeats + 1 }
       continue
@@ -83,7 +116,7 @@ export function segmentsOf(args: { calls: readonly ToolCall[]; cwd: string }): S
  * own measure and its own detail.
  */
 const alone = (segment: Segment): Segment => {
-  if (segment.kind === 'alone') return segment
+  if (segment.kind !== 'sentence') return segment
   const only = segment.reads.length === 1 ? segment.reads[0] : undefined
   if (only === undefined) return segment
   return { kind: 'alone', key: segment.key, read: only, repeats: 1 }
@@ -160,6 +193,7 @@ export function runLabel(calls: readonly ToolCall[]): string {
   if (!calls.some(settled)) return WORKING
 
   if (first.kind === 'alone') return first.read.reading.alone ?? first.read.reading.line
+  if (first.kind === 'merged') return first.reads[0]?.reading.line ?? ''
 
   const done = first.reads.filter((read) => settled(read.call))
   return done.length === 0 ? WORKING : sentenceOf(done)

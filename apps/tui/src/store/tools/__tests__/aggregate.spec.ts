@@ -5,14 +5,28 @@ import { measureOfSentence, segmentsOf, sentenceOf } from '../aggregate'
 import { aCall, aShell, CWD } from './fixture'
 
 const rowsOf = (calls: Parameters<typeof segmentsOf>[0]['calls']) =>
-  segmentsOf({ calls, cwd: CWD }).map((segment) =>
-    segment.kind === 'sentence'
-      ? `${sentenceOf(segment.reads)}${measureOfSentence(segment.reads)}`
-      : `${segment.read.reading.alone ?? segment.read.reading.line}${segment.repeats > 1 ? ` × ${segment.repeats}` : ''}`,
-  )
+  segmentsOf({ calls, cwd: CWD }).map((segment) => {
+    if (segment.kind === 'sentence') {
+      return `${sentenceOf(segment.reads)}${measureOfSentence(segment.reads)}`
+    }
+    if (segment.kind === 'merged') {
+      return `${segment.reads[0]?.reading.line ?? ''} × ${segment.reads.length}`
+    }
+    return `${segment.read.reading.alone ?? segment.read.reading.line}${segment.repeats > 1 ? ` × ${segment.repeats}` : ''}`
+  })
 
 const read = (path: string, lines: number) =>
   aCall({ name: 'read', input: { path: `${CWD}/${path}` }, output: { lines } })
+
+const edit = (path: string, marker: string) =>
+  aCall({
+    name: 'edit',
+    input: { path: `${CWD}/${path}` },
+    output: {
+      path: `${CWD}/${path}`,
+      diff: `--- a/${path}\n+++ b/${path}\n@@ -1,1 +1,1 @@\n-before\n+${marker}\n`,
+    },
+  })
 
 const grep = (pattern: string, matches: number) =>
   aCall({
@@ -96,6 +110,55 @@ describe('what does not join the sentence', () => {
         aShell({ command: 'bunx tsc --noEmit', stdout: 'a.ts(1,1): error TS1: x', exitCode: 2 }),
       ]),
     ).toEqual(['Typecheck clean', 'Typecheck — 1 error'])
+  })
+})
+
+describe('two passes at one file', () => {
+  it('stacks consecutive edits to the same file into one card', () => {
+    expect(rowsOf([edit('a.ts', 'one'), edit('a.ts', 'two')])).toEqual(['Edited a.ts × 2'])
+  })
+
+  it('stacks three passes as readily as two', () => {
+    expect(rowsOf([edit('a.ts', 'one'), edit('a.ts', 'two'), edit('a.ts', 'three')])).toEqual([
+      'Edited a.ts × 3',
+    ])
+  })
+
+  it('keeps edits to DIFFERENT files apart', () => {
+    expect(rowsOf([edit('a.ts', 'one'), edit('b.ts', 'two')])).toEqual([
+      'Edited a.ts',
+      'Edited b.ts',
+    ])
+  })
+
+  it('keeps edits apart across a failure between them', () => {
+    const broken = aShell({ command: 'nixify', exitCode: 1 })
+
+    expect(rowsOf([edit('a.ts', 'one'), broken, edit('a.ts', 'two')])).toEqual([
+      'Edited a.ts',
+      'nixify',
+      'Edited a.ts',
+    ])
+  })
+
+  it('leaves an edit without a patch to its own row, however it was filed', () => {
+    const unpatched = aCall({
+      name: 'edit',
+      input: { path: `${CWD}/a.ts` },
+      output: { path: `${CWD}/a.ts`, added: 4, removed: 1 },
+    })
+
+    expect(rowsOf([edit('a.ts', 'one'), unpatched])).toEqual(['Edited a.ts', 'Edited a.ts'])
+  })
+
+  it('leaves an edit still being dictated to its own row', () => {
+    const dictating = aCall({
+      name: 'edit',
+      state: ECallState.Pending,
+      input: { path: `${CWD}/a.ts`, oldString: 'before', newString: 'aft' },
+    })
+
+    expect(rowsOf([edit('a.ts', 'one'), dictating])).toEqual(['Edited a.ts', 'Editing a.ts'])
   })
 })
 
