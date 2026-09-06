@@ -12,11 +12,10 @@
  * of one, which is not a group.
  */
 
-import React from 'react'
+import React, { useMemo } from 'react'
 
-import { settled, type ToolCall, type ToolRun } from '../../../store'
+import { settled, type ToolRun } from '../../../store'
 import {
-  classify,
   EDetail,
   EToolClass,
   measureOfSentence,
@@ -31,97 +30,12 @@ import { useShimmerClock } from '../../hooks/use-shimmer-clock'
 import { tailOfPath } from '../../paths'
 import { spinnerFrame, theme, TRANSCRIPT_INSET } from '../../theme'
 import { markPaint, SHIPPED_MARK, type EMark } from '../../tool-marks'
-import { ToolDetail } from './tool-detail'
 import { moreKey, sentenceKey } from './tool-run-expansion'
-
-const HANG = '  '
-
-const GAP = 2
-
-const STREAM_TAIL = 3
-
-const LANE = 8
+import { GAP, Row, RunDetail, STREAM_TAIL, Streaming } from './tool-run-rows'
 
 const NARROWEST_BAND = 24
 
-/**
- * A row of the list under a sentence.
- *
- * The label takes the BRIGHT colour and the lane and measure either side of it stay at the rule. The
- * list exists to be read down, so the thing being read has to be the thing that is lit; a list where
- * every column is equally dim is a list the eye slides off.
- */
-function Row(props: {
-  read: Read
-  inner: number
-  cwd: string
-  /** A list of one has nothing to choose between — opening the group IS opening the call. */
-  only: boolean
-  opened: ReadonlySet<string>
-  onToggle: (key: string) => void
-}): React.ReactNode {
-  const { reading, call } = props.read
-  const region = useClickRegion(() => props.onToggle(call.callId))
-  const lane = (reading.gather ?? '').padEnd(LANE)
-  const room = Math.max(4, props.inner - HANG.length - 2 - LANE - reading.note.length - GAP)
-  const label = tailOfPath({ path: reading.line, cells: room })
-  const pad = ' '.repeat(Math.max(0, room - [...label].length))
-
-  return (
-    <box flexDirection="column">
-      <text wrapMode="none" width={props.inner} flexShrink={0} {...region.handlers}>
-        <span fg={theme.rule} {...region.wash}>{`${HANG}  ${lane}`}</span>
-        <span fg={reading.failed ? theme.error : theme.hover} {...region.wash}>
-          {`${label}${pad}`}
-        </span>
-        <span fg={theme.rule} {...region.wash}>{`${' '.repeat(GAP)}${reading.note}`}</span>
-      </text>
-      {props.only || props.opened.has(call.callId) ? (
-        <ToolDetail
-          detail={reading.detail}
-          call={call}
-          inner={props.inner}
-          cwd={props.cwd}
-          expand={{
-            expanded: props.opened.has(moreKey(call.callId)),
-            onToggle: () => props.onToggle(moreKey(call.callId)),
-          }}
-        />
-      ) : null}
-    </box>
-  )
-}
-
-/**
- * The last few lines a call in flight has printed.
- *
- * No `⎿` on these. It would be drawn once per line, so a three-line window puts three of them down
- * the left edge — and a blank line of output renders as a lone glyph with nothing after it. The rows
- * are already dim and already indented; the glyph says a third time what those two say.
- */
-function Streaming(props: { call: ToolCall; inner: number }): React.ReactNode {
-  const shown = detailTail(props.call)
-  const reserved = useHighWater({ rows: shown.length, live: true })
-
-  return (
-    <>
-      {Array.from({ length: reserved }, (_unused, index) => shown[index]).map((line, index) => (
-        <text key={index} wrapMode="none" width={props.inner} flexShrink={0}>
-          <span fg={index === shown.length - 1 ? theme.hint : theme.rule}>
-            {line === undefined
-              ? ' '
-              : `${HANG}${tailOfPath({ path: line, cells: Math.max(8, props.inner - HANG.length) })}`}
-          </span>
-        </text>
-      ))}
-    </>
-  )
-}
-
-const detailTail = (call: ToolCall): readonly string[] =>
-  call.modelText.length === 0 ? [] : call.modelText.split('\n').slice(-STREAM_TAIL)
-
-function SentenceBlock(props: {
+const SentenceBlock = React.memo(function SentenceBlock(props: {
   reads: readonly Read[]
   inner: number
   cwd: string
@@ -177,9 +91,9 @@ function SentenceBlock(props: {
         : null}
     </box>
   )
-}
+})
 
-function AloneBlock(props: {
+const AloneBlock = React.memo(function AloneBlock(props: {
   read: Read
   repeats: number
   inner: number
@@ -237,20 +151,18 @@ function AloneBlock(props: {
       </text>
       {running && !dictating ? <Streaming call={call} inner={props.inner} /> : null}
       {dictating || (!running && shows) ? (
-        <ToolDetail
+        <RunDetail
           detail={reading.detail}
           call={call}
           inner={props.inner}
           cwd={props.cwd}
-          expand={{
-            expanded: props.opened.has(moreKey(call.callId)),
-            onToggle: () => props.onToggle(moreKey(call.callId)),
-          }}
+          expanded={props.opened.has(moreKey(call.callId))}
+          onToggle={props.onToggle}
         />
       ) : null}
     </box>
   )
-}
+})
 
 /**
  * What a segment costs, in rows — an ESTIMATE, and deliberately a crude one.
@@ -264,6 +176,13 @@ const rowsOf = (segment: Segment, opened: ReadonlySet<string>): number => {
   if (segment.reads.some((read) => !settled(read.call))) return 2 + STREAM_TAIL
   return 2 + (opened.has(sentenceKey(segment.key)) ? segment.reads.length : 0)
 }
+
+const isLive = (segment: Segment): boolean =>
+  segment.kind === 'alone'
+    ? !settled(segment.read.call)
+    : segment.reads.some((read) => !settled(read.call))
+
+const SETTLED_CLOCK = 0
 
 export function ToolRunBlock(props: {
   run: ToolRun
@@ -279,13 +198,14 @@ export function ToolRunBlock(props: {
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
 }): React.ReactNode {
-  const live = props.run.calls.some((call) => !settled(call))
+  const { calls } = props.run
+  const live = calls.some((call) => !settled(call))
   const clock = useShimmerClock({ active: live && props.now === undefined })
   const now = props.now ?? clock
   const opened = props.opened ?? NOTHING_OPEN
   const onToggle = props.onToggle ?? ignore
   const inner = Math.max(NARROWEST_BAND, props.width - TRANSCRIPT_INSET)
-  const segments = segmentsOf({ calls: props.run.calls, cwd: props.cwd })
+  const segments = useMemo(() => segmentsOf({ calls, cwd: props.cwd }), [calls, props.cwd])
   const rows = segments.reduce((total, segment) => total + rowsOf(segment, opened), 0)
   const reserved = useHighWater({ rows, live })
   const mark = props.mark ?? SHIPPED_MARK
@@ -299,7 +219,7 @@ export function ToolRunBlock(props: {
             reads={segment.reads}
             inner={inner}
             cwd={props.cwd}
-            now={now}
+            now={isLive(segment) ? now : SETTLED_CLOCK}
             mark={mark}
             opensCluster={index === 0 && props.continues !== true}
             blockKey={sentenceKey(segment.key)}
@@ -313,7 +233,7 @@ export function ToolRunBlock(props: {
             repeats={segment.repeats}
             inner={inner}
             cwd={props.cwd}
-            now={now}
+            now={isLive(segment) ? now : SETTLED_CLOCK}
             mark={mark}
             opensCluster={index === 0 && props.continues !== true}
             opened={opened}
