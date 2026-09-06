@@ -53,6 +53,15 @@ describe('the notice stack', () => {
     expect(frame).toContain('✓ copied 3 lines')
   })
 
+  it('hugs the left edge of the row it is given', async () => {
+    notify({ text: 'copied 3 lines' })
+    const frame = await frameOf(stack(), WIDTH)
+    dismissNotice()
+
+    const row = frame.split('\n').find((line) => line.includes('copied'))
+    expect(row?.indexOf('✓')).toBe(1)
+  })
+
   it('marks a warning apart from a confirmation', async () => {
     notify({ text: 'clipboard unavailable', tone: ENoticeTone.Warn })
     const frame = await frameOf(stack(), WIDTH)
