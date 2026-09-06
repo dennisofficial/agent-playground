@@ -1,7 +1,12 @@
 import React, { useSyncExternalStore } from 'react'
 
 import { cellsOf } from '../hint-layout'
-import { currentNotices, noticeVersion, subscribeNotices } from '../notice-store'
+import {
+  currentNotices,
+  ENoticePosition,
+  noticeVersion,
+  subscribeNotices,
+} from '../notice-store'
 import { NOTICE_MIN_CELLS, toneInk, toneMark } from './notice-stack'
 import { truncateCells } from './sidebar/cells'
 
@@ -9,7 +14,9 @@ const SLAB_PAD = 1
 
 export function NoticeSlab(props: { bg: string; cells: number }): React.ReactNode {
   useSyncExternalStore(subscribeNotices, noticeVersion)
-  const notices = currentNotices()
+  const notices = currentNotices().filter(
+    (notice) => notice.position === ENoticePosition.Composer,
+  )
   const notice = notices[notices.length - 1]
   if (notice === undefined || props.cells < NOTICE_MIN_CELLS) return null
 

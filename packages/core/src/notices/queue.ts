@@ -1,4 +1,4 @@
-import type { Notice, NoticeDraft } from './notice'
+import { ENoticePosition, type Notice, type NoticeDraft } from './notice'
 
 export const NOTICE_STACK_LIMIT = 3
 
@@ -8,7 +8,11 @@ export function postNotice(args: {
   issuedAtMs: number
   limit?: number
 }): readonly Notice[] {
-  const notice: Notice = { ...args.draft, issuedAtMs: args.issuedAtMs }
+  const notice: Notice = {
+    position: ENoticePosition.Tray,
+    ...args.draft,
+    issuedAtMs: args.issuedAtMs,
+  }
   const limit = args.limit ?? NOTICE_STACK_LIMIT
 
   const existing = args.notices.findIndex((held) => held.key === notice.key)

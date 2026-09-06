@@ -64,7 +64,6 @@ import { theme } from '../ui/theme'
 import {
   clearNotice,
   configureNotices,
-  ENoticePosition,
   ENoticeTone,
   NOTICE_KEY_CLASSIFIER_OFFLINE,
   NOTICE_KEY_LOST_AGENTS,
@@ -1213,9 +1212,7 @@ function Workspace(props: {
               />
             )}
           </box>
-          {settings.noticePosition === ENoticePosition.Composer ? null : (
-            <NoticeStack width={chromeWidth} />
-          )}
+          <NoticeStack width={chromeWidth} />
           {panel === EChromePanel.Shortcuts ? <Shortcuts width={chromeWidth} /> : null}
           {panel === EChromePanel.AgentTypes ? (
             <AgentTypes width={chromeWidth} catalog={props.app.agentTypes} />
@@ -1242,9 +1239,6 @@ function Workspace(props: {
               focused={!overlaid}
               highlights={highlights}
               onCursorMoved={handleCursorMoved}
-              {...(settings.noticePosition === ENoticePosition.Composer
-                ? { notices: true }
-                : {})}
               {...(agentView.name === null
                 ? conversation.handle === null
                   ? {}
