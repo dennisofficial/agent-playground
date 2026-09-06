@@ -146,99 +146,6 @@ function walkEvents(events: readonly Event[]): Walk {
   let openAssistant: Group | undefined
 
   for (const event of events) {
-    if (event.type === 'user-said') {
-      groups.push({
-        message: { role: 'user', content: saidContent(event) },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'context-loaded') {
-      if (!current.has(event.id)) continue
-
-      groups.push({
-        message: {
-          role: 'user',
-          content: [
-            { type: 'text', text: contextBlock({ slot: event.slot, key: event.key, content: event.content }) },
-          ],
-        },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'nudge') {
-      if (!nudging.has(event.id)) continue
-
-      groups.push({
-        message: { role: 'user', content: [{ type: 'text', text: nudgeBlock(event) }] },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'background-shell-ended') {
-      groups.push({
-        message: { role: 'user', content: [{ type: 'text', text: backgroundShellBlock(event) }] },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'background-shell-awaiting-input') {
-      groups.push({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: backgroundShellAwaitingInputBlock(event) }],
-        },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'background-shell-matched') {
-      groups.push({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: backgroundShellMatchedBlock(event) }],
-        },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'background-shell-still-running') {
-      groups.push({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: backgroundShellStillRunningBlock(event) }],
-        },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
-    if (event.type === 'service-ended') {
-      groups.push({
-        message: {
-          role: 'user',
-          content: [{ type: 'text', text: serviceEndedBlock(event) }],
-        },
-        origin: originOf(event),
-      })
-      openAssistant = undefined
-      continue
-    }
-
     if (event.type === 'assistant-said') {
       openAssistant = { message: { role: 'assistant', content: [...event.parts] }, origin: originOf(event) }
       groups.push(openAssistant)
@@ -258,13 +165,99 @@ function walkEvents(events: readonly Event[]): Walk {
       continue
     }
 
+    openAssistant = undefined
+
+    if (event.type === 'user-said') {
+      groups.push({
+        message: { role: 'user', content: saidContent(event) },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'context-loaded') {
+      if (!current.has(event.id)) continue
+
+      groups.push({
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: contextBlock({ slot: event.slot, key: event.key, content: event.content }) },
+          ],
+        },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'nudge') {
+      if (!nudging.has(event.id)) continue
+
+      groups.push({
+        message: { role: 'user', content: [{ type: 'text', text: nudgeBlock(event) }] },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'background-shell-ended') {
+      groups.push({
+        message: { role: 'user', content: [{ type: 'text', text: backgroundShellBlock(event) }] },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'background-shell-awaiting-input') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: backgroundShellAwaitingInputBlock(event) }],
+        },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'background-shell-matched') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: backgroundShellMatchedBlock(event) }],
+        },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'background-shell-still-running') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: backgroundShellStillRunningBlock(event) }],
+        },
+        origin: originOf(event),
+      })
+      continue
+    }
+
+    if (event.type === 'service-ended') {
+      groups.push({
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: serviceEndedBlock(event) }],
+        },
+        origin: originOf(event),
+      })
+      continue
+    }
+
     if (event.type === 'tool-result' || event.type === 'tool-denied') {
       const open = openCallIds.get(event.callId) ?? []
       const latest = open.at(-1)
       if (latest !== undefined) open.pop()
       const settledId = latest ?? event.callId
       settlements.set(settledId, { part: toolResultPart(event, settledId), origin: originOf(event) })
-      openAssistant = undefined
     }
   }
 

@@ -3,10 +3,11 @@ import { describe, expect, it } from 'bun:test'
 import { EAgentStart } from '../../agents/start'
 import { EAgentStatus } from '../../agents/status'
 import { ECompactionAnchor, type EventDraft } from '../../events/body'
-import { toThreadId } from '../../events/ids'
+import { toCallId, toThreadId } from '../../events/ids'
 import type { CompiledPrompt } from '../../prompt/compiled'
 import { ANTHROPIC_PROVIDER_ID } from '../annotators/cache-breakpoints'
 import { assemble } from '../assemble'
+import { exchangeFaults } from '../exchange-shape'
 import { defaultPipeline, defaultRules } from '../pipeline'
 import { contextFor, log } from './log-fixture'
 
@@ -96,6 +97,34 @@ describe('the report of a delegate the parent was woken by', () => {
 
     expect(endingBlocksOf(assembled)).toEqual([])
     expect(assembled.messages).toHaveLength(2)
+  })
+})
+
+describe('a bare tool call answering a delegate report', () => {
+  const CALLED_AFTER_ENDING: readonly EventDraft[] = [
+    ...CONVERSATION,
+    ended(),
+    { type: 'tool-called', callId: toCallId('call-1'), name: 'read', input: { path: 'a.ts' }, ordinal: 0 },
+    { type: 'tool-result', callId: toCallId('call-1'), name: 'read', output: 'export {}' },
+  ]
+
+  it('opens a fresh assistant turn after the report rather than gluing the call to the turn before it', () => {
+    const { assembled } = assembledFrom(CALLED_AFTER_ENDING)
+
+    expect(assembled.messages.map((entry) => entry.message.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'tool',
+    ])
+    expect(textsOf(assembled)[2]).toStartWith('<agents-ended>')
+  })
+
+  it('assembles without an exchange fault, so the prompt is one Atlas may send', () => {
+    const { assembled } = assembledFrom(CALLED_AFTER_ENDING)
+
+    expect(exchangeFaults(assembled)).toEqual([])
   })
 })
 
