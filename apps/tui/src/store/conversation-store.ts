@@ -6,7 +6,7 @@ import type {
   Unsubscribe,
 } from "@dltech/atlas-harness";
 
-import { IDLE_TURN, type TurnClock } from "../ui/components/transcript";
+import { IDLE_TURN, type TurnClock } from "../ui/turn-clock";
 import { assembleTranscript } from "./derive-transcript";
 import { durableEntries } from "./durable-entries";
 import {

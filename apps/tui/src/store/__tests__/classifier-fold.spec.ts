@@ -8,7 +8,7 @@ import {
 } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
-import { IDLE_TURN } from '../../ui/components/transcript'
+import { IDLE_TURN } from '../../ui/turn-clock'
 import { deriveSidebar } from '../sidebar-model'
 import { classifierFold } from '../classifier-fold'
 import { log } from './fixture'

@@ -1,7 +1,7 @@
 import { ETurnStatus, type TurnOutcome } from '@dltech/atlas-harness'
 
 import type { StepFailure, TranscriptModel } from '../store'
-import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
+import { IDLE_TURN, type TurnClock } from '../ui/turn-clock'
 
 export {
   IDLE_PROGRESS,

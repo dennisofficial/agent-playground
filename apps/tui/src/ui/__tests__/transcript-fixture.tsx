@@ -11,7 +11,8 @@ import {
   type TurnEndedEntry,
 } from '../../store'
 import type { BackgroundWork } from '../background-wait'
-import { Transcript, type TurnClock } from '../components/transcript'
+import { Transcript } from '../components/transcript'
+import type { TurnClock } from '../turn-clock'
 import { teardown } from '../markdown/__tests__/harness'
 import { frameSettled } from './waiting'
 

@@ -16,7 +16,7 @@ import {
 } from "@dltech/atlas-harness";
 import { describe, expect, it } from "bun:test";
 
-import { IDLE_TURN } from "../../ui/components/transcript";
+import { IDLE_TURN } from "../../ui/turn-clock";
 import { SIDEBAR_WIDTH } from "../../ui/theme";
 import { ESidebarPlace } from "../../ui/sidebar-section";
 import { deriveSidebar, IDLE_SIDEBAR, withSections } from "../sidebar-model";

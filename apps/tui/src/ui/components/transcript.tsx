@@ -19,27 +19,10 @@ import { EntryView } from './entry-view'
 import { JumpToBottom, NewDivider, UNSEEN_ANCHOR_ID } from './new-divider'
 import { PeekLine } from './peek-line'
 import type { RetryWait } from '../retry-countdown'
+import { IDLE_TURN, type TurnClock } from '../turn-clock'
 import { EWorkingVerb, WaitingLine, WorkingLine } from './working-line'
 
 export type { RetryWait }
-
-export type TurnClock = {
-  startedAt: number | null
-  outputTokens: number
-  interrupting: boolean
-  reasoning: boolean
-  completed: { durationMs: number; outputTokens: number } | null
-  retry: RetryWait | null
-}
-
-export const IDLE_TURN: TurnClock = {
-  startedAt: null,
-  outputTokens: 0,
-  interrupting: false,
-  reasoning: false,
-  completed: null,
-  retry: null,
-}
 
 const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
 

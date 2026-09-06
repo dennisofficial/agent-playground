@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import { EStepEnd, toStepId, type ChannelSignal } from '@dltech/atlas-harness'
 
-import { IDLE_TURN } from '../../ui/components/transcript'
+import { IDLE_TURN } from '../../ui/turn-clock'
 import { IDLE_PROGRESS, turnObserved, turnOfChild, turnStarted } from '../turn-progress'
 
 const STEP = toStepId('thread_child#1')

@@ -13,7 +13,7 @@ import {
   subagentStateLabel,
   type SubagentReadout,
 } from '../subagent-row'
-import { IDLE_TURN } from '../../ui/components/transcript'
+import { IDLE_TURN } from '../../ui/turn-clock'
 import { log } from './fixture'
 
 const PARENT = toThreadId('thr_parent')

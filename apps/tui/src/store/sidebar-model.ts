@@ -21,7 +21,7 @@ import {
 import { classifierFold, type ClassifierFold } from "./classifier-fold";
 import { truncateCells } from "../ui/components/sidebar/cells";
 import { orderSections, type SidebarSection } from "../ui/sidebar-section";
-import type { TurnClock } from "../ui/components/transcript";
+import type { TurnClock } from "../ui/turn-clock";
 import {
   NOTHING_TALLIED,
   sidebarSpendOf,

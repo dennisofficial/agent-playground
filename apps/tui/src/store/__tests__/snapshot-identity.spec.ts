@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'bun:test'
 import { createDeltaChannel, type DeltaChannel } from '@dltech/atlas-harness'
 
 import { createConversationStore, type ConversationStore } from '../conversation-store'
-import { IDLE_TURN } from '../../ui/components/transcript'
+import { IDLE_TURN } from '../../ui/turn-clock'
 import { fixtureThreadId, log } from './fixture'
 
 const conversation = log([

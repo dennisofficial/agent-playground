@@ -18,7 +18,7 @@ import {
   type TranscriptModel,
   type TurnProgress,
 } from "../store";
-import type { TurnClock } from "../ui/components/transcript";
+import type { TurnClock } from "../ui/turn-clock";
 import type { AtlasApp } from "./compose";
 import { readThreadSpend } from "./thread-spend";
 

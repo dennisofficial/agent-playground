@@ -23,7 +23,7 @@ import {
   type TranscriptModel,
 } from '../store'
 import type { Compacting } from '../ui/components/compacting'
-import type { TurnClock } from '../ui/components/transcript'
+import type { TurnClock } from '../ui/turn-clock'
 import { publishProjections } from '../plugins/projection'
 import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { createAwakeClock } from './awake-clock'

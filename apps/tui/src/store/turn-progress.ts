@@ -1,7 +1,7 @@
 import type { Chunk } from '@dltech/atlas-core'
 import type { ChannelSignal, RetryWaitingSignal } from '@dltech/atlas-harness'
 
-import { IDLE_TURN, type TurnClock } from '../ui/components/transcript'
+import { IDLE_TURN, type TurnClock } from '../ui/turn-clock'
 
 const CHARACTERS_PER_TOKEN = 4
 

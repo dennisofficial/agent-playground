@@ -7,7 +7,7 @@ import { EMPTY_TRANSCRIPT, EPendingKind, type TranscriptModel } from '../../stor
 import { RAIL, RAIL_HEAD, RAIL_TAIL } from '../borders'
 import { Composer } from '../components/composer'
 import { JumpToBottom, NewDivider } from '../components/new-divider'
-import type { TurnClock } from '../components/transcript'
+import type { TurnClock } from '../turn-clock'
 import { WaitingLine, WorkingLine } from '../components/working-line'
 import type { RetryWait } from '../retry-countdown'
 import { useDraft } from '../hooks/use-draft'
