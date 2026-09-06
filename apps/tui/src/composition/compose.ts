@@ -1,7 +1,6 @@
 import { homedir, hostname } from 'node:os'
 
 import {
-  ANTHROPIC_PROVIDER_ID,
   AccountStorePort,
   AfterShellHook,
   AfterToolHook,
@@ -46,14 +45,6 @@ import {
   agentTypeSources,
   AgentRegistryPort,
   AiSdkModelPort,
-  AnthropicAdapter,
-  cardsForProvider,
-  InferenceAdapter,
-  INFERENCE_PROVIDER_ID,
-  OpenAiAdapter,
-  OPENAI_PROVIDER_ID,
-  OpenRouterAdapter,
-  OPENROUTER_PROVIDER_ID,
   ProviderAdapter,
   bindAgentTypes,
   claimWorktree,
@@ -145,7 +136,13 @@ import {
 import { faultInjected } from './fault-injection'
 import { mcpBootNotice } from './mcp-report'
 import { selectableModel, type ModelChoice } from './model-selection'
-import { knownRefs, modelCatalogue, type ModelCatalogue } from './providers'
+import {
+  knownRefs,
+  modelCatalogue,
+  providerAdapters,
+  unanswerableRef,
+  type ModelCatalogue,
+} from './providers'
 import { createQuickModel } from './quick-model'
 import { assemblePlugins } from '../plugins/assemble'
 import { PullRequestPort } from '../plugins/github/pure'
@@ -437,12 +434,7 @@ export async function composeAtlas(args: {
   }
 
   const models = modelCatalogue({
-    adapters: [
-      new AnthropicAdapter({ credentials, cards: cardsForProvider(ANTHROPIC_PROVIDER_ID) }),
-      new OpenAiAdapter({ credentials, cards: cardsForProvider(OPENAI_PROVIDER_ID) }),
-      new OpenRouterAdapter({ credentials, cards: cardsForProvider(OPENROUTER_PROVIDER_ID) }),
-      new InferenceAdapter({ credentials, cards: cardsForProvider(INFERENCE_PROVIDER_ID) }),
-    ],
+    adapters: providerAdapters({ credentials }),
     accounts: await accountStore.list(),
   })
 
@@ -705,7 +697,7 @@ export async function composeAtlas(args: {
     const card = ref === undefined ? undefined : models.cardFor(ref)
     const adapter = ref === undefined ? undefined : models.adapterFor(ref.providerId)
     if (card === undefined || adapter === undefined)
-      throw new Error(`no provider adapter can answer for ${modelId}`)
+      throw unanswerableRef(modelId)
 
     return adapter.model({ card, effort: () => model.choice().effort })
   }

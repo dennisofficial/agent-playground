@@ -41,7 +41,6 @@ export enum EModelScope {
   Setting = 'setting',
 }
 
-/** Where a pick lands: on the conversation, or on whichever Model-kind setting row was activated. */
 export type SwitcherSettingTarget = {
   scope: EModelScope.Setting
   id: string
@@ -53,7 +52,6 @@ export type SwitcherTarget = { scope: EModelScope.Thread } | SwitcherSettingTarg
 
 export const THREAD_TARGET: SwitcherTarget = { scope: EModelScope.Thread }
 
-/** The Default model row is the one setting whose pick is a model + effort pair. */
 export function settingTarget(args: { id: string; label: string }): SwitcherSettingTarget {
   return {
     scope: EModelScope.Setting,

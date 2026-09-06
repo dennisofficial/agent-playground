@@ -109,7 +109,6 @@ export const storedModel = (selection: ModelSelection): ThreadModel => ({
   effort: selection.effort,
 })
 
-/** The model a Model-kind setting already names, if it still resolves against the catalogue. */
 export function settingModelRef(args: {
   id: string
   settled: SettingsResolution
@@ -121,10 +120,6 @@ export function settingModelRef(args: {
   })
 }
 
-/**
- * A switcher pick lands on the Model-kind row it was opened from. Only the Default model row
- * carries an effort beside it; the quick-call model pins its effort where it is used instead.
- */
 export function rememberSettingModel(args: {
   settings: SettingsService
   target: { id: string; withEffort: boolean }

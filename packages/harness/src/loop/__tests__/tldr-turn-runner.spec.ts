@@ -92,9 +92,13 @@ function scriptedInner(outcomes: readonly TurnOutcome[]): TurnRunner {
   })()
 }
 
-async function settled(log: EventLogPort & { rows: Event[] }, count = 1): Promise<void> {
+async function settled(args: {
+  log: EventLogPort & { rows: Event[] }
+  count?: number
+}): Promise<void> {
+  const wanted = args.count ?? 1
   for (let attempt = 0; attempt < 50; attempt++) {
-    if (log.rows.filter((event) => event.type === 'tldr-written').length >= count) return
+    if (args.log.rows.filter((event) => event.type === 'tldr-written').length >= wanted) return
     await new Promise((resolve) => setTimeout(resolve, 10))
   }
 }
@@ -119,7 +123,7 @@ describe('TldrTurnRunner', () => {
     })
 
     await runner.say({ threadId: THREAD, text: 'ignored' })
-    await settled(log)
+    await settled({ log })
 
     const written = log.rows.filter((event) => event.type === 'tldr-written')
     expect(written).toHaveLength(1)
@@ -191,7 +195,7 @@ describe('TldrTurnRunner', () => {
     })
 
     await runner.say({ threadId: THREAD, text: 'first' })
-    await settled(log)
+    await settled({ log })
 
     stampedId = 'model-b'
     await log.append({
@@ -203,7 +207,7 @@ describe('TldrTurnRunner', () => {
       ],
     })
     await runner.say({ threadId: THREAD, text: 'second' })
-    await settled(log, 2)
+    await settled({ log, count: 2 })
 
     const written = log.rows.filter((event) => event.type === 'tldr-written')
     expect(written.map((event) => (event.type === 'tldr-written' ? event.modelId : ''))).toEqual([
@@ -231,7 +235,7 @@ describe('TldrTurnRunner', () => {
     })
 
     await runner.say({ threadId: THREAD, text: 'ignored' })
-    await settled(log)
+    await settled({ log })
 
     expect(seen).toEqual([
       'started:1',

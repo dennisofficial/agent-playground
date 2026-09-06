@@ -32,6 +32,7 @@ import {
   HaikuJudge,
   JudgeMemo,
   KeychainReaderToken,
+  messageOf,
   openAtlasDatabase,
   portToken,
   PrismaClientToken,
@@ -69,9 +70,6 @@ const say = (lines: readonly string[]): void => {
 const complain = (line: string): void => {
   process.stderr.write(`${line}\n`)
 }
-
-const faultMessage = (fault: unknown): string =>
-  fault instanceof Error ? fault.message : String(fault)
 
 type Bench = {
   container: DependencyContainer
@@ -155,7 +153,7 @@ const judgeOver = ({ bench }: { bench: Bench }): JudgeMemo => {
         onFault: ({ providerId, modelId, fault }) => {
           if (reported) return
           reported = true
-          complain(`the judge model ${providerId}/${modelId} failed: ${faultMessage(fault)}`)
+          complain(`the judge model ${providerId}/${modelId} failed: ${messageOf(fault)}`)
         },
       }),
     }),

@@ -1,15 +1,28 @@
 import {
+  ANTHROPIC_PROVIDER_ID,
   catalogOf,
   EAuthKind,
   findCard,
   reachableProviders,
   refKey,
   type Account,
+  type CredentialPort,
   type ModelCard,
   type ModelCatalog,
   type ModelRef,
 } from '@dltech/atlas-core'
-import { withoutDatedDuplicates, type ProviderAdapter } from '@dltech/atlas-harness'
+import {
+  AnthropicAdapter,
+  cardsForProvider,
+  INFERENCE_PROVIDER_ID,
+  InferenceAdapter,
+  OPENAI_PROVIDER_ID,
+  OPENROUTER_PROVIDER_ID,
+  OpenAiAdapter,
+  OpenRouterAdapter,
+  withoutDatedDuplicates,
+  type ProviderAdapter,
+} from '@dltech/atlas-harness'
 
 import type { SwitcherProvider } from '../ui/switcher-model'
 
@@ -71,6 +84,27 @@ export function modelCatalogue(args: {
     },
   }
 }
+
+export const providerAdapters = (args: {
+  credentials: CredentialPort
+}): readonly ProviderAdapter[] => [
+  new AnthropicAdapter({
+    credentials: args.credentials,
+    cards: cardsForProvider(ANTHROPIC_PROVIDER_ID),
+  }),
+  new OpenAiAdapter({ credentials: args.credentials, cards: cardsForProvider(OPENAI_PROVIDER_ID) }),
+  new OpenRouterAdapter({
+    credentials: args.credentials,
+    cards: cardsForProvider(OPENROUTER_PROVIDER_ID),
+  }),
+  new InferenceAdapter({
+    credentials: args.credentials,
+    cards: cardsForProvider(INFERENCE_PROVIDER_ID),
+  }),
+]
+
+export const unanswerableRef = (key: string): Error =>
+  new Error(`no provider adapter can answer for ${key}`)
 
 export const isRefReachable = (args: { catalogue: ModelCatalogue; ref: ModelRef }): boolean =>
   args.catalogue.cardFor(args.ref) !== undefined && args.catalogue.reachable(args.ref.providerId)

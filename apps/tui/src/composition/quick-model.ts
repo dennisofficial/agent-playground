@@ -9,6 +9,7 @@ import {
 } from '@dltech/atlas-core'
 import {
   createNotifyingModel,
+  messageOf,
   type ProviderAdapter,
   type SettingsService,
 } from '@dltech/atlas-harness'
@@ -19,7 +20,7 @@ import {
   NOTICE_WARN_MS,
   notify,
 } from '../ui/notice-store'
-import type { ModelCatalogue } from './providers'
+import { unanswerableRef, type ModelCatalogue } from './providers'
 
 type QuickLanguageModel = ReturnType<ProviderAdapter['model']>
 
@@ -29,14 +30,6 @@ const ROLE_LABEL: Readonly<Record<EUtilityModelRole, string>> = {
   [EUtilityModelRole.Judge]: 'judge',
 }
 
-const faultMessageOf = (fault: unknown): string =>
-  fault instanceof Error ? fault.message : String(fault)
-
-/**
- * The role's ref is re-resolved on every call rather than subscribed to: the next quick call after
- * a settings write lands on the new model with nothing to tear down, and a model once built stays
- * cached under its ref so an outage's notice keys to the provider that actually failed.
- */
 export function createQuickModel(args: {
   role: EUtilityModelRole
   settings: SettingsService
@@ -63,7 +56,7 @@ export function createQuickModel(args: {
     const card = args.catalogue.cardFor(ref)
     const adapter = args.catalogue.adapterFor(ref.providerId)
     if (card === undefined || adapter === undefined)
-      throw new Error(`no provider adapter can answer for ${key}`)
+      throw unanswerableRef(key)
 
     const model = createNotifyingModel({
       model: adapter.model({ card, effort: () => EEffort.Low }),
@@ -72,7 +65,7 @@ export function createQuickModel(args: {
           key: `${NOTICE_KEY_QUICK_MODEL_PREFIX}:${fault.providerId}`,
           tone: ENoticeTone.Warn,
           ttlMs: NOTICE_WARN_MS,
-          text: `The ${ROLE_LABEL[args.role]} model ${fault.providerId}/${fault.modelId} failed: ${faultMessageOf(fault.fault)}`,
+          text: `The ${ROLE_LABEL[args.role]} model ${fault.providerId}/${fault.modelId} failed: ${messageOf(fault.fault)}`,
         }),
     })
     built.set(key, model)
