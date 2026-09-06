@@ -1,4 +1,4 @@
-import { toRunId, toThreadId, type Event } from '@dltech/atlas-core'
+import { ECompactionAnchor, toRunId, toThreadId, type Event } from '@dltech/atlas-core'
 import { ETurnStatus, type TurnSpend } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
@@ -75,6 +75,30 @@ describe('where a finished turn is drawn', () => {
 })
 
 describe('a finished turn in the transcript', () => {
+  it('stays gone when a summary replaced its rows and only spared bookkeeping survived', () => {
+    const events: readonly Event[] = [
+      event({ type: 'context-loaded', slot: 'file', key: 'CLAUDE.md', content: 'guidance', seq: 1 }),
+      event({
+        type: 'history-compacted',
+        anchor: ECompactionAnchor.Prefix,
+        fromSeq: 1,
+        throughSeq: 2,
+        summary: 'the opening',
+        replaced: 1,
+        seq: 2,
+        runId: toRunId('run-stand-in'),
+      }),
+      event({ type: 'user-said', text: 'next', seq: 3, runId: toRunId('run-asked-2') }),
+    ]
+
+    const entries = durableEntries({ events, turns: [spend()] })
+
+    expect(entries.map((entry) => entry.kind)).toEqual([
+      EEntryKind.HistoryCompacted,
+      EEntryKind.OperatorSaid,
+    ])
+  })
+
   it('lands after the reply rather than before it', () => {
     const entries = durableEntries({ events: exchange, turns: [spend()] })
 

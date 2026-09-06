@@ -54,3 +54,16 @@ export function replacedThrough(events: readonly Event[]): number {
     prefixWatermarks(events).filter((event) => !rowsSurviveBelow({ events, watermark: event })),
   )
 }
+
+export type ReplacedRange = { fromSeq: number; throughSeq: number }
+
+/**
+ * The ranges a summary genuinely replaced, in either direction: the transcript rows are gone and
+ * only the spared types are left standing in them. A spared bookkeeping event in one speaks for a
+ * turn the summary already speaks for, so nothing may anchor to it.
+ */
+export function replacedRanges(events: readonly Event[]): readonly ReplacedRange[] {
+  return compactionWatermarks(events)
+    .filter((watermark) => !rowsSurviveBelow({ events, watermark }))
+    .map((watermark) => ({ fromSeq: watermark.fromSeq, throughSeq: watermark.throughSeq }))
+}

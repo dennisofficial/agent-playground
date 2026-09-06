@@ -1,4 +1,4 @@
-import type { Event } from '@dltech/atlas-core'
+import { replacedRanges, type Event } from '@dltech/atlas-core'
 import { ETurnStatus, type TurnSpend } from '@dltech/atlas-harness'
 
 import { EAuthor, EEntryKind, type TurnEndedEntry } from './transcript-model'
@@ -6,9 +6,14 @@ import { EAuthor, EEntryKind, type TurnEndedEntry } from './transcript-model'
 const SHOWN: readonly string[] = [ETurnStatus.Completed, ETurnStatus.Interrupted]
 
 function lastSeqByRun(events: readonly Event[]): ReadonlyMap<string, number> {
+  const replaced = replacedRanges(events)
   const last = new Map<string, number>()
 
   for (const event of events) {
+    if (replaced.some((range) => event.seq >= range.fromSeq && event.seq <= range.throughSeq)) {
+      continue
+    }
+
     const held = last.get(event.runId)
     if (held === undefined || event.seq > held) last.set(event.runId, event.seq)
   }
@@ -17,8 +22,10 @@ function lastSeqByRun(events: readonly Event[]): ReadonlyMap<string, number> {
 }
 
 /**
- * A turn is drawn where its own last event sits, so a rewound turn loses its line with the rows it
- * described rather than outliving them: the ledger keeps its row for accounting either way.
+ * A turn is drawn where its own last event sits, so a rewound or summarised turn loses its line
+ * with the rows it described rather than outliving them: the ledger keeps its row for accounting
+ * either way. Bookkeeping rows spared inside a replaced range are not a seat — the summary already
+ * speaks for those turns.
  */
 export function turnsBySeq(args: {
   events: readonly Event[]
