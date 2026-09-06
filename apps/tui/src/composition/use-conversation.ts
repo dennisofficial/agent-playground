@@ -25,8 +25,22 @@ import {
 import type { Compacting } from '../ui/components/compacting'
 import type { TurnClock } from '../ui/turn-clock'
 import { publishProjections } from '../plugins/projection'
-import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
+import {
+  clearNotice,
+  ENoticeTone,
+  NOTICE_KEY_QUEUED_COMMANDS,
+  NOTICE_WARN_MS,
+  notify,
+} from '../ui/notice-store'
 import { createAwakeClock } from './awake-clock'
+import { ECommandEffect } from './commands/local-command'
+import {
+  createSettledQueue,
+  droppedNotice,
+  queuedNotice,
+  unqueuedNotice,
+  type QueuedSettled,
+} from './commands/settled-queue'
 import type { AtlasApp } from './compose'
 import type { OpenedConversation } from './open-conversation'
 import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
@@ -78,6 +92,7 @@ export type Conversation = {
     images?: readonly SaidImage[]
     context?: readonly EventDraft[]
   }) => void
+  handleQueueSettled: (entry: QueuedSettled) => void
   handleTakeBackPending: () => Promise<PendingSaid | null> | null
   handleRetry: (() => void) | null
   handleResume: (() => void) | null
@@ -138,6 +153,68 @@ export function useConversation(args: {
   )
 
   const pending = app.pending
+
+  const settledQueue = useMemo(() => createSettledQueue(), [])
+
+  /**
+   * Settled commands drain in the driver's own settle path, before `working` flips: a wake or an
+   * auto-compaction reacting to the settle must find the queued work already running, not beat it.
+   * A command that swaps the thread out strands whatever was queued behind it, so it says so and
+   * ends the drain.
+   */
+  const drainSettledCommands = useCallback(async (): Promise<void> => {
+    const queuedCommands = settledQueue.drain()
+    if (queuedCommands.length === 0) return
+
+    clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
+
+    for (const [index, item] of queuedCommands.entries()) {
+      if (item.dropsQueue) {
+        const dropped = droppedNotice({
+          command: item.name,
+          messages: pending.getSnapshot().filter((message) => !message.taken).length,
+          commands: queuedCommands.slice(index + 1).map((one) => one.name),
+        })
+        if (dropped !== null) {
+          notify({
+            key: 'queued-dropped',
+            text: dropped,
+            tone: ENoticeTone.Warn,
+            ttlMs: NOTICE_WARN_MS,
+          })
+        }
+      }
+
+      const effect = await item.run()
+      if (effect.type === ECommandEffect.Refused) {
+        notify({ text: effect.reason, tone: ENoticeTone.Warn, ttlMs: NOTICE_WARN_MS })
+      } else if (effect.type === ECommandEffect.Ran && effect.notice !== undefined) {
+        notify({ text: effect.notice })
+      }
+
+      if (item.dropsQueue) return
+    }
+  }, [pending, settledQueue])
+
+  const handleQueueSettled = useCallback(
+    (entry: QueuedSettled): void => {
+      settledQueue.toggle(entry)
+      const names = settledQueue.names()
+      if (names.length === 0) {
+        clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
+        notify({ text: unqueuedNotice(entry.name) })
+        return
+      }
+
+      notify({
+        key: NOTICE_KEY_QUEUED_COMMANDS,
+        text: queuedNotice(names),
+        tone: ENoticeTone.Info,
+        sticky: true,
+      })
+    },
+    [settledQueue],
+  )
 
   /**
    * The rows that landed settle the queue the operator typed ahead into — a concern of whoever owns
@@ -207,6 +284,7 @@ export function useConversation(args: {
     used: usedRef,
     compactIfFull: compaction.compactIfFull,
     cancelCompaction: compaction.cancel,
+    onSettled: drainSettledCommands,
     onUndone,
     setFailure,
     forgetUsage,
@@ -303,6 +381,8 @@ export function useConversation(args: {
   const adopt = useCallback(
     (next: OpenedConversation) => {
       pending.clear()
+      settledQueue.clear()
+      clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
       turnDriver.settle()
       setFailure(null)
       setReported(null)
@@ -311,13 +391,13 @@ export function useConversation(args: {
       setName(next.name)
       setOpened(next)
     },
-    [pending, setEvents, setName, turnDriver],
+    [pending, setEvents, setName, settledQueue, turnDriver],
   )
 
   const { handleNewConversation, handleOpenThread } = useThreadSwap({
     app,
     threadId,
-    working,
+    working: turnDriver.workingRef,
     adopt,
     onFailure: setFailure,
   })
@@ -394,6 +474,7 @@ export function useConversation(args: {
     contextTokens: used,
     pending: rows,
     handleSend,
+    handleQueueSettled,
     handleTakeBackPending,
     handleRetry: retryable ? turnDriver.handleRetry : null,
     handleResume: resumable ? turnDriver.handleResume : null,

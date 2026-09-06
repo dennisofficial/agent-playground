@@ -192,7 +192,7 @@ describe('the new command and its alias', () => {
     expect(started).toEqual(['new', 'new'])
   })
 
-  it('waits for the turn to settle under either name', async () => {
+  it('queues under either name when a turn is still running', async () => {
     const dispatched = await dispatchSubmission({
       text: '/clear',
       commands: localCommands(handlers()),
@@ -200,8 +200,10 @@ describe('the new command and its alias', () => {
       working: true,
     })
 
-    expect(dispatched.type).toBe(EDispatch.Refused)
-    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('wait for the turn')
+    expect(dispatched.type).toBe(EDispatch.Queued)
+    if (dispatched.type !== EDispatch.Queued) return
+    expect(dispatched.entry.name).toBe('new')
+    expect(dispatched.entry.dropsQueue).toBe(true)
   })
 })
 
@@ -349,7 +351,7 @@ describe('the compact command and its scope', () => {
     expect(asked).toEqual([])
   })
 
-  it('refuses to rewrite history while a turn is still reading it', async () => {
+  it('queues rather than rewriting history while a turn is still reading it', async () => {
     const asked: ECompactScope[] = []
 
     const dispatched = await dispatchSubmission({
@@ -359,12 +361,27 @@ describe('the compact command and its scope', () => {
       working: true,
     })
 
-    expect(dispatched.type).toBe(EDispatch.Refused)
-    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('wait for the turn')
+    expect(dispatched.type).toBe(EDispatch.Queued)
     expect(asked).toEqual([])
   })
 
-  it('refuses to open mid-turn, because picking a point would cut what the turn is writing', async () => {
+  it('runs what it queued with the argument it was queued with', async () => {
+    const asked: ECompactScope[] = []
+
+    const dispatched = await dispatchSubmission({
+      text: '/compact all',
+      commands: commandsWith((s) => asked.push(s)),
+      skills: [],
+      working: true,
+    })
+
+    if (dispatched.type !== EDispatch.Queued) throw new Error('expected the command to queue')
+    await dispatched.entry.run()
+
+    expect(asked).toEqual([ECompactScope.Everything])
+  })
+
+  it('queues rather than opening mid-turn, because picking a point would cut what the turn is writing', async () => {
     const opened: string[] = []
     const commands = localCommands(handlers({ onRewind: () => opened.push('rewind') }))
 
@@ -375,9 +392,12 @@ describe('the compact command and its scope', () => {
       working: true,
     })
 
-    expect(dispatched.type).toBe(EDispatch.Refused)
-    expect(dispatched.type === EDispatch.Refused && dispatched.reason).toContain('wait for the turn')
+    expect(dispatched.type).toBe(EDispatch.Queued)
     expect(opened).toEqual([])
+    if (dispatched.type !== EDispatch.Queued) return
+
+    await dispatched.entry.run()
+    expect(opened).toEqual(['rewind'])
   })
 })
 
@@ -389,7 +409,7 @@ describe('the restart command', () => {
     ).toBe(true)
   })
 
-  it('waits for the turn to settle, the way a quit would', async () => {
+  it('queues for when the turn settles, the way a quit would wait', async () => {
     let restarts = 0
 
     const dispatched = await dispatchSubmission({
@@ -405,7 +425,9 @@ describe('the restart command', () => {
       working: true,
     })
 
-    expect(dispatched.type).toBe(EDispatch.Refused)
+    expect(dispatched.type).toBe(EDispatch.Queued)
+    if (dispatched.type !== EDispatch.Queued) return
+    expect(dispatched.entry.dropsQueue).toBe(true)
     expect(restarts).toBe(0)
   })
 
@@ -440,5 +462,13 @@ describe('the restart command', () => {
       'resume',
       'rewind',
     ])
+  })
+
+  it('marks the commands whose run drops whatever else was queued', () => {
+    const commands = localCommands(handlers({ onRestart: () => undefined }))
+
+    const dropping = commands.filter((one) => one.dropsQueue === true)
+
+    expect(dropping.map((one) => one.name).sort()).toEqual(['new', 'restart', 'resume'])
   })
 })

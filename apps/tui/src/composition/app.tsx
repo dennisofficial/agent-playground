@@ -868,6 +868,11 @@ function Workspace(props: {
           ? {}
           : { loadFile: workspaceFileLoader(props.app.files) }),
       }).then((dispatched) => {
+        if (dispatched.type === EDispatch.Queued) {
+          tokens.restore(readyImages)
+          conversation.handleQueueSettled(dispatched.entry)
+          return
+        }
         if (dispatched.type === EDispatch.Refused) {
           putBack()
           conversation.handleReportProblem(dispatched.reason)
