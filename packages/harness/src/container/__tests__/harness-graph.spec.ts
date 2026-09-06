@@ -53,6 +53,7 @@ describe('the harness container graph', () => {
       'glob',
       'grep',
       'mcp-edit',
+      'multi_edit',
       'read',
       'service_list',
       'service_start',

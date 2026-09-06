@@ -25,6 +25,7 @@ const BUILTIN_NAMES = [
   'read',
   'write',
   'edit',
+  'multi_edit',
   'bash',
   'grep',
   'glob',
