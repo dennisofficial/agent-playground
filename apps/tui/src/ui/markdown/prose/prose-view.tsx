@@ -6,7 +6,8 @@ import { SourceSpan } from '../../selection/source-span'
 import { theme } from '../../theme'
 import { FencedBlock } from '../fenced-block'
 import { TableBlock } from '../table-block'
-import { EProseBlock, type ListItem, type ProseBlock, type SourcedBlock, sourcedProseBlocks } from './blocks'
+import { EProseBlock, type ListItem, type ProseBlock, type SourcedBlock } from './blocks'
+import { proseBlocksFor } from './growing-blocks'
 import { InlineRun } from './inline-view'
 import {
   bulletFor,
@@ -44,13 +45,20 @@ export function ProseView(props: {
   fg?: string
   bg?: string
 }): React.ReactNode {
-  const blocks = useMemo(() => sourcedProseBlocks(props.source), [props.source])
-  const frame: Frame = {
-    width: props.width,
-    ground: props.fg ?? theme.hover,
-    slab: inlineCodeSlab(props.bg),
-    streaming: props.streaming === true,
-  }
+  const streaming = props.streaming === true
+  const blocks = useMemo(
+    () => proseBlocksFor({ source: props.source, streaming }),
+    [props.source, streaming],
+  )
+  const frame = useMemo<Frame>(
+    () => ({
+      width: props.width,
+      ground: props.fg ?? theme.hover,
+      slab: inlineCodeSlab(props.bg),
+      streaming,
+    }),
+    [props.width, props.fg, props.bg, streaming],
+  )
 
   return <BlockStream blocks={blocks} frame={frame} />
 }
@@ -63,19 +71,33 @@ function BlockStream(props: {
   return (
     <box flexDirection="column" flexShrink={0}>
       {props.blocks.map((sourced, index) => (
-        <SourceSpan
+        <SourcedBlockView
           key={index}
-          source={sourced.raw}
+          sourced={sourced}
+          frame={props.frame}
           marginBottom={props.tight === true || index === props.blocks.length - 1 ? 0 : 1}
-        >
-          <Block block={sourced.block} frame={props.frame} />
-        </SourceSpan>
+        />
       ))}
     </box>
   )
 }
 
-function Block(props: { block: ProseBlock; frame: Frame }): React.ReactNode {
+const SourcedBlockView = React.memo(function SourcedBlockView(props: {
+  sourced: SourcedBlock
+  frame: Frame
+  marginBottom: number
+}): React.ReactNode {
+  return (
+    <SourceSpan source={props.sourced.raw} marginBottom={props.marginBottom}>
+      <Block block={props.sourced.block} frame={props.frame} />
+    </SourceSpan>
+  )
+})
+
+const Block = React.memo(function Block(props: {
+  block: ProseBlock
+  frame: Frame
+}): React.ReactNode {
   const { block, frame } = props
 
   if (block.kind === EProseBlock.Heading) return <Heading block={block} frame={frame} />
@@ -97,7 +119,7 @@ function Block(props: { block: ProseBlock; frame: Frame }): React.ReactNode {
     return <FencedBlock language={block.language} source={block.source} width={frame.width} />
   }
   return <TableBlock markdown={block.markdown} width={frame.width} streaming={frame.streaming} />
-}
+})
 
 function Heading(props: {
   block: Extract<ProseBlock, { kind: EProseBlock.Heading }>
