@@ -198,11 +198,12 @@ export async function ensureSandbox(args: {
     ) {
       throw new SandboxMountsChanged({ name })
     }
-    if (args.config.dockerfile !== undefined) {
-      const reference = await dockerfileImageReference({ dockerfile: args.config.dockerfile })
-      if (details.config.image !== reference) {
-        throw new SandboxImageChanged({ name, image: reference })
-      }
+    const wanted =
+      args.config.dockerfile === undefined
+        ? args.config.image
+        : await dockerfileImageReference({ dockerfile: args.config.dockerfile })
+    if (details.config.image !== wanted) {
+      throw new SandboxImageChanged({ name, image: wanted })
     }
 
     if (!details.state.running) await args.engine.startContainer({ id: existing.id })
