@@ -44,7 +44,19 @@ const SPANNING = [
   'Tail paragraph with a trailing partial wor',
 ].join('\n')
 
-const DOCUMENTS: Readonly<Record<string, string>> = { ...CORPUS, spanning: SPANNING }
+const REWIRING_DEFINITIONS: Readonly<Record<string, string>> = {
+  'def-in-list': 'Read the [docs] first.\n\nReferences:\n\n- [docs]: https://example.com/docs',
+  'def-in-ordered-list': 'Read the [ref] first.\n\nMore.\n\n1. [ref]: /u',
+  'def-multiline-label': 'See [foo\nbar] here.\n\nMore.\n\n[foo\nbar]: https://x.y',
+  'carriage-returns': 'a\r\nb\r\nc\r\nd\n\ne\r\nf\n\ng',
+  'tab-line-in-table': '| a | b |\n| - | - |\nrow\n\t\nnext\n\nafter',
+}
+
+const DOCUMENTS: Readonly<Record<string, string>> = {
+  ...CORPUS,
+  spanning: SPANNING,
+  ...REWIRING_DEFINITIONS,
+}
 
 const LINE_SHAPES: readonly string[] = [
   '',
@@ -83,6 +95,11 @@ const LINE_SHAPES: readonly string[] = [
   'ends with backslash\\',
   '[^n]: footnote',
   'refers [^n] here',
+  'see [docs] and [foo',
+  '- [docs]: https://example.com/docs',
+  'bar]: /u',
+  '\t',
+  'carriage\r',
 ]
 
 function seeded(seed: number): () => number {

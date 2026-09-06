@@ -12,14 +12,14 @@ import {
 } from './blocks'
 
 /**
- * marked's block tokens tile their input, and most of them end at a blank line no matter what
- * follows it: a paragraph, heading, rule, quote or table lexes the same whether the message stops
- * there or goes on. Only a list, an indented or fenced block, and an html block can reach past a
- * blank line to swallow what comes after — and a link reference definition anywhere changes how
- * `[text]` lexes everywhere, as a footnote definition does for `[^label]`.
- *
- * So a streamed prose body is settled up to the last blank line that follows a sealed token, the
- * blocks for that prefix are kept by its text, and each republish lexes only the tail behind it.
+ * marked 18 block tokens that end at a blank line whatever follows it. A list, an indented or
+ * fenced block and an html block can reach past a blank line, so they are not here. A link
+ * reference definition ANYWHERE — top level, inside a list item, inside a quote, with a label that
+ * spans lines — rewires how `[text]` lexes everywhere (marked's lexer registers `tokens.links` from
+ * nested children too), so any `]:` in the body forces a whole lex. marked normalises `\r\n` and
+ * `\r` to `\n` before lexing, which makes token raws shorter than the source; a body carrying `\r`
+ * takes the whole lex too. Table rows continue across a tab-only line (marked's row lookahead is
+ * spaces-only), so only a spaces-only line counts as blank here.
  */
 
 const SEALED_TYPES: ReadonlySet<string> = new Set([
@@ -32,11 +32,13 @@ const SEALED_TYPES: ReadonlySet<string> = new Set([
   'table',
 ])
 
-const LINK_DEFINITION_ANYWHERE = /^[ \t>]*\[[^\n]*\]:/m
+const LINK_DEFINITION_ANYWHERE = /\]:/
+
+const CARRIAGE_RETURN = /\r/
 
 const FOOTNOTE_DEFINITION_ANYWHERE = /^\[\^[^\]\s]+\]:/m
 
-const BLANK_LINE_END = /\n[ \t]*\n/g
+const BLANK_LINE_END = /\n *\n/g
 
 const SETTLED_LIMIT = 8
 
@@ -65,7 +67,8 @@ export function growingProseBlocks(source: string): readonly SourcedBlock[] {
     : { body: source, definitions: NO_FOOTNOTES }
   const context = contextFor(lifted)
 
-  const sourced = LINK_DEFINITION_ANYWHERE.test(lifted.body)
+  const wholeLex = LINK_DEFINITION_ANYWHERE.test(lifted.body) || CARRIAGE_RETURN.test(lifted.body)
+  const sourced = wholeLex
     ? sourcedFromTokens({ tokens: marked.lexer(lifted.body), context })
     : grownBlocks({ body: lifted.body, context, labels: [...context.order.keys()].join('\n') })
 
@@ -106,11 +109,6 @@ function rootSettled(labels: string): SettledProse {
   return root
 }
 
-/**
- * A list that is still growing holds every blank line inside it, so the same candidate fails to
- * seal on every republish until the list ends. Remembering the failure keeps that at one lex of
- * the candidate per new blank line rather than one per chunk.
- */
 const unsealedCandidates = new WeakMap<SettledProse, string>()
 
 function advanced(args: { base: SettledProse; rest: string; context: Context }): SettledProse {
@@ -142,12 +140,6 @@ function lastBlankLineEnd(text: string): number {
   return end
 }
 
-/**
- * The longest token prefix that ends on a blank line and whose last block is sealed. The blank line
- * is either a `space` token or the trailing newlines a heading, rule or table swallows into its own
- * raw, so the check is on the last token that is not `space` — a list followed by a `space` is
- * still a list that the next bullet would extend.
- */
 function sealedTokens(tokens: readonly Token[]): readonly Token[] {
   for (let end = tokens.length; end > 0; end -= 1) {
     const last = tokens[end - 1]
@@ -170,7 +162,7 @@ function lastBlockBefore(args: { tokens: readonly Token[]; end: number }): numbe
 }
 
 function endsOnBlankLine(raw: string): boolean {
-  return /\n[ \t]*\n[ \t]*$/.test(raw) || /^[ \t]*\n[ \t]*$/.test(raw)
+  return /\n *\n *$/.test(raw) || /^ *\n *$/.test(raw)
 }
 
 function rememberSettled(args: { settled: SettledProse; replacing: SettledProse }): void {
