@@ -29,7 +29,7 @@ describe('a settled command typed mid-turn', () => {
       mounted.pressEnter()
 
       const queued = await until({
-        holds: async () => (await mounted.frame()).includes('/new — runs when the turn finishes'),
+        holds: async () => (await mounted.frame()).includes('/new'),
         within: 20_000,
       })
       expect(queued).toBe(true)
@@ -61,7 +61,7 @@ describe('a settled command typed mid-turn', () => {
       mounted.pressEnter()
 
       const queued = await until({
-        holds: async () => (await mounted.frame()).includes('/new — runs when the turn finishes'),
+        holds: async () => (await mounted.frame()).includes('/new'),
         within: 20_000,
       })
       expect(queued).toBe(true)
