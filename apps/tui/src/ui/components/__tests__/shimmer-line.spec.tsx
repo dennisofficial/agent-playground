@@ -59,6 +59,17 @@ describe('a shimmer line left running', () => {
     expect(setup.renderer.getStats().frameCount).toBeGreaterThan(framesBefore)
   })
 
+  test('survives the renderer being torn down with a tick still owed', async () => {
+    const setup = await testRender(
+      <WorkingLine elapsedMs={1000} outputTokens={100} interrupting={false} />,
+      { width: 100, height: 10 },
+    )
+    await setup.flush()
+
+    setup.renderer.destroy()
+    await sleep(QUIET_MS)
+  })
+
   test('shows the retry countdown in the error colour', async () => {
     const setup = await testRender(
       <WorkingLine

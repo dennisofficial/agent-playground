@@ -20,9 +20,8 @@ export function ShimmerLine(props: { label: string; base?: string | undefined })
   useEffect(() => {
     const paint = (now: number): void => {
       const node = ref.current
-      if (node !== null) {
-        node.content = shimmerText({ label: latest.current.label, base: latest.current.base, now })
-      }
+      if (node === null || node.isDestroyed) return
+      node.content = shimmerText({ label: latest.current.label, base: latest.current.base, now })
     }
     paint(Date.now())
     return subscribeTicker({ intervalMs: SHIMMER_TICK_MS, onTick: paint })
