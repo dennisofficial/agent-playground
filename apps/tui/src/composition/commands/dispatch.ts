@@ -7,10 +7,22 @@ import {
 } from '@dltech/atlas-core'
 
 import { mentionedFileDrafts, type FileLoader } from '../mentioned-files'
-import { ECommandEffect, ECommandTiming, type LocalCommand } from './local-command'
-import type { QueuedSettled } from './settled-queue'
+import {
+  ECommandEffect,
+  ECommandTiming,
+  type CommandEffect,
+  type LocalCommand,
+} from './local-command'
 
 export type LoadedSkill = { spec: CommandSpec; body: string }
+
+export type QueuedSettled = {
+  name: string
+  text: string
+  dropsQueue: boolean
+  losesWaiting: boolean
+  run: () => CommandEffect | Promise<CommandEffect>
+}
 
 export enum EDispatch {
   Ran = 'ran',
@@ -55,6 +67,7 @@ export async function dispatchSubmission(args: {
         type: EDispatch.Queued,
         entry: {
           name: command.name,
+          text: args.text,
           dropsQueue: command.dropsQueue === true,
           losesWaiting: command.losesWaiting === true,
           run: () => command.run({ argumentText: invoked.argumentText }),

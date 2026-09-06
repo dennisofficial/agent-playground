@@ -8,6 +8,7 @@ type NoticeKind = EPendingKind.BackgroundShell | EPendingKind.Agent | EPendingKi
 
 type PendingRun =
   | { kind: EPendingKind.Operator; id: string; said: readonly string[] }
+  | { kind: EPendingKind.Command; id: string; text: string }
   | { kind: NoticeKind; id: string; text: string; failed: boolean }
 
 /**
@@ -18,6 +19,11 @@ export function pendingRuns(rows: readonly PendingRow[]): readonly PendingRun[] 
   const runs: PendingRun[] = []
 
   for (const row of rows) {
+    if (row.kind === EPendingKind.Command) {
+      runs.push({ kind: row.kind, id: row.id, text: row.text })
+      continue
+    }
+
     if (row.kind !== EPendingKind.Operator) {
       runs.push({ kind: row.kind, id: row.id, text: row.text, failed: row.failed })
       continue
@@ -43,13 +49,29 @@ export function PendingBlock(props: {
 
   return (
     <box flexDirection="column" flexShrink={0}>
-      {pendingRuns(props.rows).map((run) =>
-        run.kind === EPendingKind.Operator ? (
-          <UserBlock key={run.id} said={run.said} width={props.width} takeBack />
-        ) : (
-          <WaitingNoticeRow key={run.id} text={run.text} failed={run.failed} width={props.width} />
-        ),
-      )}
+      {pendingRuns(props.rows).map((run) => {
+        if (run.kind === EPendingKind.Operator) {
+          return <UserBlock key={run.id} said={run.said} width={props.width} takeBack />
+        }
+        if (run.kind === EPendingKind.Command) {
+          return <QueuedCommandRow key={run.id} text={run.text} width={props.width} />
+        }
+        return <WaitingNoticeRow key={run.id} text={run.text} failed={run.failed} width={props.width} />
+      })}
+    </box>
+  )
+}
+
+function QueuedCommandRow(props: { text: string; width: number }): React.ReactNode {
+  const inner = Math.max(1, props.width - TRANSCRIPT_INSET)
+
+  return (
+    <box flexDirection="column" marginBottom={1} flexShrink={0}>
+      <text wrapMode="none" width={inner} flexShrink={0}>
+        <span fg={theme.accent}>{`${glyph.block} `}</span>
+        <span fg={theme.body}>{props.text}</span>
+        <span fg={theme.meta}>{' — runs when the turn finishes'}</span>
+      </text>
     </box>
   )
 }

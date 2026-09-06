@@ -12,7 +12,21 @@ import {
 
 import { EPendingKind, pendingRows } from '../pending-rows'
 
-const typed = (id: string, text: string, taken = false) => ({ id, text, taken, images: [] })
+const typed = (id: string, text: string, taken = false, durable = false) => ({
+  kind: 'message' as const,
+  id,
+  text,
+  taken,
+  durable,
+  images: [],
+})
+
+const command = (id: string, text: string) => ({
+  kind: 'command' as const,
+  id,
+  text,
+  command: null,
+})
 
 const service = (over: Partial<ServiceSnapshot> = {}): ServiceSnapshot => ({
   serviceId: 'svc_1',
@@ -63,12 +77,12 @@ const child = (over: Partial<AgentSnapshot> = {}): AgentSnapshot => ({
 
 describe('what waits under the working indicator', () => {
   it('is nothing at all when neither a message nor an ending is waiting', () => {
-    expect(pendingRows({ messages: [], notices: [], agents: [], services: [] })).toEqual([])
+    expect(pendingRows({ entries: [], notices: [], agents: [], services: [] })).toEqual([])
   })
 
   it('queues a shell ending behind the messages a human typed', () => {
     const rows = pendingRows({
-      messages: [typed('p1', 'and the fixtures')],
+      entries: [typed('p1', 'and the fixtures')],
       notices: [notice()],
       agents: [],
       services: [],
@@ -81,7 +95,7 @@ describe('what waits under the working indicator', () => {
   })
 
   it('reads a queued ending the same way the transcript will', () => {
-    const rows = pendingRows({ messages: [], notices: [notice()], agents: [], services: [] })
+    const rows = pendingRows({ entries: [], notices: [notice()], agents: [], services: [] })
 
     expect(rows[0]).toEqual({
       kind: EPendingKind.BackgroundShell,
@@ -92,14 +106,14 @@ describe('what waits under the working indicator', () => {
   })
 
   it('carries no take-back or taken flag, because nobody sent it', () => {
-    const row = pendingRows({ messages: [], notices: [notice()], agents: [], services: [] })[0]
+    const row = pendingRows({ entries: [], notices: [notice()], agents: [], services: [] })[0]
 
     expect(row === undefined ? null : 'taken' in row).toBe(false)
   })
 
   it('marks a failure so the queued line is not read as good news', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [notice({ exitCode: 2 })],
       agents: [],
       services: [],
@@ -110,7 +124,7 @@ describe('what waits under the working indicator', () => {
 
   it('queues a sub-agent ending behind the shells and the messages alike', () => {
     const rows = pendingRows({
-      messages: [typed('p1', 'and the fixtures')],
+      entries: [typed('p1', 'and the fixtures')],
       notices: [notice()],
       agents: [child()],
       services: [],
@@ -124,7 +138,7 @@ describe('what waits under the working indicator', () => {
   })
 
   it('reads a queued sub-agent ending the same way the transcript will', () => {
-    const rows = pendingRows({ messages: [], notices: [], agents: [child()], services: [] })
+    const rows = pendingRows({ entries: [], notices: [], agents: [child()], services: [] })
 
     expect(rows[0]).toEqual({
       kind: EPendingKind.Agent,
@@ -136,7 +150,7 @@ describe('what waits under the working indicator', () => {
 
   it('marks a child that failed, and leaves one the operator stopped alone', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [],
       agents: [child({ status: EAgentStatus.Failed }), child({ status: EAgentStatus.Stopped })],
       services: [],
@@ -147,7 +161,7 @@ describe('what waits under the working indicator', () => {
 
   it('keeps a child noticed twice as two rows, because the second notice is a different state', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [],
       agents: [child({ status: EAgentStatus.Blocked }), child()],
       services: [],
@@ -160,12 +174,12 @@ describe('what waits under the working indicator', () => {
   })
 
   it('is still nothing at all when only an empty wave of children is passed', () => {
-    expect(pendingRows({ messages: [], notices: [], agents: [], services: [] })).toEqual([])
+    expect(pendingRows({ entries: [], notices: [], agents: [], services: [] })).toEqual([])
   })
 
   it('keys each ending by its shell, so two waiting endings stay distinct', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [notice(), notice({ shellId: toShellId('bash_2'), description: 'Watch the docs' })],
       agents: [],
       services: [],
@@ -176,7 +190,7 @@ describe('what waits under the working indicator', () => {
 
   it('reads a queued check-in as a shell still running, never as a prompt to answer', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [notice({ status: EShellStatus.Running }, ENotice.StillRunning)],
       agents: [],
       services: [],
@@ -192,7 +206,7 @@ describe('what waits under the working indicator', () => {
 
   it('reads a queued watch match as progress, not as a prompt to answer', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [notice({ status: EShellStatus.Running }, ENotice.Matched)],
       agents: [],
       services: [],
@@ -208,7 +222,7 @@ describe('what waits under the working indicator', () => {
 
   it('queues a service ending behind everything else and reads it the way the transcript will', () => {
     const rows = pendingRows({
-      messages: [typed('p1', 'and the fixtures')],
+      entries: [typed('p1', 'and the fixtures')],
       notices: [],
       agents: [],
       services: [service()],
@@ -225,7 +239,7 @@ describe('what waits under the working indicator', () => {
 
   it('marks a service that died on its own as failed, and one the operator stopped alone', () => {
     const rows = pendingRows({
-      messages: [],
+      entries: [],
       notices: [],
       agents: [],
       services: [
@@ -235,5 +249,43 @@ describe('what waits under the working indicator', () => {
     })
 
     expect(rows.map((row) => row.kind === EPendingKind.Service && row.failed)).toEqual([true, false])
+  })
+
+  it('shows a queued command where it was typed, between the messages', () => {
+    const rows = pendingRows({
+      entries: [typed('p1', 'check the tests too'), command('p2', '/new'), typed('p3', 'and this')],
+      notices: [],
+      agents: [],
+      services: [],
+    })
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      EPendingKind.Operator,
+      EPendingKind.Command,
+      EPendingKind.Operator,
+    ])
+    expect(rows[1]).toEqual({ kind: EPendingKind.Command, id: 'p2', text: '/new' })
+  })
+
+  it('hides a taken message once the log holds it, so it never renders twice', () => {
+    const rows = pendingRows({
+      entries: [typed('p1', 'check the tests too', true, true)],
+      notices: [],
+      agents: [],
+      services: [],
+    })
+
+    expect(rows).toEqual([])
+  })
+
+  it('keeps a taken message on screen while the log does not have it yet', () => {
+    const rows = pendingRows({
+      entries: [typed('p1', 'check the tests too', true, false)],
+      notices: [],
+      agents: [],
+      services: [],
+    })
+
+    expect(rows.map((row) => row.kind)).toEqual([EPendingKind.Operator])
   })
 })
