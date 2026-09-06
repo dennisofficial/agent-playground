@@ -17,6 +17,13 @@ export const OPENROUTER_PROVIDER_ID = 'openrouter'
 
 const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1'
 
+// OpenRouter attributes requests to an app via these headers; without them usage
+// lands under "Unknown" in the app rankings. https://openrouter.ai/docs/app-attribution
+const ATTRIBUTION_HEADERS = {
+  'HTTP-Referer': 'https://github.com/dennisofficial/atlas',
+  'X-Title': 'Atlas',
+}
+
 
 export class OpenRouterAdapter extends ProviderAdapter {
   readonly id = OPENROUTER_PROVIDER_ID
@@ -55,6 +62,7 @@ export class OpenRouterAdapter extends ProviderAdapter {
         name: OPENROUTER_PROVIDER_ID,
         baseURL: OPENROUTER_BASE_URL,
         apiKey,
+        headers: ATTRIBUTION_HEADERS,
       }).chatModel(args.card.ref.modelId)
     }
 
