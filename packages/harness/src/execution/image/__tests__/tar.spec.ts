@@ -79,13 +79,16 @@ describe('tarEntries', () => {
         ],
       }))
 
-      const listing = Bun.spawnSync(['tar', '-tvf', archive])
-      expect(listing.exitCode).toBe(0)
-      const lines = new TextDecoder().decode(listing.stdout).trim().split('\n')
-      const byName = new Map(lines.map((line) => [line.split(/\s+/).at(-1) ?? '', line]))
-      expect(byName.get('bin/')?.startsWith('d')).toBe(true)
-      expect(byName.get('bin/run.sh')?.startsWith('-rwxr-xr-x')).toBe(true)
-      expect(byName.get('latest')?.startsWith('l')).toBe(true)
+      const extract = join(directory, 'out')
+      Bun.spawnSync(['mkdir', '-p', extract])
+      const untar = Bun.spawnSync(['tar', '-xf', archive], { cwd: extract })
+      expect(untar.exitCode).toBe(0)
+
+      const fs = await import('node:fs/promises')
+      const run = await fs.stat(join(extract, 'bin', 'run.sh'))
+      expect(run.mode & 0o777).toBe(0o755)
+      const link = await fs.lstat(join(extract, 'latest'))
+      expect(link.isSymbolicLink()).toBe(true)
     } finally {
       await rm(directory, { recursive: true, force: true })
     }
