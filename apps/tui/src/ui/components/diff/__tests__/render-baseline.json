@@ -1,6 +1,6 @@
 {
   "inline-40": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.serv+34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: …  \n┃  119 −     const user = await this.…  \n┃  119 +     const user = await this.…  \n┃  120 +     if (!user) throw new Una…  \n┃  121     }                            \n┃    ⋯   9 unchanged lines              \n┃  131 +   async rotate(token: string…  \n┃  200     render() {                   \n┃  201 −     const label = \"plain\"      \n┃  201 +     const label = \"héllo → w…  \n┃  202 +   const indented = true        \n┃  203 +     const banner = 'xxxxxxxx…  \n┃  204     }                            \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.serv+34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: …  \n┃  119 −     const user = await this.…  \n┃  119 +     const user = await this.…  \n┃  120 +     if (!user) throw new Una…  \n┃  121     }                            \n┃    ⋯   9 unchanged lines              \n┃  131 +   async rotate(token: string…  \n┃  200     render() {                   \n┃  201 −     const label = \"plain\"      \n┃  201 +     const label = \"héllo → w…  \n┃  202 +   const indented = true        \n┃  203 +     const banner = 'xxxxxxxx…  \n┃  204     }                            \n┃   20     const x = 1                  \n┃   21 −   const old = \"漢字テスト\"     \n┃   22 −     return \"🎉\"                \n┃   21   }                              \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n",
     "lines": [
       [
         {
@@ -846,6 +846,236 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "   ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 22 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -1073,43 +1303,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "inline-80": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                  \n┃  119 −     const user = await this.users.byEmail(email)                       \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true …  \n┃  120 +     if (!user) throw new UnauthorizedException()                       \n┃  121     }                                                                    \n┃    ⋯   9 unchanged lines                                                      \n┃  131 +   async rotate(token: string) {                                        \n┃  200     render() {                                                           \n┃  201 −     const label = \"plain\"                                              \n┃  201 +     const label = \"héllo → wörld ✓\"                                    \n┃  202 +   const indented = true                                                \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                    \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                  \n┃  119 −     const user = await this.users.byEmail(email)                       \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true …  \n┃  120 +     if (!user) throw new UnauthorizedException()                       \n┃  121     }                                                                    \n┃    ⋯   9 unchanged lines                                                      \n┃  131 +   async rotate(token: string) {                                        \n┃  200     render() {                                                           \n┃  201 −     const label = \"plain\"                                              \n┃  201 +     const label = \"héllo → wörld ✓\"                                    \n┃  202 +   const indented = true                                                \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                    \n┃   20     const x = 1                                                          \n┃   21 −   const old = \"漢字テスト\"                                             \n┃   22 −     return \"🎉\"                                                        \n┃   21   }                                                                      \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
     "lines": [
       [
         {
@@ -2045,6 +2243,236 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                          ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                           ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 22 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -2272,43 +2700,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "inline-120": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                                                          +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                                                          \n┃  119 −     const user = await this.users.byEmail(email)                                                               \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true })                                         \n┃  120 +     if (!user) throw new UnauthorizedException()                                                               \n┃  121     }                                                                                                            \n┃    ⋯   9 unchanged lines                                                                                              \n┃  131 +   async rotate(token: string) {                                                                                \n┃  200     render() {                                                                                                   \n┃  201 −     const label = \"plain\"                                                                                      \n┃  201 +     const label = \"héllo → wörld ✓\"                                                                            \n┃  202 +   const indented = true                                                                                        \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                                                            \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                                                          +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                                                          \n┃  119 −     const user = await this.users.byEmail(email)                                                               \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true })                                         \n┃  120 +     if (!user) throw new UnauthorizedException()                                                               \n┃  121     }                                                                                                            \n┃    ⋯   9 unchanged lines                                                                                              \n┃  131 +   async rotate(token: string) {                                                                                \n┃  200     render() {                                                                                                   \n┃  201 −     const label = \"plain\"                                                                                      \n┃  201 +     const label = \"héllo → wörld ✓\"                                                                            \n┃  202 +   const indented = true                                                                                        \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                                                            \n┃   20     const x = 1                                                                                                  \n┃   21 −   const old = \"漢字テスト\"                                                                                     \n┃   22 −     return \"🎉\"                                                                                                \n┃   21   }                                                                                                              \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n",
     "lines": [
       [
         {
@@ -3250,6 +3646,236 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                                                  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                                                   ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 22 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                                                              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                                                              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -3477,43 +4103,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "inline-emphasis-80": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                  \n┃  119 −     const user = await this.users.byEmail(email)                       \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true …  \n┃  120 +     if (!user) throw new UnauthorizedException()                       \n┃  121     }                                                                    \n┃    ⋯   9 unchanged lines                                                      \n┃  131 +   async rotate(token: string) {                                        \n┃  200     render() {                                                           \n┃  201 −     const label = \"plain\"                                              \n┃  201 +     const label = \"héllo → wörld ✓\"                                    \n┃  202 +   const indented = true                                                \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                    \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                  \n┃  119 −     const user = await this.users.byEmail(email)                       \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true …  \n┃  120 +     if (!user) throw new UnauthorizedException()                       \n┃  121     }                                                                    \n┃    ⋯   9 unchanged lines                                                      \n┃  131 +   async rotate(token: string) {                                        \n┃  200     render() {                                                           \n┃  201 −     const label = \"plain\"                                              \n┃  201 +     const label = \"héllo → wörld ✓\"                                    \n┃  202 +   const indented = true                                                \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                    \n┃   20     const x = 1                                                          \n┃   21 −   const old = \"漢字テスト\"                                             \n┃   22 −     return \"🎉\"                                                        \n┃   21   }                                                                      \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
     "lines": [
       [
         {
@@ -4455,6 +5049,236 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                          ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                           ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 22 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -4682,43 +5506,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "side-by-side-40": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.serv+34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  @@ -118,12 +118,14 @@ AuthService.v  \n┃    async vali… 118│118   async vali…  \n┃      const us… 119│119     const us…  \n┃                   │120     if (!use…  \n┃    }           120│121   }            \n┃  9 unchanged …   ⋯│  ⋯ 9 unchanged …  \n┃                   │131   async rota…  \n┃  @@ -200,3 +200,5 @@ render           \n┃    render() {  200│200   render() {   \n┃      const la… 201│201     const la…  \n┃                   │202   const inden  \n┃                   │203     const ba…  \n┃    }           202│204   }            \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\nfits above 140 cols · falls back to inli\n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.serv+34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  @@ -118,12 +118,14 @@ AuthService.v  \n┃    async vali… 118│118   async vali…  \n┃      const us… 119│119     const us…  \n┃                   │120     if (!use…  \n┃    }           120│121   }            \n┃  9 unchanged …   ⋯│  ⋯ 9 unchanged …  \n┃                   │131   async rota…  \n┃  @@ -200,3 +200,5 @@ render           \n┃    render() {  200│200   render() {   \n┃      const la… 201│201     const la…  \n┃                   │202   const inden  \n┃                   │203     const ba…  \n┃    }           202│204   }            \n┃  @@ -20,4 +20,2 @@ wide removed line  \n┃    const x = 1  20│ 20   const x = 1  \n┃    const old =  21│                   \n┃      return \"…  22│                   \n┃  }              23│ 21 }              \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\nfits above 140 cols · falls back to inli\n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n                                        \n",
     "lines": [
       [
         {
@@ -5576,6 +6368,334 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "@@ -20,4 +20,2 @@",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "wide removed line",
+          "fg": "rgba(0.49, 0.74, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  20",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "  21",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "               ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"…",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "  22",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "               ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "            ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  23",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -5807,51 +6927,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "side-by-side-80": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  @@ -118,12 +118,14 @@ AuthService.validateUser                               \n┃    async validateUser(email: stri… 118│118   async validateUser(email: stri…  \n┃      const user = await this.user… 119│119     const user = await this.user…  \n┃                                       │120     if (!user) throw new Unautho…  \n┃    }                               120│121   }                                \n┃  9 unchanged lines                   ⋯│  ⋯ 9 unchanged lines                  \n┃                                       │131   async rotate(token: string) {    \n┃  @@ -200,3 +200,5 @@ render                                                   \n┃    render() {                      200│200   render() {                       \n┃      const label = \"plain\"         201│201     const label = \"héllo → wörld…  \n┃                                       │202   const indented = true            \n┃                                       │203     const banner = 'xxxxxxxxxxxx…  \n┃    }                               202│204   }                                \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\nfits above 140 cols · falls back to inline below it                             \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  @@ -118,12 +118,14 @@ AuthService.validateUser                               \n┃    async validateUser(email: stri… 118│118   async validateUser(email: stri…  \n┃      const user = await this.user… 119│119     const user = await this.user…  \n┃                                       │120     if (!user) throw new Unautho…  \n┃    }                               120│121   }                                \n┃  9 unchanged lines                   ⋯│  ⋯ 9 unchanged lines                  \n┃                                       │131   async rotate(token: string) {    \n┃  @@ -200,3 +200,5 @@ render                                                   \n┃    render() {                      200│200   render() {                       \n┃      const label = \"plain\"         201│201     const label = \"héllo → wörld…  \n┃                                       │202   const indented = true            \n┃                                       │203     const banner = 'xxxxxxxxxxxx…  \n┃    }                               202│204   }                                \n┃  @@ -20,4 +20,2 @@ wide removed lines                                         \n┃    const x = 1                      20│ 20   const x = 1                      \n┃    const old = \"漢字テスト\"         21│                                       \n┃      return \"🎉\"                    22│                                       \n┃  }                                  23│ 21 }                                  \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\nfits above 140 cols · falls back to inline below it                             \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
     "lines": [
       [
         {
@@ -6925,6 +8005,370 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "@@ -20,4 +20,2 @@",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "wide removed lines",
+          "fg": "rgba(0.49, 0.74, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                       ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                    ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  20",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "       ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  21",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                   ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  22",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                   ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  23",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -7162,51 +8606,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "side-by-side-120": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                                                          +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  @@ -118,12 +118,14 @@ AuthService.validateUser                                                                       \n┃    async validateUser(email: string) {                 118│118   async validateUser(email: string) {                  \n┃      const user = await this.users.byEmail(email)      119│119     const user = await this.users.byEmail(email, { w…  \n┃                                                           │120     if (!user) throw new UnauthorizedException()       \n┃    }                                                   120│121   }                                                    \n┃  9 unchanged lines                                       ⋯│  ⋯ 9 unchanged lines                                      \n┃                                                           │131   async rotate(token: string) {                        \n┃  @@ -200,3 +200,5 @@ render                                                                                           \n┃    render() {                                          200│200   render() {                                           \n┃      const label = \"plain\"                             201│201     const label = \"héllo → wörld ✓\"                    \n┃                                                           │202   const indented = true                                \n┃                                                           │203     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃    }                                                   202│204   }                                                    \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\nfits above 140 cols · falls back to inline below it                                                                     \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                                                          +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  @@ -118,12 +118,14 @@ AuthService.validateUser                                                                       \n┃    async validateUser(email: string) {                 118│118   async validateUser(email: string) {                  \n┃      const user = await this.users.byEmail(email)      119│119     const user = await this.users.byEmail(email, { w…  \n┃                                                           │120     if (!user) throw new UnauthorizedException()       \n┃    }                                                   120│121   }                                                    \n┃  9 unchanged lines                                       ⋯│  ⋯ 9 unchanged lines                                      \n┃                                                           │131   async rotate(token: string) {                        \n┃  @@ -200,3 +200,5 @@ render                                                                                           \n┃    render() {                                          200│200   render() {                                           \n┃      const label = \"plain\"                             201│201     const label = \"héllo → wörld ✓\"                    \n┃                                                           │202   const indented = true                                \n┃                                                           │203     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃    }                                                   202│204   }                                                    \n┃  @@ -20,4 +20,2 @@ wide removed lines                                                                                 \n┃    const x = 1                                          20│ 20   const x = 1                                          \n┃    const old = \"漢字テスト\"                             21│                                                           \n┃      return \"🎉\"                                        22│                                                           \n┃  }                                                      23│ 21 }                                                      \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\nfits above 140 cols · falls back to inline below it                                                                     \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n",
     "lines": [
       [
         {
@@ -8346,6 +9750,370 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "@@ -20,4 +20,2 @@",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "wide removed lines",
+          "fg": "rgba(0.49, 0.74, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                               ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.14, 0.12, 0.11, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                        ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  20",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                          ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                           ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  21",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                       ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  22",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                       ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                    ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  23",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "│",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -8583,51 +10351,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "inline-resize-before-80": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                  \n┃  119 −     const user = await this.users.byEmail(email)                       \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true …  \n┃  120 +     if (!user) throw new UnauthorizedException()                       \n┃  121     }                                                                    \n┃    ⋯   9 unchanged lines                                                      \n┃  131 +   async rotate(token: string) {                                        \n┃  200     render() {                                                           \n┃  201 −     const label = \"plain\"                                              \n┃  201 +     const label = \"héllo → wörld ✓\"                                    \n┃  202 +   const indented = true                                                \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                    \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                  +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                  \n┃  119 −     const user = await this.users.byEmail(email)                       \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true …  \n┃  120 +     if (!user) throw new UnauthorizedException()                       \n┃  121     }                                                                    \n┃    ⋯   9 unchanged lines                                                      \n┃  131 +   async rotate(token: string) {                                        \n┃  200     render() {                                                           \n┃  201 −     const label = \"plain\"                                              \n┃  201 +     const label = \"héllo → wörld ✓\"                                    \n┃  202 +   const indented = true                                                \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                    \n┃   20     const x = 1                                                          \n┃   21 −   const old = \"漢字テスト\"                                             \n┃   22 −     return \"🎉\"                                                        \n┃   21   }                                                                      \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n                                                                                \n",
     "lines": [
       [
         {
@@ -9563,6 +11291,236 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                          ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                           ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 22 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                      ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -9790,43 +11748,11 @@
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
       ]
     ]
   },
   "inline-resize-after-120": {
-    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                                                          +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                                                          \n┃  119 −     const user = await this.users.byEmail(email)                                                               \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true })                                         \n┃  120 +     if (!user) throw new UnauthorizedException()                                                               \n┃  121     }                                                                                                            \n┃    ⋯   9 unchanged lines                                                                                              \n┃  131 +   async rotate(token: string) {                                                                                \n┃  200     render() {                                                                                                   \n┃  201 −     const label = \"plain\"                                                                                      \n┃  201 +     const label = \"héllo → wörld ✓\"                                                                            \n┃  202 +   const indented = true                                                                                        \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                                                            \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n",
+    "chars": "╻▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄\n┃  src/auth/auth.service.ts                                                                          +34 −7             \n┃▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n┃  118     async validateUser(email: string) {                                                                          \n┃  119 −     const user = await this.users.byEmail(email)                                                               \n┃  119 +     const user = await this.users.byEmail(email, { withSecret: true })                                         \n┃  120 +     if (!user) throw new UnauthorizedException()                                                               \n┃  121     }                                                                                                            \n┃    ⋯   9 unchanged lines                                                                                              \n┃  131 +   async rotate(token: string) {                                                                                \n┃  200     render() {                                                                                                   \n┃  201 −     const label = \"plain\"                                                                                      \n┃  201 +     const label = \"héllo → wörld ✓\"                                                                            \n┃  202 +   const indented = true                                                                                        \n┃  203 +     const banner = 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…  \n┃  204     }                                                                                                            \n┃   20     const x = 1                                                                                                  \n┃   21 −   const old = \"漢字テスト\"                                                                                     \n┃   22 −     return \"🎉\"                                                                                                \n┃   21   }                                                                                                              \n╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n                                                                                                                        \n",
     "lines": [
       [
         {
@@ -10768,6 +12694,236 @@
       ],
       [
         {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 20   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " x ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "1",
+          "fg": "rgba(0.47, 0.75, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                                                  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "const",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " old ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "=",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"漢字テスト\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                                                   ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 22 ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "− ",
+          "fg": "rgba(0.90, 0.33, 0.29, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "    ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "return",
+          "fg": "rgba(1.00, 0.48, 0.45, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": " ",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "\"🎉\"",
+          "fg": "rgba(0.65, 0.84, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 2
+        },
+        {
+          "text": "                                                                                              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.20, 0.13, 0.13, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
+          "text": "┃",
+          "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
+          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
+          "attributes": 0
+        },
+        {
+          "text": "  ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": " 21   ",
+          "fg": "rgba(0.54, 0.50, 0.47, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "}",
+          "fg": "rgba(0.90, 0.93, 0.95, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        },
+        {
+          "text": "                                                                                                              ",
+          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
+          "bg": "rgba(0.12, 0.10, 0.09, 1.00)",
+          "attributes": 0
+        }
+      ],
+      [
+        {
           "text": "╹",
           "fg": "rgba(0.23, 0.21, 0.20, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
@@ -10776,38 +12932,6 @@
         {
           "text": "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
           "fg": "rgba(0.12, 0.10, 0.09, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
-          "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
-          "attributes": 0
-        }
-      ],
-      [
-        {
-          "text": "                                                                                                                        ",
-          "fg": "rgba(1.00, 1.00, 1.00, 1.00)",
           "bg": "rgba(0.00, 0.00, 0.00, 0.00)",
           "attributes": 0
         }

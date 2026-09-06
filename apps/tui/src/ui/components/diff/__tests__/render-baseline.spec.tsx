@@ -55,9 +55,26 @@ const UNICODE_HUNK: DiffHunk = {
   ],
 }
 
+/**
+ * Removed and context lines land the gutter AFTER the code in side-by-side, so a code width
+ * measured in UTF-16 units instead of cells pushes the digits off the half. Tabs and CJK are the
+ * two shapes whose unit count and cell count disagree.
+ */
+const WIDE_REMOVED_HUNK: DiffHunk = {
+  heading: 'wide removed lines',
+  oldStart: 20,
+  newStart: 20,
+  lines: [
+    line({ kind: EDiffLine.Context, old: 20, next: 20, text: '\tconst x = 1' }),
+    line({ kind: EDiffLine.Removed, old: 21, next: null, text: '\tconst old = "漢字テスト"' }),
+    line({ kind: EDiffLine.Removed, old: 22, next: null, text: '    return "🎉"' }),
+    line({ kind: EDiffLine.Context, old: 23, next: 21, text: '}' }),
+  ],
+}
+
 const CORPUS: DiffFile = {
   ...FILE,
-  hunks: [HUNK, UNICODE_HUNK],
+  hunks: [HUNK, UNICODE_HUNK, WIDE_REMOVED_HUNK],
 }
 
 const CORPUS_ROWS = CORPUS.hunks.map((hunk) => sideBySideRows(hunk))

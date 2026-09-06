@@ -80,6 +80,43 @@ function codeChunks(args: {
 const fillerChunk = (cells: number): TextChunk | null =>
   cells <= 0 ? null : { __isChunk: true, text: ' '.repeat(cells), fg: FILL_FG }
 
+const TAB_CELLS = 2
+
+/**
+ * The buffer's own measure: wcwidth for the graphemes, two cells for a tab (its expansion here,
+ * not a tab stop). The gutter's position is computed from this, so it has to match what is drawn.
+ */
+function cellWidth(text: string): number {
+  let width = Bun.stringWidth(text)
+  for (const character of text) if (character === '\t') width += TAB_CELLS
+  return width
+}
+
+/**
+ * fitDiffChunks measures UTF-16 units, and a half that fed it straight to the buffer would let a
+ * CJK or tabbed line eat the gutter behind it. The old layout cell-clipped natively, so the same
+ * clip is reproduced here in cells, whole code points at a time.
+ */
+function fitCells(args: { chunks: readonly TextChunk[]; cells: number }): TextChunk[] {
+  if (args.cells <= 0) return []
+  const out: TextChunk[] = []
+  let used = 0
+  for (const chunk of args.chunks) {
+    let text = ''
+    for (const character of [...chunk.text]) {
+      const cells = cellWidth(character)
+      if (used + cells > args.cells) {
+        if (text.length > 0) out.push({ ...chunk, text })
+        return out
+      }
+      text += character
+      used += cells
+    }
+    out.push(chunk)
+  }
+  return out
+}
+
 const keep = (chunks: readonly (TextChunk | null)[]): TextChunk[] =>
   chunks.filter((chunk): chunk is TextChunk => chunk !== null)
 
@@ -118,7 +155,7 @@ export function InlineDiffRow(props: {
   columns: InlineColumns
   emphasis: DiffSpan | null
 }): React.ReactNode {
-  const tone = diffTone({ kind: props.line.kind })
+  const tone = useMemo(() => diffTone({ kind: props.line.kind }), [props.line.kind])
 
   const content = useMemo(() => {
     const spans: TextChunk[] = []
@@ -167,7 +204,8 @@ function Half(props: {
   emphasis: DiffSpan | null
   gutterFirst: boolean
 }): React.ReactNode {
-  const tone = diffTone({ kind: props.line?.kind ?? EDiffLine.Context })
+  const kind = props.line?.kind ?? EDiffLine.Context
+  const tone = useMemo(() => diffTone({ kind }), [kind])
   const painted = props.line === null ? undefined : tone.tint
 
   const content = useMemo(() => {
@@ -178,8 +216,9 @@ function Half(props: {
       tone,
       emphasis: props.emphasis,
     })
+    const fitted = fitCells({ chunks: code, cells: props.columns.code })
     const filler = fillerChunk(
-      props.columns.code - code.reduce((total, chunk) => total + chunk.text.length, 0),
+      props.columns.code - fitted.reduce((total, chunk) => total + cellWidth(chunk.text), 0),
     )
     const gutter = gutterChunk({
       line: props.line,
@@ -188,7 +227,7 @@ function Half(props: {
       gap: props.columns.numberGap,
       gapFirst: !props.gutterFirst,
     })
-    const spans = props.gutterFirst ? [gutter, ...code, filler] : [...code, filler, gutter]
+    const spans = props.gutterFirst ? [gutter, ...fitted, filler] : [...fitted, filler, gutter]
     return new StyledText(keep(spans))
   }, [props.line, props.number, props.chunks, props.columns, props.emphasis, props.gutterFirst, tone])
 
