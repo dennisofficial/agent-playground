@@ -92,7 +92,7 @@ describe('typing while the turn is running', () => {
     }
   }, 60_000)
 
-  it('has nothing to give back on ↑ once the loop has already taken the message', async () => {
+  it('takes back a message the loop has taken but not yet answered, retracting it from the log', async () => {
     const mounted = await open({ app: slowly() })
 
     try {
@@ -108,19 +108,30 @@ describe('typing while the turn is running', () => {
       await mounted.typeText(STEER)
       mounted.pressEnter()
 
-      const queued = await until({
-        holds: async () => (await mounted.frame()).includes(TAKE_BACK),
+      const consumed = await until({
+        holds: async () => {
+          const events = await mounted.app.log.read({ threadId: THREAD })
+          return events.some((event) => event.type === 'user-said' && event.text === STEER)
+        },
         within: 20_000,
       })
-      expect(queued).toBe(true)
-
-      expect(mounted.app.pending.drain()).toEqual([{ text: STEER, images: [] }])
+      expect(consumed).toBe(true)
 
       mounted.pressUp()
-      await mounted.frame()
 
-      expect(mounted.app.pending.takeBackLast()).toBeNull()
-      expect(await mounted.frame()).not.toContain(TAKE_BACK)
+      const returned = await until({
+        holds: async () => {
+          const events = await mounted.app.log.read({ threadId: THREAD })
+          const retracted = !events.some(
+            (event) => event.type === 'user-said' && event.text === STEER,
+          )
+          return retracted && (await mounted.frame()).includes(STEER)
+        },
+        within: 20_000,
+      })
+
+      expect(returned).toBe(true)
+      expect(mounted.app.pending.getSnapshot()).toEqual([])
     } finally {
       await mounted.done()
     }

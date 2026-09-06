@@ -24,7 +24,6 @@ export {
 } from './in-flight-steps'
 export {
   createPendingQueue,
-  trailingSaid,
   type PendingMessage,
   type PendingQueue,
   type PendingSaid,

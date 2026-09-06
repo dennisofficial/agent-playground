@@ -686,8 +686,8 @@ export async function composeAtlas(args: {
     dispatch: container.resolve(portToken(ToolDispatcher)),
     hooks: container.resolve(HookChainToken),
     drainPending: async (args) => [
-      ...pending.drain().map(userSaidDraft),
       ...(await drainNotices(args)),
+      ...pending.drain().map(userSaidDraft),
     ],
     spend: { ledger, clock: container.resolve(portToken(ClockPort)) },
     compact: compactBeforeOverflow,

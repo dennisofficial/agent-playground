@@ -225,8 +225,8 @@ describe('what the transcript actually says', () => {
           width: 80,
           turn: RUNNING,
           pending: [
-            { kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false },
-            { kind: EPendingKind.Operator, id: 'p2', text: 'and the fixtures', taken: false },
+            { kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too' },
+            { kind: EPendingKind.Operator, id: 'p2', text: 'and the fixtures' },
           ],
         }),
         80,
@@ -250,10 +250,10 @@ describe('what the transcript actually says', () => {
           width: 80,
           turn: RUNNING,
           pending: [
-            { kind: EPendingKind.Operator, id: 'p1', text: 'hi', taken: false },
-            { kind: EPendingKind.Operator, id: 'p2', text: 'how', taken: false },
-            { kind: EPendingKind.Operator, id: 'p3', text: 'are', taken: false },
-            { kind: EPendingKind.Operator, id: 'p4', text: 'you?', taken: false },
+            { kind: EPendingKind.Operator, id: 'p1', text: 'hi' },
+            { kind: EPendingKind.Operator, id: 'p2', text: 'how' },
+            { kind: EPendingKind.Operator, id: 'p3', text: 'are' },
+            { kind: EPendingKind.Operator, id: 'p4', text: 'you?' },
           ],
         }),
         80,
@@ -276,7 +276,7 @@ describe('what the transcript actually says', () => {
           model: STREAMING,
           width: 80,
           turn: RUNNING,
-          pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false }],
+          pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too' }],
         }),
         80,
       )
@@ -294,27 +294,12 @@ describe('what the transcript actually says', () => {
         model: STREAMING,
         width: 80,
         turn: RUNNING,
-        pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false }],
+        pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too' }],
       }),
       80,
     )
 
     expect(frame).toContain('↑ to edit')
-  })
-
-  it('stops offering it back once the loop has taken it, while it still stands there', async () => {
-    const frame = await frameOf(
-      transcript({
-        model: STREAMING,
-        width: 80,
-        turn: RUNNING,
-        pending: [{ kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: true }],
-      }),
-      80,
-    )
-
-    expect(frame).toContain('check the tests too')
-    expect(frame).not.toContain('↑ to edit')
   })
 
   it('stands a background shell ending in the same queue, for show only', async () => {
@@ -347,7 +332,7 @@ describe('what the transcript actually says', () => {
         width: 80,
         turn: RUNNING,
         pending: [
-          { kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too', taken: false },
+          { kind: EPendingKind.Operator, id: 'p1', text: 'check the tests too' },
           {
             kind: EPendingKind.BackgroundShell,
             id: 'shell-ended-bash_1',

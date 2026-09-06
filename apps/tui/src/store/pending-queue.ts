@@ -10,7 +10,7 @@ export type PendingQueue = {
   enqueue(args: { text: string; images?: readonly SaidImage[] }): void
   takeBackLast(): PendingMessage | null
   drain(): readonly PendingSaid[]
-  settleTaken(args: { landed: readonly string[] }): void
+  settleTaken(args: { events: readonly Event[] }): void
   clear(): void
 }
 
@@ -20,26 +20,21 @@ const NOTHING_TAKEN: readonly PendingSaid[] = Object.freeze([])
 
 const NO_IMAGES: readonly SaidImage[] = Object.freeze([])
 
-export const trailingSaid = (events: readonly Event[]): readonly string[] => {
-  const said: string[] = []
+const takenRunAnsweredIn = (args: {
+  events: readonly Event[]
+  taken: readonly PendingMessage[]
+}): boolean => {
+  const { events, taken } = args
 
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    if (event?.type !== 'user-said') break
-    said.unshift(event.text)
+  for (let start = events.length - taken.length; start >= 0; start -= 1) {
+    const matches = taken.every((message, offset) => {
+      const event = events[start + offset]
+      return event?.type === 'user-said' && event.text === message.text
+    })
+    if (matches) return start + taken.length < events.length
   }
 
-  return said
-}
-
-const landedInOrder = (args: { landed: readonly string[]; taken: readonly PendingMessage[] }): boolean => {
-  const said = args.taken.map((message) => message.text)
-
-  return args.landed.some(
-    (_text, start) =>
-      start + said.length <= args.landed.length &&
-      said.every((text, offset) => text === args.landed[start + offset]),
-  )
+  return false
 }
 
 export function createPendingQueue(): PendingQueue {
@@ -77,10 +72,16 @@ export function createPendingQueue(): PendingQueue {
 
     takeBackLast() {
       const last = waiting.at(-1)
-      if (last === undefined) return null
+      if (last !== undefined) {
+        settle({ waiting: waiting.slice(0, -1) })
+        return last
+      }
 
-      settle({ waiting: waiting.slice(0, -1) })
-      return last
+      const recalled = taken.at(-1)
+      if (recalled === undefined) return null
+
+      settle({ taken: taken.slice(0, -1) })
+      return recalled
     },
 
     drain() {
@@ -91,9 +92,9 @@ export function createPendingQueue(): PendingQueue {
       return handed.map((message) => ({ text: message.text, images: message.images }))
     },
 
-    settleTaken({ landed }) {
+    settleTaken({ events }) {
       if (taken.length === 0) return
-      if (!landedInOrder({ landed, taken })) return
+      if (!takenRunAnsweredIn({ events, taken })) return
 
       settle({ taken: NOTHING_PENDING })
     },
