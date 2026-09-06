@@ -65,7 +65,9 @@ export function memoryCall(args: { call: ToolCall; cwd: string }): Classificatio
   if (path === undefined || !looksLikeMemoryPath(path)) return null
 
   if (call.name === 'read') return recalled({ call, path })
-  if (call.name === 'write' || call.name === 'edit') return saved({ call, path })
+  if (call.name === 'write' || call.name === 'edit' || call.name === 'multi_edit') {
+    return saved({ call, path })
+  }
 
   return null
 }

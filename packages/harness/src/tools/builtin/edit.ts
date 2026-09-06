@@ -14,15 +14,8 @@ import { z } from 'zod'
 import { LocalFileSystemPort } from '../../execution/local-filesystem'
 import { writeFileAtomically } from '../../files/atomic-write'
 import { FileWriteGuardPort, SerializedWrites } from '../../files/write-guard'
-import {
-  detectLineEnding,
-  endingOfRegion,
-  filePathSchema,
-  lineEndingAgnosticPattern,
-  resolveToolPath,
-  toLf,
-  withLineEnding,
-} from './file-text'
+import { filePathSchema, resolveToolPath, toLf } from './file-text'
+import { replaceInContent } from './replace-text'
 import { renderUnifiedDiff } from './unified-diff'
 
 const inputSchema = z.strictObject({
@@ -88,30 +81,15 @@ async function replaceInFile(args: {
   files: FileSystemPort
 }): Promise<ToolOutcome> {
   const raw = await Bun.file(args.path).text()
-  const pattern = lineEndingAgnosticPattern(args.oldString)
+  const replaced = replaceInContent({
+    content: raw,
+    oldString: args.oldString,
+    newString: args.newString,
+    replaceAll: args.replaceAll,
+  })
+  if (!replaced.ok) return { ok: false, reason: replaced.reason }
 
-  const matches = [...raw.matchAll(new RegExp(pattern, 'g'))].length
-  if (matches === 0) {
-    return { ok: false, reason: `String to replace not found in file.\nString: ${args.oldString}` }
-  }
-  if (matches > 1 && !args.replaceAll) {
-    return {
-      ok: false,
-      reason: `Found ${matches} matches of the string to replace, but replaceAll is false. To replace all occurrences, set replaceAll to true. To replace only one occurrence, please provide more context to uniquely identify the instance.\nString: ${args.oldString}`,
-    }
-  }
-
-  const fallback = detectLineEnding(raw)
-  const replacement = toLf(args.newString)
-  const rewritten = raw.replace(new RegExp(pattern, args.replaceAll ? 'g' : ''), (region) =>
-    withLineEnding({ content: replacement, ending: endingOfRegion({ region, fallback }) }),
-  )
-
-  if (rewritten === raw) {
-    return { ok: false, reason: 'oldString and newString are identical; the file would not change.' }
-  }
-
-  await writeFileAtomically({ path: args.path, content: rewritten, mode: args.mode, files: args.files })
+  await writeFileAtomically({ path: args.path, content: replaced.content, mode: args.mode, files: args.files })
 
   return {
     ok: true,
@@ -120,7 +98,7 @@ async function replaceInFile(args: {
       diff: renderUnifiedDiff({
         path: args.path,
         oldContent: toLf(raw),
-        newContent: toLf(rewritten),
+        newContent: toLf(replaced.content),
       }),
     },
     modelText: updated(args.path),

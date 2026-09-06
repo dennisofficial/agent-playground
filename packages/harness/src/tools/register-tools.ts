@@ -25,6 +25,7 @@ import { ExitWorktreeTool } from './builtin/exit-worktree'
 import { GlobTool } from './builtin/glob'
 import { GrepTool } from './builtin/grep'
 import { McpEditTool } from './builtin/mcp-edit'
+import { MultiEditTool } from './builtin/multi-edit'
 import { ReadTool } from './builtin/read'
 import { ServiceListTool } from './builtin/service-list'
 import { ServiceStartTool } from './builtin/service-start'
@@ -61,6 +62,13 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
   container.register(portToken(ToolDefinition), {
     useFactory: (resolver) =>
       new EditTool(
+        resolver.resolve(portToken(FileWriteGuardPort)),
+        resolver.resolve(portToken(FileSystemPort)),
+      ),
+  })
+  container.register(portToken(ToolDefinition), {
+    useFactory: (resolver) =>
+      new MultiEditTool(
         resolver.resolve(portToken(FileWriteGuardPort)),
         resolver.resolve(portToken(FileSystemPort)),
       ),

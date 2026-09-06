@@ -259,7 +259,9 @@ export function classify(args: { call: ToolCall; cwd: string }): Classification 
   const remembered = memoryCall(args)
   if (remembered !== null) return remembered
 
-  if (call.name === 'edit' || call.name === 'write') return changed(args)
+  if (call.name === 'edit' || call.name === 'multi_edit' || call.name === 'write') {
+    return changed(args)
+  }
 
   if (call.name === 'bash') {
     const output = outputOf(call)

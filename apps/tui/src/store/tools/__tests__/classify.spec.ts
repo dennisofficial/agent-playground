@@ -136,6 +136,23 @@ describe('the tools that are not bash', () => {
     expect(edit.detail).toBe(EDetail.Diff)
   })
 
+  it('reads a multi-edit as an edit, several hunks and all', () => {
+    const multi = reading(
+      aCall({
+        name: 'multi_edit',
+        output: {
+          path: `${CWD}/src/a.ts`,
+          diff: '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n one\n+two\n@@ -10,1 +10,2 @@\n ten\n+eleven\n',
+        },
+      }),
+    )
+
+    expect(multi.klass).toBe(EToolClass.Change)
+    expect(multi.line).toBe('Edited src/a.ts')
+    expect(multi.note).toBe('+2 −0')
+    expect(multi.detail).toBe(EDetail.Diff)
+  })
+
   it('says a write created rather than wrote when it did', () => {
     const write = reading(
       aCall({ name: 'write', output: { path: `${CWD}/src/new.ts`, created: true, bytes: 58 } }),
