@@ -1,7 +1,7 @@
 import { parseColor, type TextChunk } from '@opentui/core'
 import { describe, expect, it } from 'bun:test'
 
-import { chunksByLine, fitDiffChunks, highlightRows } from '../highlight-rows'
+import { chunksByLine, fitDiffChunks, highlightRows, wrapDiffChunks } from '../highlight-rows'
 import { grammarsReady } from './harness'
 
 await grammarsReady()
@@ -63,6 +63,44 @@ describe('fitDiffChunks', () => {
     const fitted = fitDiffChunks({ chunks: [chunk('abcdefgh', '#f00')], columns: 4 })
     expect(fitted.at(-1)?.text).toBe('…')
     expect(fitted.at(-1)?.fg?.equals(parseColor('#f00'))).toBe(true)
+  })
+})
+
+describe('wrapDiffChunks', () => {
+  it('leaves a row that fits completely alone', () => {
+    const chunks = [chunk('bun'), chunk(' test')]
+    expect(wrapDiffChunks({ chunks, columns: 20 })).toEqual([chunks])
+  })
+
+  it('wraps at word boundaries, dropping the space it broke on', () => {
+    const rows = wrapDiffChunks({ chunks: [chunk('foo bar baz')], columns: 4 })
+    expect(textOf(rows)).toEqual(['foo', 'bar', 'baz'])
+  })
+
+  it('hard-breaks a word longer than the row, the way a terminal wraps a path', () => {
+    const rows = wrapDiffChunks({ chunks: [chunk('cd /aaaaaaaaaa')], columns: 6 })
+    expect(textOf(rows)).toEqual(['cd', '/aaaaa', 'aaaaa'])
+  })
+
+  it('splits styled chunks at the break without losing their colours', () => {
+    const rows = wrapDiffChunks({
+      chunks: [chunk('bun ', '#0f0'), chunk('run build', '#f00')],
+      columns: 5,
+    })
+    expect(textOf(rows)).toEqual(['bun', 'run', 'build'])
+    expect(rows[0]?.[0]?.fg?.equals(parseColor('#0f0'))).toBe(true)
+    expect(rows[1]?.[0]?.fg?.equals(parseColor('#f00'))).toBe(true)
+    expect(rows[2]?.[0]?.fg?.equals(parseColor('#f00'))).toBe(true)
+  })
+
+  it('does not start a row on the space it broke before', () => {
+    const rows = wrapDiffChunks({ chunks: [chunk('foo bar')], columns: 3 })
+    expect(textOf(rows)).toEqual(['foo', 'bar'])
+  })
+
+  it('does not leave an empty row behind a trailing space at the break', () => {
+    const rows = wrapDiffChunks({ chunks: [chunk('foo ')], columns: 3 })
+    expect(textOf(rows)).toEqual(['foo'])
   })
 })
 
