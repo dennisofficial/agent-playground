@@ -1,9 +1,11 @@
-import { RESUME_NUDGE } from '@dltech/atlas-core'
+import { RESUME_NUDGE, toRunId, type EventDraft } from '@dltech/atlas-core'
 import { describe, expect, it } from 'bun:test'
 
 import { grammarsReady } from '../../ui/markdown/__tests__/harness'
+import { EOpenMode } from '../config'
+import type { OpenedConversation } from '../open-conversation'
 import { open, until, THREAD, THINKING } from './app-fixture'
-import { fakeApp, scriptedModelPort } from './fake-app'
+import { fakeApp, scriptedModelPort, type FakeApp } from './fake-app'
 
 await grammarsReady()
 
@@ -51,6 +53,19 @@ async function stoppedMidReply() {
   expect(offered).toBe(true)
 
   return mounted
+}
+
+async function reopenedWith(
+  app: FakeApp,
+  drafts: readonly EventDraft[],
+): Promise<OpenedConversation> {
+  const events = await app.log.append({
+    threadId: THREAD,
+    runId: toRunId('run-before'),
+    drafts,
+  })
+
+  return { threadId: THREAD, events, turns: [], name: null, started: true }
 }
 
 describe('resuming a turn escape stopped', () => {
@@ -106,6 +121,99 @@ describe('resuming a turn escape stopped', () => {
       })
       expect(settled).toBe(true)
       expect(await mounted.frame()).not.toContain(RESUME_HINT)
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+})
+
+describe('resuming on launch', () => {
+  it('picks an interrupted turn back up without waiting for the chord', async () => {
+    const app = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: SPOKEN } }),
+      open: { mode: EOpenMode.Continue },
+    })
+    const mounted = await open({
+      app,
+      opened: await reopenedWith(app, [
+        { type: 'user-said', text: MESSAGE },
+        { type: 'assistant-said', parts: [{ type: 'text', text: HEAD }], interrupted: true },
+      ]),
+    })
+
+    try {
+      const resumed = await until({
+        holds: async () => (await typesOf(mounted)).includes('nudge'),
+        within: 20_000,
+      })
+      expect(resumed).toBe(true)
+      expect(mounted.app.turnsDriven).toBe(1)
+
+      const events = await mounted.app.log.read({ threadId: THREAD })
+      const nudge = events.find((event) => event.type === 'nudge')
+      expect(nudge?.type === 'nudge' ? nudge.text : '').toBe(RESUME_NUDGE)
+      expect(events.filter((event) => event.type === 'user-said')).toHaveLength(1)
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('runs a turn the last session never answered', async () => {
+    const app = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: SPOKEN } }),
+      open: { mode: EOpenMode.Resume, threadId: THREAD },
+    })
+    const mounted = await open({
+      app,
+      opened: await reopenedWith(app, [{ type: 'user-said', text: MESSAGE }]),
+    })
+
+    try {
+      const answered = await until({
+        holds: async () => (await mounted.frame()).includes(HEAD),
+        within: 30_000,
+      })
+      expect(answered).toBe(true)
+      expect(mounted.app.turnsDriven).toBe(1)
+      expect(await typesOf(mounted)).not.toContain('nudge')
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('leaves a settled thread alone', async () => {
+    const app = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: SPOKEN } }),
+      open: { mode: EOpenMode.Continue },
+    })
+    const mounted = await open({
+      app,
+      opened: await reopenedWith(app, [
+        { type: 'user-said', text: MESSAGE },
+        { type: 'assistant-said', parts: [{ type: 'text', text: SPOKEN }] },
+      ]),
+    })
+
+    try {
+      await mounted.frame()
+      expect(mounted.app.turnsDriven).toBe(0)
+    } finally {
+      await mounted.done()
+    }
+  }, 60_000)
+
+  it('leaves a resumable thread alone when the launch opened a new conversation', async () => {
+    const app = fakeApp({
+      model: scriptedModelPort({ script: { thinking: THINKING, reply: SPOKEN } }),
+    })
+    const mounted = await open({
+      app,
+      opened: await reopenedWith(app, [{ type: 'user-said', text: MESSAGE }]),
+    })
+
+    try {
+      await mounted.frame()
+      expect(mounted.app.turnsDriven).toBe(0)
     } finally {
       await mounted.done()
     }
