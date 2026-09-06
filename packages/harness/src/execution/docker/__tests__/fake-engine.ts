@@ -23,6 +23,7 @@ export const fakeEngine = (args?: {
     state: string
     image?: string
     mounts: readonly { source: string; destination: string; readOnly: boolean }[]
+    labels?: Record<string, string>
   }
   exitCodes?: number[]
 }): {
@@ -30,11 +31,14 @@ export const fakeEngine = (args?: {
   execs: RecordedExec[]
   builds: string[]
   creates: string[]
+  removals: string[]
 } => {
   const execs: RecordedExec[] = []
   const builds: string[] = []
   const creates: string[] = []
+  const removals: string[] = []
   const exitCodes = [...(args?.exitCodes ?? [])]
+  let created: { image: string; labels: Record<string, string> } | undefined
 
   const engine: SandboxEngine = {
     listContainers: async () =>
@@ -52,7 +56,11 @@ export const fakeEngine = (args?: {
       id: args?.existing?.id ?? 'created-1',
       name: 'atlas-deadbeef1234',
       state: { running: args?.existing?.state === 'running' },
-      config: { labels: {}, env: [], image: args?.existing?.image ?? FAKE_CONFIG.image },
+      config: {
+        labels: args?.existing?.labels ?? created?.labels ?? {},
+        env: [],
+        image: args?.existing?.image ?? created?.image ?? FAKE_CONFIG.image,
+      },
       mounts: args?.existing?.mounts ?? [],
       ports: [],
       hostConfig: { nanoCpus: 0, memoryBytes: 0 },
@@ -60,7 +68,11 @@ export const fakeEngine = (args?: {
     info: async () => ({ cpus: 64, memoryBytes: 1024 ** 4 }),
     createContainer: async (createArgs) => {
       creates.push(createArgs.body.Image)
+      created = { image: createArgs.body.Image, labels: createArgs.body.Labels ?? {} }
       return { id: 'created-1', warnings: [] }
+    },
+    removeContainer: async (remove) => {
+      removals.push(remove.id)
     },
     startContainer: async () => undefined,
     createExec: async (execArgs) => {
@@ -77,5 +89,5 @@ export const fakeEngine = (args?: {
     },
   }
 
-  return { engine, execs, builds, creates }
+  return { engine, execs, builds, creates, removals }
 }

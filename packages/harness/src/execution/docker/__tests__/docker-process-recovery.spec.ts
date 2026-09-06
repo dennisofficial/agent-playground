@@ -25,9 +25,12 @@ const config = (): SandboxConfig => ({
 
 class StubEngine extends DockerEngine {
   running = true
+  exists = true
+  image = 'node:22-slim'
   listCalls = 0
   inspectCalls = 0
   startCalls = 0
+  createCalls = 0
   execError: Error | null = null
 
   constructor() {
@@ -36,6 +39,7 @@ class StubEngine extends DockerEngine {
 
   override async listContainers(): Promise<ContainerSummary[]> {
     this.listCalls += 1
+    if (!this.exists) return []
     return [
       {
         id: CONTAINER_ID,
@@ -52,11 +56,29 @@ class StubEngine extends DockerEngine {
       id: CONTAINER_ID,
       name: 'atlas-dev-stub',
       state: { running: this.running },
-      config: { labels: {}, env: ['PATH=/usr/local/bin'], image: 'node:22-slim' },
+      config: { labels: {}, env: ['PATH=/usr/local/bin'], image: this.image },
       mounts: [],
       ports: [{ containerPort: 3000, hostPort: 20_000 }],
       hostConfig: { nanoCpus: 0, memoryBytes: 0 },
     }
+  }
+
+  override async info(): Promise<{ cpus: number; memoryBytes: number }> {
+    return { cpus: 64, memoryBytes: 1024 ** 4 }
+  }
+
+  override async createContainer(args: { body: { Image: string } }): Promise<{ id: string; warnings: string[] }> {
+    this.createCalls += 1
+    this.exists = true
+    this.running = true
+    this.image = args.body.Image
+    return { id: CONTAINER_ID, warnings: [] }
+  }
+
+  override async removeContainer(args: { id: string }): Promise<void> {
+    void args
+    this.exists = false
+    this.running = false
   }
 
   override async startContainer(): Promise<void> {
@@ -178,5 +200,33 @@ describe('DockerProcessPort recovering a sandbox that stopped behind its back', 
     expect(await runTrue(port)).toBe(0)
     expect(engine.startCalls).toBe(1)
     expect(statesOf(seen)).toEqual([ESandboxState.Starting, ESandboxState.Running])
+  })
+})
+
+describe('DockerProcessPort after a refused sandbox', () => {
+  it('does not latch a failed ensure: the next spawn re-ensures and recovers once the container is gone', async () => {
+    const engine = new StubEngine()
+    engine.image = 'node:19-ancient'
+    const seen: SandboxStatus[] = []
+    const port = new DockerProcessPort({
+      engine,
+      sandbox: config(),
+      dockerCli: null,
+      onStatus: (status) => seen.push(status),
+    })
+
+    await expect(runTrue(port)).rejects.toThrow(/new container/)
+    expect(statesOf(seen)).toEqual([ESandboxState.Starting, ESandboxState.Failed])
+
+    await engine.removeContainer({ id: CONTAINER_ID })
+
+    expect(await runTrue(port)).toBe(0)
+    expect(engine.createCalls).toBe(1)
+    expect(statesOf(seen)).toEqual([
+      ESandboxState.Starting,
+      ESandboxState.Failed,
+      ESandboxState.Starting,
+      ESandboxState.Running,
+    ])
   })
 })

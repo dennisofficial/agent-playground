@@ -2,7 +2,14 @@ import { createHash } from 'node:crypto'
 
 import { mountBind, type Mount } from '../image/mounts'
 import { dockerfileImageReference, ensureBuiltImage, type DockerfileBuild } from '../image/build'
-import { SandboxImageChanged, SandboxMountsChanged, mountsDrift, publicIdentityMountsDrift, systemMountDestinations } from './mount-drift'
+import {
+  SandboxImageChanged,
+  SandboxMountsChanged,
+  declaredMountsDrift,
+  declaredMountsLabel,
+  encodeDeclaredMounts,
+  missingIdentityMounts,
+} from './mount-drift'
 import { publishPlanFor } from './ports'
 import { prepareContainerForOperator } from './operator-setup'
 import { runSandboxScripts } from './sandbox-scripts'
@@ -25,6 +32,7 @@ export type SandboxEngine = Pick<
   | 'inspectContainer'
   | 'inspectExec'
   | 'listContainers'
+  | 'removeContainer'
   | 'startContainer'
   | 'startExec'
 > & {
@@ -119,7 +127,10 @@ export function sandboxCreateBody(config: SandboxConfig): CreateContainerBody {
     User: `${config.uid}:${config.gid}`,
     WorkingDir: config.worktree,
     Env: env,
-    Labels: { [worktreeLabel(prefix)]: config.worktree },
+    Labels: {
+      [worktreeLabel(prefix)]: config.worktree,
+      [declaredMountsLabel(prefix)]: encodeDeclaredMounts(config.mounts ?? []),
+    },
     ExposedPorts: Object.fromEntries(published.map((one) => [`${one.containerPort}/tcp`, {}])),
     HostConfig: {
       Binds: binds,
@@ -186,40 +197,54 @@ export async function ensureSandbox(args: {
   const prefix = args.config.labelPrefix ?? DEFAULT_LABEL_PREFIX
   const name = sandboxNameFor({ prefix, worktree: args.config.worktree })
 
+  const recreated: string[] = []
+
   const existing = await findSandbox({ engine: args.engine, prefix, worktree: args.config.worktree })
   if (existing !== undefined) {
     const details = await args.engine.inspectContainer({ id: existing.id })
-    if (
-      mountsDrift({
-        requested: args.config.mounts ?? [],
-        actual: details.mounts,
-        system: systemMountDestinations(args.config),
-      }) || publicIdentityMountsDrift({ config: args.config, actual: details.mounts })
-    ) {
-      throw new SandboxMountsChanged({ name })
-    }
     const wanted =
       args.config.dockerfile === undefined
         ? args.config.image
         : await dockerfileImageReference({ dockerfile: args.config.dockerfile })
-    if (details.config.image !== wanted) {
-      throw new SandboxImageChanged({ name, image: wanted })
-    }
+    const drifted = declaredMountsDrift({ config: args.config, details, prefix })
+    const imageChanged = details.config.image !== wanted
 
-    if (!details.state.running) await args.engine.startContainer({ id: existing.id })
-    await prepareContainerForOperator({
-      engine: args.engine,
-      containerId: existing.id,
-      config: args.config,
-    })
-    const warnings = await runSandboxScripts({
-      engine: args.engine,
-      containerId: existing.id,
-      name,
-      config: args.config,
-      created: false,
-    })
-    return { id: existing.id, name, created: false, warnings }
+    if (drifted || imageChanged) {
+      if (details.state.running) {
+        throw drifted
+          ? new SandboxMountsChanged({ name })
+          : new SandboxImageChanged({ name, image: wanted })
+      }
+      await args.engine.removeContainer({ id: existing.id })
+      recreated.push(
+        drifted
+          ? `recreated ${name}: the declared mounts changed since it was created, and it was stopped, so nothing live was lost`
+          : `recreated ${name}: the image changed to ${wanted} since it was created, and it was stopped, so nothing live was lost`,
+      )
+    } else {
+      if (!details.state.running) await args.engine.startContainer({ id: existing.id })
+      await prepareContainerForOperator({
+        engine: args.engine,
+        containerId: existing.id,
+        config: args.config,
+      })
+      const warnings = await runSandboxScripts({
+        engine: args.engine,
+        containerId: existing.id,
+        name,
+        config: args.config,
+        created: false,
+      })
+      return {
+        id: existing.id,
+        name,
+        created: false,
+        warnings: [
+          ...missingIdentityMounts({ config: args.config, actual: details.mounts }),
+          ...warnings,
+        ],
+      }
+    }
   }
 
   const warnings = await oversubscriptionWarnings({
@@ -253,6 +278,6 @@ export async function ensureSandbox(args: {
     id: created.id,
     name,
     created: true,
-    warnings: [...warnings, ...created.warnings, ...scriptWarnings],
+    warnings: [...recreated, ...warnings, ...created.warnings, ...scriptWarnings],
   }
 }
