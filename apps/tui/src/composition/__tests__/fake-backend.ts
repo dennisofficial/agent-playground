@@ -78,6 +78,15 @@ export function fakeThreadStore(
   const chosenModels: { threadId: ThreadId; model: ThreadModel }[] = []
   const chosenLocations: { threadId: ThreadId; location: EExecutionLocation }[] = []
 
+  const dropRows = (agentIds: readonly ThreadId[] | undefined): void => {
+    if (agentIds === undefined || agentIds.length === 0) return
+    const cut = new Set<ThreadId>(agentIds)
+    for (let at = rows.length - 1; at >= 0; at -= 1) {
+      const row = rows[at]
+      if (row !== undefined && cut.has(row.id)) rows.splice(at, 1)
+    }
+  }
+
   return {
     get created() {
       return created
@@ -112,7 +121,8 @@ export function fakeThreadStore(
       )
     },
 
-    async summarise({ threadId, anchor, fromSeq, throughSeq, summary }) {
+    async summarise({ threadId, anchor, fromSeq, throughSeq, summary, cutAgents }) {
+      dropRows(cutAgents)
       return (
         args.log?.replaceWithSummary({
           threadId,
@@ -245,9 +255,10 @@ export function fakeThreadStore(
       if (row !== undefined) row.executionLocation = location
     },
 
-    async rewind({ threadId, toSeq }) {
+    async rewind({ threadId, toSeq, cutAgents }) {
       const row = rows.find((held) => held.id === threadId)
       if (row !== undefined) row.head = toSeq
+      dropRows(cutAgents)
       args.log?.truncate({ threadId, toSeq })
     },
   }

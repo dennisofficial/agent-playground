@@ -354,7 +354,7 @@ export function useConversation(args: {
     if (!last.taken) return Promise.resolve(last)
 
     const retracted = retraction.current.then(() =>
-      retractTrailingSaid({ log: app.log, threads: app.threads, threadId, text: last.text }),
+      retractTrailingSaid({ log: app.log, threads: app.threads, agents: app.agents, threadId, text: last.text }),
     )
     retraction.current = retracted
 

@@ -36,6 +36,43 @@ export type SteerMessage = { text: string; images?: readonly SaidImage[] | undef
 
 export const isStepping = (child: ChildState): boolean => child.status === EAgentStatus.Running
 
+export function freshChild({
+  agentId,
+  spawnedBy,
+  agentType,
+  intent,
+  at,
+  projectDirectory,
+}: {
+  agentId: ThreadId
+  spawnedBy: ThreadId
+  agentType: string
+  intent: string
+  at: string
+  projectDirectory: string | undefined
+}): ChildState {
+  return {
+    agentId,
+    spawnedBy,
+    agentType,
+    intent,
+    status: EAgentStatus.Running,
+    killedBy: undefined,
+    turns: 0,
+    toolCalls: 0,
+    lastTool: undefined,
+    lastText: '',
+    startedAt: at,
+    steppingSince: undefined,
+    endedAt: undefined,
+    deliveredAt: undefined,
+    abort: new AbortController(),
+    pending: [],
+    context: undefined,
+    projectDirectory,
+  }
+}
+
 export function recoveredChild({
   agent,
   spawnedBy,

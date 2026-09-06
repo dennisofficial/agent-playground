@@ -179,6 +179,7 @@ describe('rewinding across a fork boundary', () => {
     const rewound = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId: forked.thread.id,
       toSeq: 1,
     })
@@ -197,6 +198,7 @@ describe('rewinding across a fork boundary', () => {
     await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId: forked.thread.id,
       toSeq: 1,
     })
@@ -217,6 +219,7 @@ describe('rewinding across a fork boundary', () => {
     const rewound = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId: forked.thread.id,
       toSeq: 3,
     })
@@ -233,6 +236,7 @@ describe('rewinding across a fork boundary', () => {
     const rewound = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId: forked.thread.id,
       toSeq: 1,
     })
@@ -251,6 +255,7 @@ describe('rewinding across a fork boundary', () => {
     const rewound = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId: forked.thread.id,
       toSeq: 4,
     })

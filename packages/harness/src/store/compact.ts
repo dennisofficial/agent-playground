@@ -1,6 +1,8 @@
 import {
   compactionTarget,
   ECompactionAnchor,
+  eventsOfType,
+  rowsOwnedBy,
   suffixCompactionTarget,
   type CompactionTarget,
   type ECompactionRefusal,
@@ -9,6 +11,7 @@ import {
   type ThreadId,
 } from '@dltech/atlas-core'
 
+import type { AgentRegistryPort } from '../agents/registry/port'
 import type { ThreadStorePort } from './thread-store'
 
 export enum ECompactionFailure {
@@ -61,9 +64,35 @@ const guardFor = ({
     ? compactionTarget({ events, throughSeq: seq })
     : suffixCompactionTarget({ events, fromSeq: seq })
 
+function delegationsCutBy({
+  events,
+  threadId,
+  fromSeq,
+  throughSeq,
+}: {
+  events: readonly Event[]
+  threadId: ThreadId
+  fromSeq: number
+  throughSeq: number
+}): readonly ThreadId[] {
+  const owned = rowsOwnedBy({ events, threadId })
+  const inRange = (seq: number): boolean => seq >= fromSeq && seq <= throughSeq
+
+  const endingsKept = new Set(
+    eventsOfType({ events: owned, type: 'agent-ended' })
+      .filter((ending) => !inRange(ending.seq))
+      .map((ending) => ending.agentId),
+  )
+
+  return eventsOfType({ events: owned, type: 'agent-spawned' })
+    .filter((spawn) => inRange(spawn.seq) && !endingsKept.has(spawn.agentId))
+    .map((spawn) => spawn.agentId)
+}
+
 export async function compactThread(args: {
   log: EventLogPort
   threads: ThreadStorePort
+  agents: AgentRegistryPort
   threadId: ThreadId
   anchor: ECompactionAnchor
   seq: number
@@ -71,7 +100,7 @@ export async function compactThread(args: {
   destructive?: boolean | undefined
   signal?: AbortSignal | undefined
 }): Promise<CompactionOutcome> {
-  const { log, threads, threadId, anchor, seq, summarise, signal } = args
+  const { log, threads, agents, threadId, anchor, seq, summarise, signal } = args
   const events = await log.read({ threadId })
 
   const target = guardFor({ events, anchor, seq })
@@ -91,9 +120,13 @@ export async function compactThread(args: {
     return { ok: false, failure: ECompactionFailure.NoSummary, reason: NO_SUMMARY }
   }
 
-  const replaced = args.destructive
-    ? await threads.summarise({ threadId, anchor, ...range, summary })
-    : await threads.compact({ threadId, anchor, ...range, summary })
+  if (args.destructive) {
+    const cutAgents = delegationsCutBy({ events, threadId, ...range })
+    const replaced = await threads.summarise({ threadId, anchor, ...range, summary, cutAgents })
+    await agents.removeChildren({ threadId, agentIds: cutAgents })
+    return { ok: true, anchor, ...range, replaced, summary }
+  }
 
+  const replaced = await threads.compact({ threadId, anchor, ...range, summary })
   return { ok: true, anchor, ...range, replaced, summary }
 }

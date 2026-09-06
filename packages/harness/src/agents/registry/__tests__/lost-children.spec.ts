@@ -167,6 +167,7 @@ describe('the rewind a lost child was blocking', () => {
       rewindThread({
         log: open.harness.log,
         threads: open.harness.threads,
+        agents: open.supervisor,
         threadId: open.parent,
         toSeq: 0,
       })
@@ -222,6 +223,7 @@ describe('a child thread the parent never recorded', () => {
       await rewindThread({
         log: open.harness.log,
         threads: open.harness.threads,
+        agents: open.supervisor,
         threadId: open.parent,
         toSeq: 0,
       }),

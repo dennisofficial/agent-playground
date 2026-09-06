@@ -5,7 +5,7 @@ import {
   type EventLogPort,
   type ThreadId,
 } from '@dltech/atlas-core'
-import { compactThread, type ThreadStorePort } from '@dltech/atlas-harness'
+import { compactThread, type AgentRegistryPort, type ThreadStorePort } from '@dltech/atlas-harness'
 
 export enum ECompaction {
   Compacted = 'compacted',
@@ -56,12 +56,13 @@ async function watermarkFor({
 export async function compactTurn(args: {
   log: EventLogPort
   threads: ThreadStorePort
+  agents: AgentRegistryPort
   threadId: ThreadId
   scope?: ECompactScope | undefined
   summarise: Summariser
   signal?: AbortSignal | undefined
 }): Promise<Compaction> {
-  const { log, threads, threadId, summarise } = args
+  const { log, threads, agents, threadId, summarise } = args
   const scope = args.scope ?? ECompactScope.Recent
 
   const throughSeq = await watermarkFor({ log, threadId, scope })
@@ -70,6 +71,7 @@ export async function compactTurn(args: {
   return compactAt({
     log,
     threads,
+    agents,
     threadId,
     anchor: ECompactionAnchor.Prefix,
     seq: throughSeq,
@@ -81,6 +83,7 @@ export async function compactTurn(args: {
 type Marking = {
   log: EventLogPort
   threads: ThreadStorePort
+  agents: AgentRegistryPort
   threadId: ThreadId
   anchor: ECompactionAnchor
   seq: number
@@ -106,6 +109,7 @@ export const summariseAt = (args: Marking): Promise<Compaction> =>
 async function marked({
   log,
   threads,
+  agents,
   threadId,
   anchor,
   seq,
@@ -116,6 +120,7 @@ async function marked({
   const outcome = await compactThread({
     log,
     threads,
+    agents,
     threadId,
     anchor,
     seq,

@@ -1,5 +1,4 @@
 import {
-  EAgentStatus,
   EKilledBy,
   EMessageOrigin,
   projectDirectoryOf,
@@ -15,9 +14,11 @@ import type { ThreadStorePort } from '../../store'
 import type { ChildRunnerSource } from './child-runner'
 import type { AgentType } from '../types'
 import { ChildSteps } from './child-steps'
-import { isStepping, snapshotOf, type ChildState } from './child-state'
+import { freshChild, isStepping, snapshotOf, type ChildState } from './child-state'
+import { NoticeDelivery } from './delivery'
 import { AgentNoticeQueue } from './notices'
 import { openChildThread } from './open-child'
+import { forgetRemovedChildren } from './remove-children'
 import { AgentRegistryPort, type AgentOutcome } from './port'
 import { ChildRecovery } from './recovery'
 import {
@@ -29,6 +30,7 @@ import {
 } from './reasons'
 import { AgentRoster } from './roster'
 import type { AgentSnapshot, RecoveredAgents } from './snapshot'
+import { stopAllChildren, stopChild } from './stop-all'
 
 export class AgentSupervisor extends AgentRegistryPort {
   private readonly log: EventLogPort
@@ -38,6 +40,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   private readonly agentTypes: readonly AgentType[]
   private readonly roster = new AgentRoster()
   private readonly notices = new AgentNoticeQueue()
+  private readonly delivery: NoticeDelivery
   private readonly steps: ChildSteps
   private readonly recovery: ChildRecovery
   private readonly launchDirectory: string
@@ -64,6 +67,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       notices: this.notices,
       clock: args.clock,
     })
+    this.delivery = new NoticeDelivery({ notices: this.notices, roster: this.roster, clock: args.clock })
     this.recovery = new ChildRecovery({
       log: args.log,
       threads: args.threads,
@@ -104,26 +108,14 @@ export class AgentSupervisor extends AgentRegistryPort {
       intent,
     })
 
-    const child: ChildState = {
+    const child = freshChild({
       agentId,
       spawnedBy: threadId,
       agentType: type.name,
       intent,
-      status: EAgentStatus.Running,
-      killedBy: undefined,
-      turns: 0,
-      toolCalls: 0,
-      lastTool: undefined,
-      lastText: '',
-      startedAt: this.clock.now(),
-      steppingSince: undefined,
-      endedAt: undefined,
-      deliveredAt: undefined,
-      abort: new AbortController(),
-      pending: [],
-      context: undefined,
+      at: this.clock.now(),
       projectDirectory: await this.directoryOf({ threadId }),
-    }
+    })
     this.roster.add(child)
 
     this.steps.take({
@@ -156,7 +148,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       return { ok: true, snapshot: snapshotOf(child) }
     }
 
-    const agentType = this.typeNamed(child.agentType)
+    const agentType = typeNamed(this.agentTypes, child.agentType)
     if (agentType === undefined) {
       return { ok: false, reason: retiredAgentType(child.agentType) }
     }
@@ -196,7 +188,7 @@ export class AgentSupervisor extends AgentRegistryPort {
     }
     if (isStepping(child)) return { ok: false, reason: alreadyStepping(agentId) }
 
-    const agentType = this.typeNamed(child.agentType)
+    const agentType = typeNamed(this.agentTypes, child.agentType)
     if (agentType === undefined) {
       return { ok: false, reason: retiredAgentType(child.agentType) }
     }
@@ -224,16 +216,25 @@ export class AgentSupervisor extends AgentRegistryPort {
     if (child === undefined) {
       return { ok: false, reason: unknownAgent({ agentId, known: this.list({ threadId }) }) }
     }
-    if (!isStepping(child)) return { ok: true, snapshot: snapshotOf(child) }
 
-    child.killedBy = by
-    child.abort.abort()
+    stopChild({ child, by })
     return { ok: true, snapshot: snapshotOf(child) }
   }
 
   list({ threadId }: { threadId: ThreadId }): readonly AgentSnapshot[] {
     void this.hydrate({ threadId })
     return this.roster.list(threadId)
+  }
+
+  async removeChildren({
+    threadId,
+    agentIds,
+  }: {
+    threadId: ThreadId
+    agentIds: readonly ThreadId[]
+  }): Promise<void> {
+    await this.hydrate({ threadId })
+    forgetRemovedChildren({ roster: this.roster, notices: this.notices, threadId, agentIds })
   }
 
   hydrate({ threadId }: { threadId: ThreadId }): Promise<void> {
@@ -249,10 +250,7 @@ export class AgentSupervisor extends AgentRegistryPort {
   }
 
   drainNotifications({ threadId }: { threadId: ThreadId }): readonly EventDraft[] {
-    const handed = this.notices.pending({ threadId })
-    const drafts = this.notices.drain({ threadId })
-    this.recordDelivery(handed)
-    return drafts
+    return this.delivery.drain({ threadId })
   }
 
   pendingNotices({ threadId }: { threadId: ThreadId }): readonly AgentSnapshot[] {
@@ -275,32 +273,8 @@ export class AgentSupervisor extends AgentRegistryPort {
     this.notices.forget({ threadId })
   }
 
-  /**
-   * An ending announces itself even when teardown caused it: reopening the conversation should say
-   * where a child went, exactly as it says where a background shell went.
-   */
-  async closeAll(): Promise<void> {
-    for (const child of this.roster.states()) {
-      if (isStepping(child) && child.killedBy === undefined) child.killedBy = EKilledBy.SessionEnd
-      child.abort.abort()
-    }
-    await this.steps.whenSettled()
-  }
-
-  private recordDelivery(handed: readonly AgentSnapshot[]): void {
-    if (handed.length === 0) return
-
-    const at = this.clock.now()
-    let stamped = false
-
-    for (const snapshot of handed) {
-      const child = this.roster.find(snapshot.agentId)
-      if (child === undefined || child.deliveredAt !== undefined) continue
-      child.deliveredAt = at
-      stamped = true
-    }
-
-    if (stamped) this.roster.changed()
+  closeAll(): Promise<void> {
+    return stopAllChildren({ roster: this.roster, steps: this.steps })
   }
 
   private childFor({
@@ -320,8 +294,7 @@ export class AgentSupervisor extends AgentRegistryPort {
       launchDirectory: this.launchDirectory,
     })
   }
-
-  private typeNamed(name: string): AgentType | undefined {
-    return this.agentTypes.find((one) => one.name === name)
-  }
 }
+
+const typeNamed = (types: readonly AgentType[], name: string): AgentType | undefined =>
+  types.find((one) => one.name === name)
