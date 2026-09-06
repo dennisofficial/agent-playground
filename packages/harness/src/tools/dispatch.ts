@@ -149,7 +149,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
     return [
       ...drafts,
       this.resultDraft({ call: allowed, result, interrupted: signal.aborted }),
-      ...(await this.observeAfterTool({ call: allowed, result, signal })),
+      ...(await this.observeAfterTool({ call: allowed, result, projectDirectory, signal })),
     ]
   }
 
@@ -266,6 +266,7 @@ export class HookedToolDispatcher extends ToolDispatcher {
   private async observeAfterTool(args: {
     call: ToolCall
     result: ToolOutcome
+    projectDirectory: string
     signal: AbortSignal
   }): Promise<EventDraft[]> {
     const observed: EventDraft[] = []
@@ -273,7 +274,13 @@ export class HookedToolDispatcher extends ToolDispatcher {
     for (const hook of this.hooks.afterTool) {
       const outcome = await withinBudget({
         label: hook.name,
-        run: () => hook.run({ call: args.call, result: args.result, signal: args.signal }),
+        run: () =>
+          hook.run({
+            call: args.call,
+            result: args.result,
+            projectDirectory: args.projectDirectory,
+            signal: args.signal,
+          }),
         fallback: () => NO_OUTCOME,
         budgetMs: this.hooks.bounds.budgetMs,
         onMishap: this.onMishap,

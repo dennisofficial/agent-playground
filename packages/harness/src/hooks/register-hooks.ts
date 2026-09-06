@@ -14,6 +14,7 @@ import { WorkspaceRoot } from '../container/tokens'
 import { FileReadStatePort } from '../files/read-state'
 import { InvalidateFactsHook } from './invalidate-facts'
 import { MirrorPlanHook } from './mirror-plan'
+import { OutsideProjectHook } from './outside-project'
 import { PrewarmFactsHook } from './prewarm-facts'
 import { ReadBeforeWriteHook } from './read-before-write'
 import { ResolveProjectPathsHook } from './resolve-project-paths'
@@ -54,6 +55,7 @@ export function registerBuiltinHooks({ container }: { container: DependencyConta
       ),
   })
   container.register(portToken(AfterToolHook), { useClass: MirrorPlanHook })
+  container.register(portToken(AfterToolHook), { useClass: OutsideProjectHook })
   container.register(portToken(AfterToolHook), { useClass: TrackWorktreeHook })
   container.register(portToken(AfterToolHook), {
     useFactory: (resolver) =>

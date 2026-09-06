@@ -96,7 +96,7 @@ describe('a worktree the whole way round', () => {
     if (!entering.ok) return
 
     const enteredDrafts =
-      (await hook.run({ call: call('enter_worktree'), result: entering , signal: NEVER_ABORTED })).drafts ?? []
+      (await hook.run({ call: call('enter_worktree'), result: entering , projectDirectory: root, signal: NEVER_ABORTED })).drafts ?? []
     const afterEnter = log([{ type: 'user-said', text: 'go' }, ...enteredDrafts])
 
     const tree = join(root, '.atlas/worktrees/eng-327')
@@ -110,7 +110,7 @@ describe('a worktree the whole way round', () => {
     if (!leaving.ok) return
 
     const exitedDrafts =
-      (await hook.run({ call: call('exit_worktree'), result: leaving , signal: NEVER_ABORTED })).drafts ?? []
+      (await hook.run({ call: call('exit_worktree'), result: leaving , projectDirectory: tree, signal: NEVER_ABORTED })).drafts ?? []
     const afterExit = log([...enteredDrafts, ...exitedDrafts])
 
     expect(projectDirectoryOf({ events: afterExit, launchDirectory: root })).toBe(root)
@@ -138,7 +138,7 @@ describe('a worktree the whole way round', () => {
     if (!leaving.ok) return
 
     const exitedDrafts =
-      (await hook.run({ call: call('exit_worktree'), result: leaving, signal: NEVER_ABORTED })).drafts ?? []
+      (await hook.run({ call: call('exit_worktree'), result: leaving, projectDirectory: tree, signal: NEVER_ABORTED })).drafts ?? []
     const afterExit = log(exitedDrafts)
 
     expect(afterExit.some((event) => event.type === 'worktree-exited')).toBe(true)
@@ -150,7 +150,7 @@ describe('a worktree the whole way round', () => {
     if (!again.ok) return
 
     const secondDrafts =
-      (await hook.run({ call: call('exit_worktree'), result: again, signal: NEVER_ABORTED })).drafts ?? []
+      (await hook.run({ call: call('exit_worktree'), result: again, projectDirectory: root, signal: NEVER_ABORTED })).drafts ?? []
     expect(secondDrafts).toEqual([])
   })
 })

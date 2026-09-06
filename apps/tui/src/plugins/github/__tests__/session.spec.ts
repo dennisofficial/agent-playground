@@ -46,7 +46,7 @@ describe('session facts follow the worktree the session is standing in', () => {
     expect(facts.directory()).toBe(LAUNCH)
 
     const announced = new Promise<void>((resolve) => facts.subscribe(() => resolve()))
-    await facts.followWorktree({ call: callOf('enter_worktree'), result: entered(TREE), signal: NEVER_ABORTED })
+    await facts.followWorktree({ call: callOf('enter_worktree'), result: entered(TREE), projectDirectory: LAUNCH, signal: NEVER_ABORTED })
 
     expect(facts.directory()).toBe(TREE)
     await announced
@@ -54,10 +54,10 @@ describe('session facts follow the worktree the session is standing in', () => {
 
   it('returns to the launch directory when the worktree is exited', async () => {
     const facts = createSessionFacts({ launchDirectory: LAUNCH })
-    await facts.followWorktree({ call: callOf('enter_worktree'), result: entered(TREE), signal: NEVER_ABORTED })
+    await facts.followWorktree({ call: callOf('enter_worktree'), result: entered(TREE), projectDirectory: LAUNCH, signal: NEVER_ABORTED })
     expect(facts.directory()).toBe(TREE)
 
-    await facts.followWorktree({ call: callOf('exit_worktree'), result: exited(TREE), signal: NEVER_ABORTED })
+    await facts.followWorktree({ call: callOf('exit_worktree'), result: exited(TREE), projectDirectory: LAUNCH, signal: NEVER_ABORTED })
     expect(facts.directory()).toBe(LAUNCH)
   })
 
@@ -73,6 +73,7 @@ describe('session facts follow the worktree the session is standing in', () => {
         output: { exitedWorktree: { path: TREE, action: EWorktreeExit.Keep, returnTo: LAUNCH } },
         modelText: 'exited',
       },
+      projectDirectory: LAUNCH,
       signal: NEVER_ABORTED,
     })
 
@@ -84,7 +85,7 @@ describe('session facts follow the worktree the session is standing in', () => {
     const facts = createSessionFacts({ launchDirectory: LAUNCH })
     const version = facts.version()
 
-    await facts.followWorktree({ call: callOf('enter_worktree'), result: REFUSED, signal: NEVER_ABORTED })
+    await facts.followWorktree({ call: callOf('enter_worktree'), result: REFUSED, projectDirectory: LAUNCH, signal: NEVER_ABORTED })
 
     expect(facts.directory()).toBe(LAUNCH)
     expect(facts.version()).toBe(version)
@@ -94,7 +95,7 @@ describe('session facts follow the worktree the session is standing in', () => {
     const facts = createSessionFacts({ launchDirectory: LAUNCH })
     const version = facts.version()
 
-    await facts.followWorktree({ call: callOf('bash'), result: UNRELATED, signal: NEVER_ABORTED })
+    await facts.followWorktree({ call: callOf('bash'), result: UNRELATED, projectDirectory: LAUNCH, signal: NEVER_ABORTED })
 
     expect(facts.directory()).toBe(LAUNCH)
     expect(facts.version()).toBe(version)
@@ -106,6 +107,7 @@ describe('session facts follow the worktree the session is standing in', () => {
     const outcome = await facts.followWorktree({
       call: callOf('enter_worktree'),
       result: entered(TREE),
+      projectDirectory: LAUNCH,
       signal: NEVER_ABORTED,
     })
 

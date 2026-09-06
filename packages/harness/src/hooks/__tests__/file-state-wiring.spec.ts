@@ -131,7 +131,7 @@ const havingRead = async (
 
   await scribe().run({
     call: callTo({ name: 'read', input, effect: EToolEffect.Read, threadId }),
-    result, signal: NEVER_ABORTED })
+    result, projectDirectory: root, signal: NEVER_ABORTED })
 }
 
 const grepTool = new GrepTool()
@@ -151,7 +151,7 @@ const havingSearched = async (
 
   await scribe().run({
     call: callTo({ name: 'grep', input, effect: EToolEffect.Read, threadId }),
-    result, signal: NEVER_ABORTED })
+    result, projectDirectory: root, signal: NEVER_ABORTED })
 }
 
 const writeTool = new WriteTool()
@@ -171,7 +171,7 @@ const havingWritten = async (
 
   await scribe().run({
     call: callTo({ name: 'write', input, effect: EToolEffect.Write, threadId }),
-    result, signal: NEVER_ABORTED })
+    result, projectDirectory: root, signal: NEVER_ABORTED })
 }
 
 const linesNumbering = (count: number): string =>

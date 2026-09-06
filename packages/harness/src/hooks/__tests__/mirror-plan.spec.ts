@@ -31,13 +31,13 @@ const PLAN = { tasks: [{ text: 'Wire the composer', status: 'in_progress' }] }
 
 describe('MirrorPlanHook', () => {
   it('mirrors a written plan into context so it survives compaction', async () => {
-    const outcome = await hook.run({ call: callOf({ name: PLAN_TOOL_NAME, input: PLAN }), result: OK, signal: NEVER_ABORTED })
+    const outcome = await hook.run({ call: callOf({ name: PLAN_TOOL_NAME, input: PLAN }), result: OK, projectDirectory: '/project', signal: NEVER_ABORTED })
 
     expect(outcome.additionalContext).toContain('#1 [in_progress] Wire the composer')
   })
 
   it('keys the mirror on one slot, so only the newest plan is ever in the prompt', async () => {
-    const outcome = await hook.run({ call: callOf({ name: PLAN_TOOL_NAME, input: PLAN }), result: OK, signal: NEVER_ABORTED })
+    const outcome = await hook.run({ call: callOf({ name: PLAN_TOOL_NAME, input: PLAN }), result: OK, projectDirectory: '/project', signal: NEVER_ABORTED })
 
     expect(hookOutcomeDrafts({ hookName: hook.name, outcome })).toMatchObject([
       { type: 'context-loaded', slot: 'plan', key: HOOK_CONTEXT_KEY },
@@ -47,13 +47,13 @@ describe('MirrorPlanHook', () => {
   it('says the plan is empty rather than leaving a stale one standing', async () => {
     const outcome = await hook.run({
       call: callOf({ name: PLAN_TOOL_NAME, input: { tasks: [] } }),
-      result: OK, signal: NEVER_ABORTED })
+      result: OK, projectDirectory: '/project', signal: NEVER_ABORTED })
 
     expect(outcome.additionalContext).toContain('no plan written')
   })
 
   it('ignores every other tool', async () => {
-    const outcome = await hook.run({ call: callOf({ name: 'read', input: PLAN }), result: OK, signal: NEVER_ABORTED })
+    const outcome = await hook.run({ call: callOf({ name: 'read', input: PLAN }), result: OK, projectDirectory: '/project', signal: NEVER_ABORTED })
 
     expect(outcome).toEqual({})
   })
@@ -61,7 +61,7 @@ describe('MirrorPlanHook', () => {
   it('ignores a write that failed', async () => {
     const outcome = await hook.run({
       call: callOf({ name: PLAN_TOOL_NAME, input: PLAN }),
-      result: { ok: false, reason: 'no' }, signal: NEVER_ABORTED })
+      result: { ok: false, reason: 'no' }, projectDirectory: '/project', signal: NEVER_ABORTED })
 
     expect(outcome).toEqual({})
   })
@@ -69,7 +69,7 @@ describe('MirrorPlanHook', () => {
   it('ignores input it cannot parse as a plan', async () => {
     const outcome = await hook.run({
       call: callOf({ name: PLAN_TOOL_NAME, input: { tasks: 'nope' } }),
-      result: OK, signal: NEVER_ABORTED })
+      result: OK, projectDirectory: '/project', signal: NEVER_ABORTED })
 
     expect(outcome).toEqual({})
   })
