@@ -15,6 +15,9 @@ export type FileSystemEntry = {
 export abstract class FileSystemPort {
   abstract stat(args: { path: string }): Promise<FileStat>
 
+  /** Leaf symlink target (relative links unresolved), or null when the path is not a symlink. */
+  abstract readLink(args: { path: string }): Promise<string | null>
+
   abstract readFile(args: { path: string }): Promise<string>
 
   abstract readBytes(args: { path: string }): Promise<Uint8Array>

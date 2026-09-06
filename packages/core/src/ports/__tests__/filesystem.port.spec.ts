@@ -38,6 +38,7 @@ const fakeFileSystem = (): FileSystemPort => {
 
   return {
     stat: async ({ path }) => statOf(path),
+    readLink: async () => null,
     readFile: async ({ path }) => {
       const file = files.get(path)
       if (file === undefined) throw enoent('open', path)

@@ -3,6 +3,7 @@ import {
   mkdir as nodeMkdir,
   readdir as nodeReaddir,
   readFile as nodeReadFile,
+  readlink as nodeReadlink,
   rename as nodeRename,
   stat as nodeStat,
   unlink as nodeUnlink,
@@ -14,6 +15,10 @@ import { FileSystemPort, type FileStat, type FileSystemEntry } from '@dltech/atl
 export class LocalFileSystemPort implements FileSystemPort {
   stat(args: { path: string }): Promise<FileStat> {
     return nodeStat(args.path)
+  }
+
+  async readLink(args: { path: string }): Promise<string | null> {
+    return await nodeReadlink(args.path).catch(() => null)
   }
 
   readFile(args: { path: string }): Promise<string> {
