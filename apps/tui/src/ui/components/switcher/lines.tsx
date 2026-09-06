@@ -1,12 +1,12 @@
 import React from 'react'
 
-import { type EEffort, type ModelCard } from '@dltech/atlas-core'
+import { ESettingId, type EEffort, type ModelCard } from '@dltech/atlas-core'
 
 import { EFFORT_ABBREVIATION } from '../../effort-label'
 import { cellsOf } from '../../hint-layout'
 import { type HoverHandlers } from '../../hooks/use-hover'
 import { type PressHandlers } from '../../hooks/use-press'
-import { priceLabel } from '../../switcher-model'
+import { EModelScope, priceLabel, type SwitcherTarget } from '../../switcher-model'
 import { glyph, theme } from '../../theme'
 import { DrawerLine } from '../drawer'
 import { clipSpans, spanCells } from '../sidebar/cells'
@@ -166,6 +166,18 @@ const EVERY_NEW_THREAD: readonly Span[] = [
   { text: ' · every new conversation', fg: theme.hint },
 ]
 
-export function AppliesLine(props: { cells: number; toDefault: boolean }): React.ReactNode {
-  return <TextLine spans={props.toDefault ? EVERY_NEW_THREAD : THIS_THREAD} cells={props.cells} />
+const QUICK_CALLS: readonly Span[] = [
+  { text: `${glyph.swap} `, fg: theme.accent },
+  { text: 'quick calls', fg: theme.hover },
+  { text: ' · tl;dr, titles and the judge', fg: theme.hint },
+]
+
+const appliesSpans = (target: SwitcherTarget): readonly Span[] => {
+  if (target.scope === EModelScope.Thread) return THIS_THREAD
+  if (target.id === ESettingId.ModelId) return EVERY_NEW_THREAD
+  return QUICK_CALLS
+}
+
+export function AppliesLine(props: { cells: number; target: SwitcherTarget }): React.ReactNode {
+  return <TextLine spans={appliesSpans(props.target)} cells={props.cells} />
 }

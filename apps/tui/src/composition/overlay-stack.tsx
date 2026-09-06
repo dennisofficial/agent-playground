@@ -27,7 +27,7 @@ import type { RewindControl } from './use-rewind'
 import type { ServicesControl } from './use-services'
 import type { SettingsControl } from './use-settings'
 import type { ShellsControl } from './use-shells'
-import { EModelScope, type SwitcherControl } from './use-switcher'
+import { type SwitcherControl } from './use-switcher'
 import type { ThreadsControl } from './use-threads'
 
 export function OverlayStack(props: {
@@ -106,7 +106,7 @@ export function OverlayStack(props: {
           active={props.active}
           total={switcher.total}
           query={switcher.query}
-          toDefault={switcher.scope === EModelScope.Default}
+          target={switcher.target}
           overlay
           onPick={switcher.handlePick}
           onSelect={switcher.handleSelect}

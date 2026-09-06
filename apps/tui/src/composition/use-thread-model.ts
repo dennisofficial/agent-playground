@@ -2,16 +2,21 @@ import { refKey, type ThreadId } from '@dltech/atlas-core'
 import type { ThreadModel } from '@dltech/atlas-harness'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 
-import type { SwitcherChoice } from '../ui/switcher-model'
+import type { SwitcherChoice, SwitcherTarget } from '../ui/switcher-model'
+import { EModelScope } from '../ui/switcher-model'
 import type { AtlasApp } from './compose'
 import type { ModelSelection } from './model-selection'
-import { defaultSelection, rememberDefault, storedModel, threadSelection } from './model-preference'
-import { EModelScope } from './use-switcher'
+import {
+  defaultSelection,
+  rememberSettingModel,
+  storedModel,
+  threadSelection,
+} from './model-preference'
 
 export type ThreadModelControl = {
   selection: ModelSelection
   fallback: ModelSelection
-  handlePicked: (args: { choice: SwitcherChoice; scope: EModelScope }) => void
+  handlePicked: (args: { choice: SwitcherChoice; target: SwitcherTarget }) => void
 }
 
 /**
@@ -72,13 +77,13 @@ export function useThreadModel(args: {
   }, [app, started, threadId])
 
   const handlePicked = useCallback(
-    ({ choice, scope }: { choice: SwitcherChoice; scope: EModelScope }) => {
+    ({ choice, target }: { choice: SwitcherChoice; target: SwitcherTarget }) => {
       if (choice.ref === null) return
 
       const next: ModelSelection = { ref: choice.ref, effort: choice.effort }
 
-      if (scope === EModelScope.Default) {
-        rememberDefault({ settings: app.settings, selection: next })
+      if (target.scope === EModelScope.Setting) {
+        rememberSettingModel({ settings: app.settings, target, selection: next })
         return
       }
 

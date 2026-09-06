@@ -14,10 +14,12 @@ import {
   defaultSelection,
   launchSelection,
   modelPinned,
-  rememberDefault,
+  rememberSettingModel,
+  settingModelRef,
   storedModel,
   threadSelection,
 } from '../model-preference'
+import { settingTarget } from '../../ui/switcher-model'
 import { fakeCatalogue } from './fake-app'
 
 const NOTHING = { model: undefined }
@@ -203,8 +205,9 @@ describe('a launch pinned to one model', () => {
 describe('writing the default pair down', () => {
   it('survives the settings service being rebuilt over the same store', () => {
     const store = new MemorySettingsStore()
-    rememberDefault({
+    rememberSettingModel({
       settings: serviceOver(store),
+      target: settingTarget({ id: ESettingId.ModelId, label: 'Default model' }),
       selection: {
         ref: { providerId: 'anthropic', modelId: 'claude-opus-5' },
         effort: EEffort.High,
@@ -224,8 +227,9 @@ describe('writing the default pair down', () => {
     const store = new MemorySettingsStore({ document: { values: { 'appearance.accent': 'moss' } } })
     const settings = serviceOver(store)
 
-    rememberDefault({
+    rememberSettingModel({
       settings,
+      target: settingTarget({ id: ESettingId.ModelId, label: 'Default model' }),
       selection: {
         ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
         effort: EEffort.Low,
@@ -237,5 +241,48 @@ describe('writing the default pair down', () => {
       [ESettingId.ModelId]: 'anthropic/claude-sonnet-5',
       [ESettingId.ModelEffort]: EEffort.Low,
     })
+  })
+
+  it('writes the quick-call model with no effort beside it', () => {
+    const store = new MemorySettingsStore()
+    const settings = serviceOver(store)
+
+    rememberSettingModel({
+      settings,
+      target: settingTarget({ id: ESettingId.QuickModel, label: 'Quick-call model' }),
+      selection: {
+        ref: { providerId: 'anthropic', modelId: 'claude-sonnet-5' },
+        effort: EEffort.High,
+      },
+    })
+
+    expect(store.document().values).toEqual({
+      [ESettingId.QuickModel]: 'anthropic/claude-sonnet-5',
+    })
+  })
+})
+
+describe('the model a setting already holds', () => {
+  it('resolves the ref the picker should open on, or nothing when unset or unreachable', () => {
+    const settled = (values: Record<string, string>) =>
+      serviceOver(new MemorySettingsStore({ document: { values } })).snapshot().resolution
+
+    expect(
+      settingModelRef({
+        id: ESettingId.QuickModel,
+        settled: settled({ [ESettingId.QuickModel]: 'anthropic/claude-opus-5' }),
+        catalogue,
+      }),
+    ).toEqual({ providerId: 'anthropic', modelId: 'claude-opus-5' })
+    expect(
+      settingModelRef({ id: ESettingId.QuickModel, settled: settled({}), catalogue }),
+    ).toBeUndefined()
+    expect(
+      settingModelRef({
+        id: ESettingId.QuickModel,
+        settled: settled({ [ESettingId.QuickModel]: 'openai/gpt-5-codex' }),
+        catalogue,
+      }),
+    ).toBeUndefined()
   })
 })

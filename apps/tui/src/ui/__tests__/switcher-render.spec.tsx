@@ -4,6 +4,7 @@ import React from 'react'
 import {
   EEffort,
   EImageTier,
+  ESettingId,
   type EffortMap,
   type ModelCard,
   type ModelRef,
@@ -13,10 +14,13 @@ import { EFFORT_ABBREVIATION, Switcher } from '../components/switcher'
 import { cellsOf } from '../hint-layout'
 import { grammarsReady } from '../markdown/__tests__/harness'
 import {
+  EModelScope,
   modelCount,
   switcherRows,
+  THREAD_TARGET,
   type SwitcherProvider,
   type SwitcherState,
+  type SwitcherTarget,
 } from '../switcher-model'
 import { glyph } from '../theme'
 import { frameOf } from './transcript-fixture'
@@ -141,12 +145,19 @@ const KEYED = new Set(['anthropic'])
 
 const state = (index: number, effort: EEffort): SwitcherState => ({ index, effort })
 
+const DEFAULT_MODEL_TARGET: SwitcherTarget = {
+  scope: EModelScope.Setting,
+  id: ESettingId.ModelId,
+  label: 'Default model',
+  withEffort: true,
+}
+
 function overlay(args: {
   state?: SwitcherState
   providers?: readonly SwitcherProvider[]
   width?: number
   query?: string
-  toDefault?: boolean
+  target?: SwitcherTarget
 }): React.ReactNode {
   const laid = switcherRows({
     providers: args.providers ?? PROVIDERS,
@@ -160,7 +171,7 @@ function overlay(args: {
       rows={laid}
       state={args.state ?? state(2, EEffort.Medium)}
       active={ACTIVE}
-      toDefault={args.toDefault === true}
+      target={args.target ?? THREAD_TARGET}
       overlay
       total={modelCount(args.providers ?? PROVIDERS)}
       {...(args.query === undefined ? {} : { query: args.query })}
@@ -261,7 +272,7 @@ describe('what the switcher says', () => {
   })
 
   it('says the picker set on the default reaches every new conversation instead', async () => {
-    const lines = await rowsOf(overlay({ toDefault: true }))
+    const lines = await rowsOf(overlay({ target: DEFAULT_MODEL_TARGET }))
     expect(rowWith(lines, 'the default')).toContain('every new conversation')
     expect(rowWith(lines, 'DEFAULT MODEL')).not.toBe('')
   })

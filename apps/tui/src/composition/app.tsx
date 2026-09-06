@@ -130,7 +130,8 @@ import { useAgents } from './use-agents'
 import { useAgentView } from './use-agent-view'
 import { SubagentTranscript } from './subagent-transcript'
 import { useAgentsPicker } from './use-agents-picker'
-import { EModelScope, useSwitcher } from './use-switcher'
+import { settingModelRef } from './model-preference'
+import { settingTarget, useSwitcher } from './use-switcher'
 import { useThreadModel } from './use-thread-model'
 import { useContainerPill } from './use-container-pill'
 import { useExecutionLocation } from './use-execution-location'
@@ -223,10 +224,12 @@ function Workspace(props: {
   useSyncExternalStore(subscribeComposerEdge, composerEdgeVersion)
   useSyncExternalStore(props.app.usage.subscribe, props.app.usage.version)
 
-  const chooseDefaultModel = useRef<(() => void) | null>(null)
-  const handleChooseDefaultModel = useCallback(() => chooseDefaultModel.current?.(), [])
+  const chooseModelSetting = useRef<((id: string) => void) | null>(null)
+  const handleChooseModelSetting = useCallback((id: string) => {
+    chooseModelSetting.current?.(id)
+  }, [])
 
-  const settings = useSettings({ app: props.app, onChooseModel: handleChooseDefaultModel })
+  const settings = useSettings({ app: props.app, onChooseModel: handleChooseModelSetting })
 
   useCopyOnSelect()
 
@@ -351,11 +354,22 @@ function Workspace(props: {
     conversation.handleNewConversation()
   }, [conversation, draft])
 
+  const heldSettingRef = useCallback(
+    (id: string) =>
+      settingModelRef({
+        id,
+        settled: props.app.settings.snapshot().resolution,
+        catalogue: props.app.models,
+      }),
+    [props.app],
+  )
+
   const switcher = useSwitcher({
     catalogue: props.app.models,
     active: selection.ref,
     effort: selection.effort,
     fallback: threadModel.fallback,
+    settingRef: heldSettingRef,
     favourites: settings.modelFavourites,
     onPick: threadModel.handlePicked,
     onPin: settings.handlePinModels,
@@ -364,8 +378,11 @@ function Workspace(props: {
   const openSwitcher = switcher.handleOpen
 
   useEffect(() => {
-    chooseDefaultModel.current = () => openSwitcher(EModelScope.Default)
-  }, [openSwitcher])
+    chooseModelSetting.current = (id) => {
+      const definition = props.app.settings.definitions.find((one) => one.id === id)
+      openSwitcher(settingTarget({ id, label: definition?.label ?? id }))
+    }
+  }, [openSwitcher, props.app.settings.definitions])
 
   const shells = useShells({ app: props.app, threadId: conversation.threadId })
   const services = useServices({ app: props.app })

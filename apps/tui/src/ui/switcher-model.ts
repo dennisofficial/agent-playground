@@ -1,5 +1,6 @@
 import {
   clampEffort,
+  ESettingId,
   isFavourite,
   nextEffort,
   refKey,
@@ -33,6 +34,33 @@ export type SwitcherState = {
 export type SwitcherChoice = {
   ref: ModelRef | null
   effort: EEffort
+}
+
+export enum EModelScope {
+  Thread = 'thread',
+  Setting = 'setting',
+}
+
+/** Where a pick lands: on the conversation, or on whichever Model-kind setting row was activated. */
+export type SwitcherSettingTarget = {
+  scope: EModelScope.Setting
+  id: string
+  label: string
+  withEffort: boolean
+}
+
+export type SwitcherTarget = { scope: EModelScope.Thread } | SwitcherSettingTarget
+
+export const THREAD_TARGET: SwitcherTarget = { scope: EModelScope.Thread }
+
+/** The Default model row is the one setting whose pick is a model + effort pair. */
+export function settingTarget(args: { id: string; label: string }): SwitcherSettingTarget {
+  return {
+    scope: EModelScope.Setting,
+    id: args.id,
+    label: args.label,
+    withEffort: args.id === ESettingId.ModelId,
+  }
 }
 
 export function isProviderReachable(args: {

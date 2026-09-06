@@ -33,6 +33,7 @@ import {
   modelCount,
   openSwitcher,
   switcherRows,
+  THREAD_TARGET,
   type SwitcherProvider,
 } from "../src/ui/switcher-model";
 import { theme, SIDEBAR_WIDTH } from "../src/ui/theme";
@@ -135,6 +136,7 @@ function Page(props: { page: Page; width: number }): React.ReactNode {
         availability: KEYED,
       })}
       active={ACTIVE_MODEL}
+      target={THREAD_TARGET}
       onPick={() => undefined}
       onSelect={() => undefined}
       onDismiss={() => undefined}

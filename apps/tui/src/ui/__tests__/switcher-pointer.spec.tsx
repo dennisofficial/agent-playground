@@ -17,6 +17,7 @@ import {
   modelCount,
   selectAt,
   switcherRows,
+  THREAD_TARGET,
   type SwitcherChoice,
   type SwitcherProvider,
   type SwitcherState,
@@ -103,6 +104,7 @@ function Browsing(props: {
       rows={ROWS}
       state={state}
       active={ACTIVE}
+      target={THREAD_TARGET}
       total={modelCount(PROVIDERS)}
       overlay
       onPick={props.onPick ?? (() => {})}

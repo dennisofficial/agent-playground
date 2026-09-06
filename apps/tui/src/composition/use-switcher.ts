@@ -6,6 +6,7 @@ import { refKey, toggleFavourite, type EEffort, type ModelRef } from '@dltech/at
 import {
   adjustEffort,
   anchorOn,
+  EModelScope,
   modelCount,
   moveSelection,
   openSwitcher,
@@ -13,26 +14,25 @@ import {
   selectAt,
   selectedCard,
   switcherRows,
+  THREAD_TARGET,
   type SwitcherChoice,
   type SwitcherRow,
   type SwitcherState,
+  type SwitcherTarget,
 } from '../ui/switcher-model'
 import type { ModelCatalogue } from './providers'
 
-/** Which of the two model preferences a pick lands on. */
-export enum EModelScope {
-  Thread = 'thread',
-  Default = 'default',
-}
+export { EModelScope, settingTarget, THREAD_TARGET } from '../ui/switcher-model'
+export type { SwitcherTarget } from '../ui/switcher-model'
 
 export type SwitcherControl = {
   state: SwitcherState | null
-  scope: EModelScope
+  target: SwitcherTarget
   rows: readonly SwitcherRow[]
   query: string
   total: number
   favourites: readonly string[]
-  handleOpen: (scope?: EModelScope) => void
+  handleOpen: (target?: SwitcherTarget) => void
   handleDismiss: () => void
   handlePick: (choice: SwitcherChoice) => void
   handleSelect: (index: number) => void
@@ -40,7 +40,7 @@ export type SwitcherControl = {
   handleKey: (key: KeyEvent) => void
 }
 
-type Browsing = { state: SwitcherState; query: string; scope: EModelScope }
+type Browsing = { state: SwitcherState; query: string; target: SwitcherTarget }
 
 const PIN_KEY = '*'
 
@@ -53,15 +53,17 @@ export function useSwitcher(args: {
   catalogue: ModelCatalogue
   active: ModelRef
   effort: EEffort
-  /** Where the highlight starts when the picker is set on the default rather than the thread. */
+  /** Where the highlight starts when the picker is set on a setting rather than the thread. */
   fallback: { ref: ModelRef; effort: EEffort }
+  /** The model a Model-kind setting already holds, so its picker opens on it. */
+  settingRef: (id: string) => ModelRef | undefined
   favourites: readonly string[]
-  onPick: (args: { choice: SwitcherChoice; scope: EModelScope }) => void
+  onPick: (args: { choice: SwitcherChoice; target: SwitcherTarget }) => void
   onPin: (favourites: readonly string[]) => void
 }): SwitcherControl {
   const held = useRef<Browsing | null>(null)
   const [browsing, setBrowsing] = useState<Browsing | null>(null)
-  const { catalogue, active, effort, fallback, favourites, onPick, onPin } = args
+  const { catalogue, active, effort, fallback, settingRef, favourites, onPick, onPin } = args
 
   const put = useCallback((next: Browsing | null) => {
     held.current = next
@@ -89,12 +91,15 @@ export function useSwitcher(args: {
   const total = useMemo(() => modelCount(catalogue.providers), [catalogue])
 
   const handleOpen = useCallback(
-    (scope: EModelScope = EModelScope.Thread) => {
-      const anchor = scope === EModelScope.Default ? fallback : { ref: active, effort }
+    (target: SwitcherTarget = THREAD_TARGET) => {
+      const anchor =
+        target.scope === EModelScope.Setting
+          ? { ref: settingRef(target.id) ?? fallback.ref, effort: fallback.effort }
+          : { ref: active, effort }
 
       put({
         query: '',
-        scope,
+        target,
         state: openSwitcher({
           providers: catalogue.providers,
           active: anchor.ref,
@@ -104,16 +109,16 @@ export function useSwitcher(args: {
         }),
       })
     },
-    [active, catalogue, effort, fallback, favourites, put],
+    [active, catalogue, effort, fallback, favourites, put, settingRef],
   )
 
   const handleDismiss = useCallback(() => put(null), [put])
 
   const handlePick = useCallback(
     (choice: SwitcherChoice) => {
-      const scope = held.current?.scope ?? EModelScope.Thread
+      const target = held.current?.target ?? THREAD_TARGET
       put(null)
-      onPick({ choice, scope })
+      onPick({ choice, target })
     },
     [onPick, put],
   )
@@ -206,6 +211,7 @@ export function useSwitcher(args: {
 
       if (key.name === 'left' || key.name === 'right') {
         key.preventDefault()
+        if (current.target.scope === EModelScope.Setting && !current.target.withEffort) return
         const delta = key.name === 'left' ? -1 : 1
         put({ ...current, state: adjustEffort({ state: current.state, delta, rows: laid }) })
         return
@@ -222,7 +228,7 @@ export function useSwitcher(args: {
   return useMemo(
     () => ({
       state: browsing?.state ?? null,
-      scope: browsing?.scope ?? EModelScope.Thread,
+      target: browsing?.target ?? THREAD_TARGET,
       rows,
       query,
       total,

@@ -7,12 +7,14 @@ import { fitHints, hintSpans, hintWidth, type Hint } from '../hint-layout'
 import { useHover } from '../hooks/use-hover'
 import { type PressHandlers, usePress } from '../hooks/use-press'
 import {
+  EModelScope,
   ESwitcherRow,
   selectedCard,
   shownCount,
   type SwitcherChoice,
   type SwitcherRow,
   type SwitcherState,
+  type SwitcherTarget,
 } from '../switcher-model'
 import { theme } from '../theme'
 import { drawerCells, DrawerHeading, DrawerLine, DRAWER_INSET, SideDrawer } from './drawer'
@@ -92,8 +94,8 @@ export function Switcher(props: {
   state: SwitcherState
   active: ModelRef
   total: number
+  target: SwitcherTarget
   query?: string
-  toDefault?: boolean
   overlay?: boolean
   onPick: (choice: SwitcherChoice) => void
   onSelect: (index: number) => void
@@ -106,12 +108,14 @@ export function Switcher(props: {
   const activeKey = refKey(props.active)
   const rungs = supportedEfforts(selectedCard({ state: props.state, rows: props.rows })?.effort)
   const attach = useSelectionInView({ rows: props.rows, index: props.state.index })
+  const setting = props.target.scope === EModelScope.Setting ? props.target : null
+  const effortApplies = setting === null || setting.withEffort
 
   return (
     <SideDrawer
       width={props.width}
       overlay={props.overlay === true}
-      lifted={props.toDefault === true}
+      lifted={setting !== null}
       footer={
         <FooterLine
           cells={cells}
@@ -121,7 +125,7 @@ export function Switcher(props: {
       }
     >
       <box flexDirection="column" flexGrow={1} flexShrink={1} flexBasis={0}>
-        <DrawerHeading label={props.toDefault === true ? 'Default model' : 'Model'} />
+        <DrawerHeading label={setting?.label ?? 'Model'} />
         <FilterLine
           cells={cells}
           query={props.query ?? ''}
@@ -157,7 +161,7 @@ export function Switcher(props: {
           })}
         </scrollbox>
       </box>
-      {rungs.length === 0 ? null : (
+      {rungs.length === 0 || !effortApplies ? null : (
         <box flexDirection="column" flexShrink={0}>
           <DrawerHeading label="Effort" />
           <EffortLine cells={cells} effort={props.state.effort} rungs={rungs} />
@@ -165,7 +169,7 @@ export function Switcher(props: {
       )}
       <box flexDirection="column" flexShrink={0}>
         <DrawerHeading label="Applies" />
-        <AppliesLine cells={cells} toDefault={props.toDefault === true} />
+        <AppliesLine cells={cells} target={props.target} />
       </box>
     </SideDrawer>
   )
