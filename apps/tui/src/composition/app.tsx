@@ -134,6 +134,7 @@ import { useAgentsPicker } from './use-agents-picker'
 import { EModelScope, useSwitcher } from './use-switcher'
 import { useThreadModel } from './use-thread-model'
 import { useContainerPill } from './use-container-pill'
+import { useLocationPill } from './use-location-pill'
 import { useExecutionLocation } from './use-execution-location'
 import { useThreads } from './use-threads'
 import { useUsageMeters } from './use-usage-meters'
@@ -277,6 +278,7 @@ function Workspace(props: {
     started: conversation.started,
   })
   const containerPill = useContainerPill({ app: props.app })
+  const locationPill = useLocationPill({ app: props.app })
 
   const { selection } = threadModel
 
@@ -925,10 +927,13 @@ function Workspace(props: {
         width: chromeWidth,
         model: card?.label ?? modelLabel(selection.ref.modelId),
         effort: selection.effort,
-        items: surfaces.footerItems,
+        items:
+          locationPill === null
+            ? surfaces.footerItems
+            : [locationPill, ...surfaces.footerItems],
         context: readout,
       }),
-    [card, chromeWidth, readout, selection.effort, selection.ref, surfaces.footerItems],
+    [card, chromeWidth, locationPill, readout, selection.effort, selection.ref, surfaces.footerItems],
   )
 
   const footerStrip = useFooterStrip({ items: footerRow.instruments.items, draft })

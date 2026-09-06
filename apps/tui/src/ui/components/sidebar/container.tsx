@@ -24,6 +24,9 @@ const markFor = (state: ESandboxState): Span => {
 const portsLabel = (ports: SidebarContainer['ports']): string =>
   ports.map((one) => `${one.containerPort}→${one.hostPort}`).join('  ')
 
+const limitsLabel = (limits: NonNullable<SidebarContainer['limits']>): string =>
+  `${limits.cpus} cpu · ${limits.memoryGb} GB`
+
 export function ContainerSection(props: {
   container: SidebarContainer
   cells: number
@@ -37,8 +40,16 @@ export function ContainerSection(props: {
         labelFg={theme.hover}
         cells={cells}
         mark={markFor(container.state)}
-        value={[{ text: container.image, fg: theme.hint }]}
+        value={[{ text: container.label, fg: theme.hint }]}
       />
+      {container.limits === undefined ? null : (
+        <Row
+          label="limits"
+          labelFg={theme.meta}
+          cells={cells}
+          value={[{ text: limitsLabel(container.limits), fg: theme.hint }]}
+        />
+      )}
       {container.ports.length === 0 ? null : (
         <Row
           label="ports"

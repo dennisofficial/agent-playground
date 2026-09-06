@@ -659,7 +659,11 @@ export function fakeApp(args: {
     modelPinned: false,
     models: fakeCatalogue(),
     executionLocation: createExecutionLocationState({ initial: EExecutionLocation.Host }),
-    containerStatus: createSandboxStatusState({ image: 'node:22-slim' }),
+    containerStatus: createSandboxStatusState({
+      image: 'node:22-slim',
+      label: 'node:22-slim',
+      limits: { cpus: 4, memoryGb: 8 },
+    }),
     executionPinned: false,
     settings: createSettingsService({
       definitions: ATLAS_SETTINGS,

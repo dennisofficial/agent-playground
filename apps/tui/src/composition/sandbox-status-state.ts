@@ -1,6 +1,6 @@
 import { ESandboxState, type SandboxStatus } from '@dltech/atlas-harness'
 
-import type { SidebarContainer } from '../store/sidebar-model'
+import type { SidebarContainer, SidebarLimits } from '../store/sidebar-model'
 
 export type SandboxStatusState = {
   current: () => SidebarContainer
@@ -17,7 +17,7 @@ const merged = (args: {
     case ESandboxState.Starting:
       return { ...held, state: status.state }
     case ESandboxState.Running:
-      return { state: status.state, image: held.image, ports: status.ports }
+      return { ...held, state: status.state, ports: status.ports }
     case ESandboxState.Stopped:
       return { ...held, state: status.state }
     case ESandboxState.Failed:
@@ -25,8 +25,18 @@ const merged = (args: {
   }
 }
 
-export function createSandboxStatusState(args: { image: string }): SandboxStatusState {
-  let held: SidebarContainer = { state: ESandboxState.Stopped, image: args.image, ports: [] }
+export function createSandboxStatusState(args: {
+  image: string
+  label: string
+  limits?: SidebarLimits | undefined
+}): SandboxStatusState {
+  let held: SidebarContainer = {
+    state: ESandboxState.Stopped,
+    image: args.image,
+    label: args.label,
+    ...(args.limits === undefined ? {} : { limits: args.limits }),
+    ports: [],
+  }
   const listeners = new Set<() => void>()
 
   return {

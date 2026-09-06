@@ -28,6 +28,7 @@ import {
   type SettingsService,
 } from '@dltech/atlas-harness'
 
+import { imageLabelOf } from '../store/container-label'
 import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import type { ExecutionLocationState } from './execution-location-state'
 import { createSandboxStatusState, type SandboxStatusState } from './sandbox-status-state'
@@ -72,7 +73,21 @@ export async function bindSandbox(args: {
 
   const image =
     resolution.image.kind === EImageKind.Image ? resolution.image.reference : resolution.image.path
-  const status = createSandboxStatusState({ image })
+  const cpus = rangeValueOf({
+    resolution: settings.snapshot().resolution,
+    id: ESettingId.ContainerCpus,
+    fallback: 4,
+  })
+  const memoryGb = rangeValueOf({
+    resolution: settings.snapshot().resolution,
+    id: ESettingId.ContainerMemory,
+    fallback: 8,
+  })
+  const status = createSandboxStatusState({
+    image,
+    label: imageLabelOf(resolution.image),
+    limits: { cpus, memoryGb },
+  })
 
   let dockerPort: DockerProcessPort | undefined
   const docker = (): DockerProcessPort => {
@@ -85,20 +100,7 @@ export async function bindSandbox(args: {
           worktree: cwd,
           resolution,
           atlasHomeSubtrees: atlasSubtrees,
-          limits: {
-            cpus: rangeValueOf({
-              resolution: settings.snapshot().resolution,
-              id: ESettingId.ContainerCpus,
-              fallback: 4,
-            }),
-            memoryBytes:
-              rangeValueOf({
-                resolution: settings.snapshot().resolution,
-                id: ESettingId.ContainerMemory,
-                fallback: 8,
-              }) *
-              1024 ** 3,
-          },
+          limits: { cpus, memoryBytes: memoryGb * 1024 ** 3 },
         }),
         onStatus: (sandboxStatus) => {
           status.mark(sandboxStatus)

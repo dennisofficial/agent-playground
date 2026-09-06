@@ -37,7 +37,8 @@ export {
   mountedAtlasHomeSubtrees,
   sandboxConfigFromHost,
 } from './execution/docker/host-environment'
-export { EImageKind, resolveContainerConfig, type ContainerResolution } from './execution/image/resolve'
+export { EBuildContext } from './execution/image/build'
+export { EImageKind, resolveContainerConfig, type ContainerResolution, type ImageRef } from './execution/image/resolve'
 export type { BoundPort } from './execution/docker/ports'
 export { LocalProcessPort } from './execution/local-process'
 export { RoutedProcessPort } from './execution/routed-process'

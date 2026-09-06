@@ -19,6 +19,8 @@ import {
 const running: SidebarContainer = {
   state: ESandboxState.Running,
   image: "node:22-slim",
+  label: "node:22-slim",
+  limits: { cpus: 4, memoryGb: 8 },
   ports: [
     { containerPort: 3000, hostPort: 20_123 },
     { containerPort: 3001, hostPort: 20_124 },
@@ -85,7 +87,7 @@ describe("the container pill", () => {
     ).toBeNull();
   });
 
-  it("carries state and image when the conversation runs in docker", () => {
+  it("carries state, image and limits when the conversation runs in docker", () => {
     const pill = containerPillOf({
       location: EExecutionLocation.Docker,
       container: running,
@@ -95,6 +97,8 @@ describe("the container pill", () => {
     expect(pill).toEqual({
       state: ESandboxState.Running,
       image: "node:22-slim",
+      label: "node:22-slim",
+      limits: { cpus: 4, memoryGb: 8 },
       ports: [],
     });
   });
@@ -129,6 +133,7 @@ describe("the container pill", () => {
     const failed: SidebarContainer = {
       state: ESandboxState.Failed,
       image: "node:22-slim",
+      label: "node:22-slim",
       ports: [],
       reason: "No such image: atlas-dev-no-such-image:latest",
     };
