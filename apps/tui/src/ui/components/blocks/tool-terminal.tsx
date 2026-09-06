@@ -10,17 +10,18 @@
  * arguments; the output joins when the command has run.
  */
 
-import { StyledText } from '@opentui/core'
 import React, { useMemo } from 'react'
 
 import type { ToolCall } from '../../../store'
 import { detailOf, inputOf, str } from '../../../store/tools'
 import { stripAnsi } from '../../ansi'
+import { wrapDiffChunks } from '../../markdown/highlight-rows'
 import { tailOfPath } from '../../paths'
 import { theme } from '../../theme'
+import { chunksFor } from '../diff/chunk-styling'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
-import { useHighlighted, useRowChunks } from './tool-code-lines'
+import { chunkSpans, useHighlighted } from './tool-code-lines'
 
 const CHROME = PANEL_INSET + PANEL_PAD
 
@@ -31,18 +32,24 @@ const PROMPT = '$ '
 export function CommandRows(props: { command: string; columns: number }): React.ReactNode {
   const lines = useMemo(() => props.command.replace(/\n$/, '').split('\n'), [props.command])
   const chunks = useHighlighted({ lines, filetype: 'bash' })
-  const rows = useRowChunks({ texts: lines, chunks, columns: props.columns })
-  const styled = useMemo(() => rows.map((row) => new StyledText([...row])), [rows])
+  const rows = useMemo(
+    () =>
+      lines.flatMap((text, index) =>
+        wrapDiffChunks({
+          chunks: chunksFor({ text, chunks: chunks[index] ?? null }),
+          columns: props.columns,
+        }),
+      ),
+    [lines, chunks, props.columns],
+  )
 
   return (
     <>
-      {styled.map((content, index) => (
-        <box key={index} flexDirection="row" height={1} flexShrink={0}>
-          <text wrapMode="none" flexShrink={0} fg={theme.ok}>
-            {index === 0 ? PROMPT : ' '.repeat(PROMPT.length)}
-          </text>
-          <text wrapMode="none" flexShrink={0} fg={theme.body} content={content} />
-        </box>
+      {rows.map((row, index) => (
+        <text key={index} wrapMode="none" flexShrink={0} fg={theme.body}>
+          <span fg={theme.ok}>{index === 0 ? PROMPT : ' '.repeat(PROMPT.length)}</span>
+          {chunkSpans(row)}
+        </text>
       ))}
     </>
   )

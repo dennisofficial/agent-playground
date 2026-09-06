@@ -281,6 +281,23 @@ describe('a run of tool calls in the transcript', () => {
     expect(printed).toBeGreaterThan(command)
   })
 
+  it('soft-wraps a command longer than the panel instead of clipping it', async () => {
+    const command = `cd /Users/dev/Developer/atlas/.atlas/worktrees/unified-queue/apps/tui && bun run typecheck && bun test --bail`
+    const built = call({
+      name: 'bash',
+      input: { command, description: 'Check the workspace' },
+      output: { command, stdout: '', exitCode: 0 },
+    })
+    const frame = await frameOf(runOf([built]), new Set([built.callId]), TALL)
+    const rows = frame.split('\n')
+
+    const head = rows.findIndex((row) => row.includes('$ cd /Users/dev'))
+    expect(head).toBeGreaterThanOrEqual(0)
+    const tail = rows.findIndex((row) => row.includes('bun test --bail'))
+    expect(tail).toBeGreaterThan(head)
+    expect(rows[tail]).not.toContain('…')
+  })
+
   it('strips the colour codes out of what a command printed', async () => {
     const built = call({
       name: 'bash',

@@ -79,6 +79,83 @@ export function chunksByLine(args: {
   return out
 }
 
+type RowRange = { start: number; end: number }
+
+/**
+ * Row breaks for a soft wrap: end-exclusive ranges into the text. A range never starts on the
+ * space the previous row broke before — that space belongs to no row, the way a terminal drops
+ * the cell it wrapped on.
+ */
+function wrapRangesOf(args: { text: string; columns: number }): RowRange[] {
+  const ranges: RowRange[] = []
+  let start = 0
+  let lastSpace = -1
+  let index = 0
+  while (index < args.text.length) {
+    if (args.text[index] === ' ') lastSpace = index
+    if (index - start < args.columns) {
+      index += 1
+      continue
+    }
+    if (lastSpace >= start) {
+      ranges.push({ start, end: lastSpace })
+      index = lastSpace + 1
+    } else {
+      ranges.push({ start, end: index })
+    }
+    start = index
+    lastSpace = -1
+  }
+  if (start < args.text.length || ranges.length === 0) {
+    ranges.push({ start, end: args.text.length })
+  }
+  return ranges
+}
+
+/**
+ * The wrap counterpart of fitDiffChunks: one logical row becomes as many painted rows as it
+ * needs, broken on word boundaries and falling back to a hard break for a word — a path, say —
+ * longer than a row. Chunk styles follow their characters across the breaks.
+ */
+export function wrapDiffChunks(args: {
+  chunks: readonly TextChunk[]
+  columns: number
+}): readonly (readonly TextChunk[])[] {
+  const text = args.chunks.reduce((joined, chunk) => joined + chunk.text, '')
+  if (text.length <= args.columns || args.columns <= 0) return [args.chunks]
+
+  const rows: TextChunk[][] = []
+  let chunkIndex = 0
+  let offset = 0
+  let absolute = 0
+  for (const range of wrapRangesOf({ text, columns: args.columns })) {
+    const row: TextChunk[] = []
+    while (absolute < range.end && chunkIndex < args.chunks.length) {
+      const chunk = args.chunks[chunkIndex]
+      if (chunk === undefined) break
+      const remaining = chunk.text.length - offset
+      if (remaining <= 0) {
+        chunkIndex += 1
+        offset = 0
+        continue
+      }
+      const droppedBreakSpace = range.start - absolute
+      if (droppedBreakSpace > 0) {
+        const skipped = Math.min(remaining, droppedBreakSpace)
+        offset += skipped
+        absolute += skipped
+        continue
+      }
+      const take = Math.min(remaining, range.end - absolute)
+      row.push({ ...chunk, text: chunk.text.slice(offset, offset + take) })
+      offset += take
+      absolute += take
+    }
+    rows.push(row)
+  }
+  return rows
+}
+
 export function fitDiffChunks(args: {
   chunks: readonly TextChunk[]
   columns: number
