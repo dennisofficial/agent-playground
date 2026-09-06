@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DockerEngine } from '../engine'
 import { stopSandbox, sweepSandboxes } from '../lifecycle'
+import { dockerUnavailableReason } from './live-docker'
 import {
   DEFAULT_SANDBOX_IMAGE,
   ensureSandbox,
@@ -15,7 +15,7 @@ import {
 } from '../sandbox'
 
 const SOCKET = process.env.ATLAS_DOCKER_SOCKET ?? '/var/run/docker.sock'
-const describeDocker = existsSync(SOCKET) ? describe : describe.skip
+const describeDocker = (await dockerUnavailableReason(SOCKET)) === undefined ? describe : describe.skip
 
 const engine = new DockerEngine({ socketPath: SOCKET })
 const PREFIX = 'atlas-dev-lifecycle'

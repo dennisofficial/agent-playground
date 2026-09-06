@@ -10,6 +10,7 @@ import type { ProcessHandle, ProcessPort } from '@dltech/atlas-core'
 import { LocalProcessPort, SIGKILL_GRACE_MS } from '../../local-process'
 import { DockerProcessPort } from '../docker-process'
 import { DockerEngine } from '../engine'
+import { dockerUnavailableReason } from './live-docker'
 import { worktreeLabel, type SandboxConfig } from '../sandbox'
 
 const textOf = async (stream: ReadableStream<Uint8Array>): Promise<string> =>
@@ -47,7 +48,7 @@ const awaitMarker = async (handle: ProcessHandle, marker: string): Promise<void>
 }
 
 const SOCKET = '/var/run/docker.sock'
-const DOCKER_AVAILABLE = existsSync(SOCKET)
+const DOCKER_AVAILABLE = (await dockerUnavailableReason(SOCKET)) === undefined
 
 const engine = new DockerEngine({ socketPath: SOCKET })
 const PREFIX = 'atlas-dev'
