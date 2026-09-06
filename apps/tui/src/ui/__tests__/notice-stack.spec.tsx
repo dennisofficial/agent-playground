@@ -24,6 +24,27 @@ describe('the notice stack', () => {
     expect(frame.trim()).toBe('')
   })
 
+  it('keeps its own row between the transcript and the composer', async () => {
+    dismissNotice()
+    notify({ text: 'copied 3 lines' })
+    const frame = await frameOf(
+      <box flexDirection="column" height={4}>
+        <text>transcript</text>
+        {stack()}
+        <text>composer</text>
+      </box>,
+      WIDTH,
+    )
+    dismissNotice()
+
+    const rows = frame.split('\n')
+    const transcript = rows.findIndex((row) => row.includes('transcript'))
+    const notice = rows.findIndex((row) => row.includes('copied 3 lines'))
+    const composer = rows.findIndex((row) => row.includes('composer'))
+    expect(notice).toBe(transcript + 1)
+    expect(composer).toBe(notice + 1)
+  })
+
   it('says the thing that happened', async () => {
     notify({ text: 'copied 3 lines' })
     const frame = await frameOf(stack(), WIDTH)

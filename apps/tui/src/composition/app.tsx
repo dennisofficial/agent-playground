@@ -1200,8 +1200,8 @@ function Workspace(props: {
                 onToggle={handleToggle}
               />
             )}
-            <NoticeStack width={chromeWidth} />
           </box>
+          <NoticeStack width={chromeWidth} />
           {panel === EChromePanel.Shortcuts ? <Shortcuts width={chromeWidth} /> : null}
           {panel === EChromePanel.AgentTypes ? (
             <AgentTypes width={chromeWidth} catalog={props.app.agentTypes} />

@@ -20,11 +20,6 @@ const toneMark = (tone: ENoticeTone): string => {
   return glyph.passed
 }
 
-/**
- * Floats over the bottom of the transcript rather than taking a row: a toast that pushed the
- * composer down and sprang back a second later would move the text the operator is reading
- * twice per notice. Opaque because it is drawn over live text, like the jump-to-bottom pill.
- */
 export function NoticeStack(props: { width: number }): React.ReactNode {
   useSyncExternalStore(subscribeNotices, noticeVersion)
   const notices = currentNotices()
@@ -33,7 +28,7 @@ export function NoticeStack(props: { width: number }): React.ReactNode {
   const cells = props.width - TRANSCRIPT_INSET
 
   return (
-    <box position="absolute" bottom={0} right={0} flexDirection="column" alignItems="flex-end">
+    <box width={props.width} flexDirection="column" alignItems="flex-end" flexShrink={0}>
       {notices.map((notice) => (
         <box
           key={notice.key}
