@@ -124,6 +124,29 @@ classes only.
 - Context assembly, hook resolution, and policy decisions are pure and belong to `core` — test them
   with plain data, never with a live model, a terminal, or a database.
 
+## TUI performance
+
+OpenTUI repaints **every visible renderable every frame** — there is no dirty-region painting — so
+the renderable count of the visible tree is the per-frame cost, and the frame count is the rest.
+These are measured facts from the September 2026 perf round (#338, #340, #342, #343, #346); the
+throwaway probe that produced the numbers is `apps/tui/scripts/proto-shimmer.tsx`.
+
+- **One `<text>` with styled spans, never a `<box>` + `<text>` per cell.** A row of N elements costs
+  N × (5 native handles + a Yoga node) and is repainted every frame; one text with spans draws the
+  same pixels for a fraction of it. Gutter numbers, signs, background tints: they are all spans.
+- **A React commit is a frame.** Never `setState` on a timer in a component — subscribe to the
+  shared ticker (`subscribeTicker` in `ui/hooks/use-shimmer-clock.ts`) and write to the renderable
+  by ref (`content`, or a span's `children`), so the tick skips React entirely.
+- **An effect that awaits and then `setState`s must be keyed on content and bail when the answer is
+  unchanged.** Keyed on array identity, it loops render → effect → setState forever at 60 fps — one
+  such block pinned a whole core per tile. See `tool-block-idle.spec.tsx`.
+- **Never `content={new StyledText(...)}` inline.** `content` compares by reference, so a fresh
+  object is a full native buffer re-push every render. Memoize it.
+- **`targetFps` is inert.** The renderer is request-driven; frames happen only when something calls
+  `requestRender` (every React commit does), capped by `maxFps` (60). When a tile is hot while idle,
+  count frames first (`renderer.getStats().frameCount` over a quiet window) — nonzero means a state
+  loop, and the fix is upstream of any cadence knob.
+
 ## Git
 
 - **Work in a worktree; the main checkout is read-only between merges.** Cut a worktree under
