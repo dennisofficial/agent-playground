@@ -5,9 +5,13 @@
  * dim stdout renderer as `ls`. Same machinery, one side instead of two: the read tool hands back
  * numbered rows, so the number goes to a gutter and the content goes to the highlighter under the
  * filetype of the path that was read.
+ *
+ * Every line is ONE <text>: the gutter is a span beside the content spans. OpenTUI repaints every
+ * visible renderable every frame, so the row <box> plus two <text>s this used to spend per line
+ * cost triple the frames' worth of mounted renderables for the same cells.
  */
 
-import { pathToFiletype, StyledText, type TextChunk } from '@opentui/core'
+import { pathToFiletype, type RGBA, type TextChunk } from '@opentui/core'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { cachedHighlight, fitDiffChunks, highlightRows } from '../../markdown/highlight-rows'
@@ -65,22 +69,35 @@ export function useHighlighted(args: { lines: readonly string[]; filetype: strin
   return useMemo(() => lines.map((_unused, index) => rows?.[index] ?? null), [lines, rows])
 }
 
-export function useStyledRows(args: {
+export function useRowChunks(args: {
   texts: readonly string[]
   chunks: LineChunks
   columns: number
-}): readonly StyledText[] {
+}): readonly (readonly TextChunk[])[] {
   const { texts, chunks, columns } = args
   return useMemo(
     () =>
-      texts.map(
-        (text, index) =>
-          new StyledText([
-            ...fitDiffChunks({ chunks: chunksFor({ text, chunks: chunks[index] ?? null }), columns }),
-          ]),
+      texts.map((text, index) =>
+        fitDiffChunks({ chunks: chunksFor({ text, chunks: chunks[index] ?? null }), columns }),
       ),
     [texts, chunks, columns],
   )
+}
+
+const spanPropsOf = (chunk: TextChunk): { fg?: RGBA; bg?: RGBA; attributes?: number } => {
+  const props: { fg?: RGBA; bg?: RGBA; attributes?: number } = {}
+  if (chunk.fg !== undefined) props.fg = chunk.fg
+  if (chunk.bg !== undefined) props.bg = chunk.bg
+  if (chunk.attributes !== undefined) props.attributes = chunk.attributes
+  return props
+}
+
+export function chunkSpans(row: readonly TextChunk[]): React.ReactNode {
+  return row.map((chunk, index) => (
+    <span key={index} {...spanPropsOf(chunk)}>
+      {chunk.text}
+    </span>
+  ))
 }
 
 export function CodeLines(props: {
@@ -97,19 +114,24 @@ export function CodeLines(props: {
     ...props.lines.map((line) => (line.number === null ? 0 : String(line.number).length)),
   )
   const columns = Math.max(1, props.inner - props.indent.length - digits - 1)
-  const styled = useStyledRows({ texts, chunks, columns })
+  const rows = useRowChunks({ texts, chunks, columns })
 
   return (
     <>
-      {styled.map((content, index) => {
+      {rows.map((row, index) => {
         const number = props.lines[index]?.number ?? null
+        const gutter = `${props.indent}${(number === null ? '' : String(number)).padStart(digits)} `
         return (
-          <box key={index} flexDirection="row" height={1} flexShrink={0}>
-            <text wrapMode="none" flexShrink={0} fg={theme.rule}>
-              {`${props.indent}${(number === null ? '' : String(number)).padStart(digits)} `}
-            </text>
-            <text wrapMode="none" width={columns} flexShrink={0} fg={theme.body} content={content} />
-          </box>
+          <text
+            key={index}
+            wrapMode="none"
+            width={gutter.length + columns}
+            flexShrink={0}
+            fg={theme.body}
+          >
+            <span fg={theme.rule}>{gutter}</span>
+            {chunkSpans(row)}
+          </text>
         )
       })}
     </>

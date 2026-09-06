@@ -321,9 +321,9 @@ describe('line blocks draw the same cells before and after the collapse', () => 
           recorded[`${name}@${width}`] = { plain, settled }
           return
         }
-        expect({ plain, settled }, `no fixture for ${name}@${width}`).toEqual(
-          fixture[`${name}@${width}`],
-        )
+        const expected = fixture[`${name}@${width}`]
+        if (expected === undefined) throw new Error(`no fixture for ${name}@${width}`)
+        expect({ plain, settled }).toEqual(expected)
       })
     }
   }

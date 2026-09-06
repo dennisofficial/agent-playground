@@ -19,7 +19,7 @@ import { tailOfPath } from '../../paths'
 import { theme } from '../../theme'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
-import { useHighlighted, useStyledRows } from './tool-code-lines'
+import { chunkSpans, useHighlighted, useRowChunks } from './tool-code-lines'
 
 const CHROME = PANEL_INSET + PANEL_PAD
 
@@ -27,21 +27,43 @@ const MAX_ROWS = 12
 
 const PROMPT = '$ '
 
+/**
+ * A bare <text> measures itself against what its parent still has and yoga caps it there, where the
+ * row <box> this replaced let the content text keep its natural width and overflow the padding.
+ * The explicit width reproduces that row: the prompt plus the content's own cells. Tabs are the two
+ * cells the text buffer draws; every non-ASCII code point is counted as a possible wide cell — an
+ * overestimate only pads with transparent blanks, an underestimate would clip a glyph.
+ */
+const cellWidth = (line: string): number => {
+  let cells = 0
+  for (const char of line) {
+    cells += char === '\t' || (char.codePointAt(0) ?? 0) > 0x7f ? 2 : 1
+  }
+  return cells
+}
+
 function CommandRows(props: { command: string; columns: number }): React.ReactNode {
   const lines = useMemo(() => props.command.replace(/\n$/, '').split('\n'), [props.command])
   const chunks = useHighlighted({ lines, filetype: 'bash' })
-  const styled = useStyledRows({ texts: lines, chunks, columns: props.columns })
+  const rows = useRowChunks({ texts: lines, chunks, columns: props.columns })
 
   return (
     <>
-      {styled.map((content, index) => (
-        <box key={index} flexDirection="row" height={1} flexShrink={0}>
-          <text wrapMode="none" flexShrink={0} fg={theme.ok}>
-            {index === 0 ? PROMPT : ' '.repeat(PROMPT.length)}
+      {rows.map((row, index) => {
+        const content = row.reduce((joined, chunk) => joined + chunk.text, '')
+        return (
+          <text
+            key={index}
+            wrapMode="none"
+            width={PROMPT.length + cellWidth(content)}
+            flexShrink={0}
+            fg={theme.body}
+          >
+            <span fg={theme.ok}>{index === 0 ? PROMPT : ' '.repeat(PROMPT.length)}</span>
+            {chunkSpans(row)}
           </text>
-          <text wrapMode="none" flexShrink={0} fg={theme.body} content={content} />
-        </box>
-      ))}
+        )
+      })}
     </>
   )
 }
