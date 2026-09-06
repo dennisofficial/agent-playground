@@ -553,9 +553,11 @@ read path, not a pool.
 
 ### The five tools
 
-`agent_spawn` starts one child or a whole wave and returns ids at once, never blocking; it declares
-itself concurrency-safe, so a model that emits five spawn calls in one step genuinely fans out
-through `Promise.all`. `agent_say` steers. `agent_resume` re-runs a child that died on a provider
+`agent_spawn` starts exactly one child per call and returns its id at once, never blocking; it
+declares itself concurrency-safe, so a model that emits five spawn calls in one step genuinely fans
+out through `Promise.all`. One agent per call is deliberate: a wave form let a model split one
+completion's output budget across several briefs, and dual-form schemas (flat fields or an `agents`
+array) made models trained on all-properties-required schemas fill in both and fail. `agent_say` steers. `agent_resume` re-runs a child that died on a provider
 error, appending nothing. `agent_list` reports the caller's own children. `agent_stop` aborts one,
 which still delivers an ending. A child gets none of the five.
 
