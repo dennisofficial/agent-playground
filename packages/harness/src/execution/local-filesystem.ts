@@ -12,6 +12,8 @@ import {
 
 import { FileSystemPort, type FileStat, type FileSystemEntry } from '@dltech/atlas-core'
 
+import { walkGlob } from './walk-glob'
+
 export class LocalFileSystemPort implements FileSystemPort {
   stat(args: { path: string }): Promise<FileStat> {
     return nodeStat(args.path)
@@ -51,10 +53,7 @@ export class LocalFileSystemPort implements FileSystemPort {
     return nodeReaddir(args.path, { withFileTypes: true })
   }
 
-  async glob(args: { pattern: string; cwd: string }): Promise<readonly string[]> {
-    const found: string[] = []
-    const scan = new Bun.Glob(args.pattern).scan({ cwd: args.cwd, absolute: true, onlyFiles: true })
-    for await (const match of scan) found.push(match)
-    return found
+  async glob(args: { pattern: string; cwd: string; dot?: boolean }): Promise<readonly string[]> {
+    return await walkGlob({ pattern: args.pattern, cwd: args.cwd, dot: args.dot ?? false })
   }
 }
