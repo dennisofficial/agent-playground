@@ -33,6 +33,7 @@ import {
   builtinOauthClients,
   createAccountUsageService,
   createDeltaChannel,
+  InMemoryToolRegistry,
   memoryAccountStore,
   createSettingsService,
   ESkillOrigin,
@@ -561,6 +562,7 @@ export function fakeApp(args: {
   return {
     skills: skillRegistry.all(),
     skillRegistry,
+    tools: new InMemoryToolRegistry([]),
     agentTypes: args.agentTypes ?? EMPTY_AGENT_TYPE_CATALOG,
     pluginProjections: [],
     pluginSurfaces: [],
