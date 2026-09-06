@@ -6,6 +6,7 @@ import { join } from 'node:path'
 
 import { DockerEngine } from '../engine'
 import { runSandboxScript } from '../sandbox-scripts'
+import { dockerUnavailableReason } from './live-docker'
 import {
   ensureSandbox,
   findSandbox,
@@ -15,7 +16,7 @@ import {
 } from '../sandbox'
 
 const SOCKET = '/var/run/docker.sock'
-const describeDocker = existsSync(SOCKET) ? describe : describe.skip
+const describeDocker = (await dockerUnavailableReason(SOCKET)) === undefined ? describe : describe.skip
 
 const engine = new DockerEngine({ socketPath: SOCKET })
 const PREFIX = 'atlas-dev'

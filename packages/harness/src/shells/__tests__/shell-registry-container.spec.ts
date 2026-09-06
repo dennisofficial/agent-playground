@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
+import { existsSync } from 'node:fs'
+
 import { EKilledBy, EShellStatus } from '@dltech/atlas-core'
 
 import {
@@ -13,7 +15,8 @@ import {
 
 afterEach(closeRegistries)
 
-const describeDocker = dockerShellAdapter.available ? describe : describe.skip
+const describeDocker =
+  dockerShellAdapter.available && !existsSync('/.dockerenv') ? describe : describe.skip
 
 describeDocker('a background shell inside a container', () => {
   it('drains its output before the container stops, so the teardown ending is not empty', async () => {
