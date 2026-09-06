@@ -10,6 +10,7 @@ import {
   sandboxConfigFromHost,
 } from '../host-environment'
 import { EMountMode } from '../../image/mounts'
+import { EBuildContext } from '../../image/build'
 import { EConfigSource, EImageKind, type ContainerResolution } from '../../image/resolve'
 
 const hostUid = (): number => {
@@ -135,7 +136,7 @@ describe('hostSandboxEnvironment', () => {
       limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
     })
 
-    expect(config.image).toBe('node:22-trixie-slim')
+    expect(config.image).toBe('ghcr.io/dennisofficial/atlas-sandbox:latest')
     expect(config.worktree).toBe('/Users/operator/Developer/project')
     expect(config.limits).toEqual({ cpus: 2, memoryBytes: 4 * 1024 ** 3 })
     expect(config.uid).toBe(hostUid())
@@ -167,17 +168,21 @@ describe('hostSandboxEnvironment', () => {
     ])
   })
 
-  it('refuses a Dockerfile resolution, because building is not wired — name an image instead', () => {
-    expect(() =>
-      sandboxConfigFromHost({
-        worktree: '/Users/operator/Developer/project',
-        limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
-        resolution: resolution({
-          kind: EImageKind.Dockerfile,
-          path: '/Users/operator/Developer/project/.atlas/Dockerfile',
-        }),
+  it('maps a Dockerfile resolution onto the sandbox config as a path to build from', () => {
+    const config = sandboxConfigFromHost({
+      worktree: '/Users/operator/Developer/project',
+      limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
+      resolution: resolution({
+        kind: EImageKind.Dockerfile,
+        path: '/Users/operator/Developer/project/.atlas/Dockerfile',
+        context: EBuildContext.Directory,
       }),
-    ).toThrow(/container\.json/)
+    })
+
+    expect(config.dockerfile).toEqual({
+      path: '/Users/operator/Developer/project/.atlas/Dockerfile',
+      context: EBuildContext.Directory,
+    })
   })
 })
 

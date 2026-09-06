@@ -220,7 +220,11 @@ export class DockerProcessPort implements ProcessPort {
       env:
         command.env === undefined
           ? {}
-          : execEnvFor({ requested: command.env, imageEnv: this.imageEnv }),
+          : execEnvFor({
+              requested: command.env,
+              imageEnv: this.imageEnv,
+              home: this.sandboxConfig.home,
+            }),
     })
     const demuxed = demuxExecStream({
       stream: await this.engine.startExec({ execId: exec.id }),

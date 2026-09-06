@@ -76,7 +76,7 @@ describeDocker('DockerProcessPort sandbox status', () => {
 
     const failed = seen.at(-1)
     if (failed?.state !== ESandboxState.Failed) throw new Error(`expected failed, got ${failed?.state ?? 'nothing'}`)
-    expect(failed.reason.toLowerCase()).toContain('no such image')
+    expect(failed.reason).toContain('atlas-dev-no-such-image')
     await rm(missingWorktree, { recursive: true, force: true })
   }, 60_000)
 

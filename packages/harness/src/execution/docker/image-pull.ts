@@ -1,13 +1,16 @@
-export async function consumeImagePull(args: { response: Response; image: string }): Promise<void> {
+export async function consumeDaemonProgress(args: {
+  response: Response
+  what: string
+}): Promise<void> {
   const output = await args.response.text()
   for (const line of output.split('\n')) {
     if (line.trim() === '') continue
     const progress: unknown = JSON.parse(line)
     if (typeof progress !== 'object' || progress === null) {
-      throw new Error(`Pulling ${args.image} failed: the daemon answered out of shape`)
+      throw new Error(`${args.what} failed: the daemon answered out of shape`)
     }
     if ('error' in progress && typeof progress.error === 'string') {
-      throw new Error(`Pulling ${args.image} failed: ${progress.error}`)
+      throw new Error(`${args.what} failed: ${progress.error}`)
     }
     if (
       'errorDetail' in progress &&
@@ -16,7 +19,7 @@ export async function consumeImagePull(args: { response: Response; image: string
       'message' in progress.errorDetail &&
       typeof progress.errorDetail.message === 'string'
     ) {
-      throw new Error(`Pulling ${args.image} failed: ${progress.errorDetail.message}`)
+      throw new Error(`${args.what} failed: ${progress.errorDetail.message}`)
     }
   }
 }

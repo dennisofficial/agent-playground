@@ -11,6 +11,7 @@ import {
   type SandboxLimits,
 } from './sandbox'
 import { EImageKind, type ContainerResolution } from '../image/resolve'
+import type { DockerfileBuild } from '../image/build'
 import type { Mount } from '../image/mounts'
 import { mountsWithGitMetadata } from './git-metadata-mounts'
 
@@ -75,13 +76,19 @@ export function hostSandboxEnvironment(args?: {
   }
 }
 
-const imageOf = (resolution: ContainerResolution): string => {
-  if (resolution.image.kind === EImageKind.Image) return resolution.image.reference
-  throw new Error(
-    `${resolution.image.path} asks for an image build, which is not wired up — name an image in .atlas/container.json instead`,
-  )
+const imageFieldsOf = (
+  resolution: ContainerResolution,
+): { image: string; dockerfile?: DockerfileBuild } => {
+  if (resolution.image.kind === EImageKind.Image) return { image: resolution.image.reference }
+  return {
+    image: DEFAULT_SANDBOX_IMAGE,
+    dockerfile: { path: resolution.image.path, context: resolution.image.context },
+  }
 }
 
+// Security invariant: the atlas-home root itself must never become reachable by widening this
+// list. Mounting only these named subtrees is what keeps auth.json, the vault key and
+// harness.db out of the container — credentials never enter the sandbox.
 export const ATLAS_HOME_MOUNTED_SUBTREES = ['memory', 'skills', 'agents', 'projects'] as const
 
 export function mountedAtlasHomeSubtrees(args: {
@@ -109,11 +116,13 @@ export function sandboxConfigFromHost(args: {
 }): SandboxConfig {
   const host = hostSandboxEnvironment()
 
+  const imageFields =
+    args.resolution !== undefined
+      ? imageFieldsOf(args.resolution)
+      : { image: args.image ?? DEFAULT_SANDBOX_IMAGE }
+
   return {
-    image:
-      args.resolution !== undefined
-        ? imageOf(args.resolution)
-        : (args.image ?? DEFAULT_SANDBOX_IMAGE),
+    ...imageFields,
     worktree: args.worktree,
     uid: host.uid,
     gid: host.gid,

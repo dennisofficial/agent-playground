@@ -52,7 +52,7 @@ class StubEngine extends DockerEngine {
       id: CONTAINER_ID,
       name: 'atlas-dev-stub',
       state: { running: this.running },
-      config: { labels: {}, env: ['PATH=/usr/local/bin'] },
+      config: { labels: {}, env: ['PATH=/usr/local/bin'], image: 'node:22-trixie-slim' },
       mounts: [],
       ports: [{ containerPort: 3000, hostPort: 20_000 }],
       hostConfig: { nanoCpus: 0, memoryBytes: 0 },

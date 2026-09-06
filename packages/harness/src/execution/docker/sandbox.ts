@@ -1,15 +1,17 @@
 import { createHash } from 'node:crypto'
 
 import { mountBind, type Mount } from '../image/mounts'
-import { SandboxMountsChanged, mountsDrift, publicIdentityMountsDrift, systemMountDestinations } from './mount-drift'
+import { dockerfileImageReference, ensureBuiltImage, type DockerfileBuild } from '../image/build'
+import { SandboxImageChanged, SandboxMountsChanged, mountsDrift, publicIdentityMountsDrift, systemMountDestinations } from './mount-drift'
 import { publishPlanFor } from './ports'
 import { prepareContainerForOperator } from './operator-setup'
 import { runSandboxScripts } from './sandbox-scripts'
 import type { ContainerSummary, CreateContainerBody, DockerEngine } from './engine'
+import type { DockerImages } from './engine-images'
 
 export const DEFAULT_LABEL_PREFIX = 'atlas'
 
-export const DEFAULT_SANDBOX_IMAGE = 'node:22-trixie-slim'
+export const DEFAULT_SANDBOX_IMAGE = 'ghcr.io/dennisofficial/atlas-sandbox:latest'
 
 export const DEFAULT_DOCKER_SOCKET = '/var/run/docker.sock'
 
@@ -25,7 +27,9 @@ export type SandboxEngine = Pick<
   | 'listContainers'
   | 'startContainer'
   | 'startExec'
->
+> & {
+  images: Pick<DockerImages, 'buildImage' | 'listImages'>
+}
 
 export type SandboxLimits = {
   cpus: number
@@ -48,6 +52,7 @@ export type SandboxConfig = {
   gitconfigPath?: string | undefined
   setup?: string | undefined
   start?: string | undefined
+  dockerfile?: DockerfileBuild | undefined
   mounts?: readonly Mount[] | undefined
   atlasHomeSubtrees?: readonly string[] | undefined
 }
@@ -193,6 +198,12 @@ export async function ensureSandbox(args: {
     ) {
       throw new SandboxMountsChanged({ name })
     }
+    if (args.config.dockerfile !== undefined) {
+      const reference = await dockerfileImageReference({ dockerfile: args.config.dockerfile })
+      if (details.config.image !== reference) {
+        throw new SandboxImageChanged({ name, image: reference })
+      }
+    }
 
     if (!details.state.running) await args.engine.startContainer({ id: existing.id })
     await prepareContainerForOperator({
@@ -215,7 +226,14 @@ export async function ensureSandbox(args: {
     prefix,
     adding: args.config.limits,
   })
-  const created = await args.engine.createContainer({ name, body: sandboxCreateBody(args.config) })
+  const image =
+    args.config.dockerfile === undefined
+      ? args.config.image
+      : await ensureBuiltImage({ builder: args.engine.images, dockerfile: args.config.dockerfile })
+  const created = await args.engine.createContainer({
+    name,
+    body: sandboxCreateBody({ ...args.config, image }),
+  })
   await args.engine.startContainer({ id: created.id })
   await prepareContainerForOperator({
     engine: args.engine,

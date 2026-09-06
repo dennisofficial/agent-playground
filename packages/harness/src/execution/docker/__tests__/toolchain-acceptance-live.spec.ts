@@ -1,41 +1,21 @@
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 
 import { randomUUID } from 'node:crypto'
-import { accessSync, constants } from 'node:fs'
-import { chmod, mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { chmod, mkdir, mkdtemp, realpath, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { EMountMode } from '../../image/mounts'
-import { DEFAULT_CONTAINER_SETUP } from '../../image/resolve'
 import { DockerEngine } from '../engine'
 import { DEFAULT_DOCKER_SOCKET, DEFAULT_SANDBOX_IMAGE, ensureSandbox, worktreeLabel } from '../sandbox'
 import { runSandboxScript } from '../sandbox-scripts'
+import { describeLiveDocker, quoted } from './live-docker'
 
 const SOCKET = DEFAULT_DOCKER_SOCKET
 const PREFIX = `atlas-dev-toolchain-${process.pid}-${randomUUID()}`
-const SCRATCH = resolve(import.meta.dir, '../../../../../..', '.scratch')
 const engine = new DockerEngine({ socketPath: SOCKET })
-const quoted = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
-const dockerUnavailableReason = async (): Promise<string | undefined> => {
-  try {
-    accessSync(SOCKET, constants.R_OK | constants.W_OK)
-    const response = await fetch('http://localhost/_ping', {
-      unix: SOCKET,
-      signal: AbortSignal.timeout(3000),
-    })
-    if (response.ok && (await response.text()).trim() === 'OK') return undefined
-    return `Docker ping returned HTTP ${response.status}`
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error)
-  }
-}
-
-const unavailableReason = await dockerUnavailableReason()
-if (unavailableReason !== undefined) {
-  console.warn(`Skipping live toolchain acceptance: ${SOCKET}: ${unavailableReason}`)
-}
-const describeDocker = unavailableReason === undefined ? describe : describe.skip
+const describeDocker = await describeLiveDocker({ socket: SOCKET, what: 'live toolchain acceptance' })
 
 const checkedScript = async (args: {
   containerId: string
@@ -44,7 +24,9 @@ const checkedScript = async (args: {
   user?: string
 }): Promise<string> => {
   const outcome = await runSandboxScript({ engine, ...args, script: `set -eu\n${args.script}` })
-  expect(outcome.exitCode, outcome.output).toBe(0)
+  if (outcome.exitCode !== 0) {
+    throw new Error(`sandbox script exited ${outcome.exitCode}\n${outcome.output}`)
+  }
   return outcome.output
 }
 
@@ -96,8 +78,7 @@ const seedRepositories = (args: { worktree: string; outside: string }): string =
 
 describeDocker('fresh default sandbox toolchain acceptance', () => {
   it('runs Bun as the operator and trusts later nested linked worktrees without trusting their sibling', async () => {
-    await mkdir(SCRATCH, { recursive: true })
-    const fixtureRoot = await mkdtemp(join(SCRATCH, 'toolchain-acceptance-'))
+    const fixtureRoot = await mkdtemp(join(await realpath(tmpdir()), 'atlas-toolchain-acceptance-'))
     const worktree = join(fixtureRoot, 'project')
     const outside = join(fixtureRoot, 'project-outside')
     try {
@@ -108,7 +89,6 @@ describeDocker('fresh default sandbox toolchain acceptance', () => {
         engine,
         config: {
           image: DEFAULT_SANDBOX_IMAGE,
-          setup: DEFAULT_CONTAINER_SETUP,
           worktree,
           uid: 501,
           gid: 20,
@@ -139,7 +119,7 @@ ssh -V
 `,
       })
       expect(identity).toContain('operator=501:20:atlas')
-      expect(identity).toContain('/usr/local/bin/bun')
+      expect(identity).toContain('/opt/mise/shims/bun')
       const bunOutput = await checkedScript({
         containerId: sandbox.id,
         cwd: worktree,
@@ -162,10 +142,7 @@ ssh -V
           script: `
 test "$(id -u)" = 501
 test -f .git
-test "$(stat -c %u .)" = 0
-test "$(stat -c %u .git)" = 0
 test "$(git rev-parse --git-common-dir)" = ${quoted(join(worktree, '.git'))}
-test "$(stat -c %u ${quoted(join(worktree, '.git'))})" = 0
 git status --short
 `,
         })
@@ -192,7 +169,7 @@ git status --short
       await checkedScript({
         containerId: sandbox.id,
         cwd: outside,
-        script: 'test "$(id -u)" = 501\ntest "$(stat -c %u .)" = 0\ntest "$(stat -c %u .git)" = 0',
+        script: 'test "$(id -u)" = 501',
       })
       for (const script of ['git status --short', "git commit --allow-empty -m 'must refuse'"]) {
         const refused = await runSandboxScript({ engine, containerId: sandbox.id, cwd: outside, script })

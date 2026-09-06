@@ -3,6 +3,19 @@ import { describe, expect, it } from 'bun:test'
 import { execEnvFor } from '../exec-environment'
 
 describe('execEnvFor', () => {
+  it('appends the operator home bin directory to the resolved PATH, never shadowing the image', () => {
+    expect(
+      execEnvFor({
+        requested: { PATH: '/host/bin' },
+        imageEnv: ['PATH=/opt/mise/shims:/usr/local/bin'],
+        home: '/home/operator',
+      }).PATH,
+    ).toBe('/opt/mise/shims:/usr/local/bin:/home/operator/.local/bin')
+    expect(
+      execEnvFor({ requested: {}, imageEnv: [], home: '/home/operator' }).PATH,
+    ).toBeUndefined()
+  })
+
   it('replaces host temporary directories with /tmp when the image has none', () => {
     expect(
       execEnvFor({

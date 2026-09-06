@@ -1,15 +1,10 @@
-import { consumeImagePull } from './image-pull'
+import { consumeDaemonProgress } from './image-pull'
 import { parseBoundPorts, type BoundPort, type PortBinding } from './ports'
+import { asLabels, asNumber, asRecord, asString, raw, request, EngineRequestFailed } from './engine-http'
+import { DockerImages } from './engine-images'
 
-export class EngineRequestFailed extends Error {
-  readonly status: number
-
-  constructor(args: { status: number; message: string }) {
-    super(args.message)
-    this.name = 'EngineRequestFailed'
-    this.status = args.status
-  }
-}
+export { EngineRequestFailed } from './engine-http'
+export type { ImageSummary } from './engine-images'
 
 export type EngineInfo = {
   cpus: number
@@ -33,7 +28,7 @@ export type ContainerDetails = {
   id: string
   name: string
   state: { running: boolean }
-  config: { labels: Record<string, string>; env: readonly string[] }
+  config: { labels: Record<string, string>; env: readonly string[]; image: string }
   mounts: readonly ContainerMount[]
   ports: readonly BoundPort[]
   hostConfig: { nanoCpus: number; memoryBytes: number }
@@ -60,44 +55,13 @@ export type ExecState = {
   exitCode: number | null
 }
 
-const daemonMessageOf = (body: string): string | undefined => {
-  try {
-    const parsed: unknown = JSON.parse(body)
-    if (typeof parsed !== 'object' || parsed === null) return undefined
-    const message = (parsed as { message?: unknown }).message
-    return typeof message === 'string' ? message : undefined
-  } catch {
-    return undefined
-  }
-}
-
-const asRecord = (value: unknown): Record<string, unknown> => {
-  if (typeof value !== 'object' || value === null) throw new Error('the daemon answered out of shape')
-  return value as Record<string, unknown>
-}
-
-const asString = (value: unknown): string => {
-  if (typeof value !== 'string') throw new Error('the daemon answered out of shape')
-  return value
-}
-
-const asNumber = (value: unknown): number => {
-  if (typeof value !== 'number') throw new Error('the daemon answered out of shape')
-  return value
-}
-
-const asLabels = (value: unknown): Record<string, string> => {
-  if (typeof value !== 'object' || value === null) return {}
-  return Object.fromEntries(
-    Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-  )
-}
-
 export class DockerEngine {
   private readonly socketPath: string
+  readonly images: DockerImages
 
   constructor(args: { socketPath: string }) {
     this.socketPath = args.socketPath
+    this.images = new DockerImages({ socketPath: args.socketPath })
   }
 
   async info(): Promise<EngineInfo> {
@@ -147,6 +111,7 @@ export class DockerEngine {
       config: {
         labels: asLabels(config.Labels),
         env: Array.isArray(config.Env) ? config.Env.filter((one) => typeof one === 'string') : [],
+        image: asString(config.Image),
       },
       mounts: mounts.map((entry) => {
         const mount = asRecord(entry)
@@ -188,7 +153,7 @@ export class DockerEngine {
           path: '/images/create',
           query: { fromImage: args.body.Image },
         })
-        await consumeImagePull({ response, image: args.body.Image })
+        await consumeDaemonProgress({ response, what: `Pulling ${args.body.Image}` })
         return create()
       }),
     )
@@ -266,10 +231,7 @@ export class DockerEngine {
     query?: Record<string, string>
     body?: unknown
   }): Promise<unknown> {
-    return await this.raw(args).then(async (response) => {
-      const text = await response.text()
-      return text === '' ? {} : JSON.parse(text)
-    })
+    return await request({ socketPath: this.socketPath, ...args })
   }
 
   private async raw(args: {
@@ -277,23 +239,8 @@ export class DockerEngine {
     path: string
     query?: Record<string, string>
     body?: unknown
+    tarBody?: Uint8Array<ArrayBuffer>
   }): Promise<Response> {
-    const query = new URLSearchParams(args.query).toString()
-    const url = `http://localhost${args.path}${query === '' ? '' : `?${query}`}`
-
-    const response = await fetch(url, {
-      unix: this.socketPath,
-      method: args.method,
-      ...(args.body === undefined
-        ? {}
-        : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(args.body) }),
-    })
-    if (response.ok) return response
-
-    const text = await response.text()
-    throw new EngineRequestFailed({
-      status: response.status,
-      message: daemonMessageOf(text) ?? `${args.method} ${args.path} failed with ${response.status}`,
-    })
+    return await raw({ socketPath: this.socketPath, ...args })
   }
 }

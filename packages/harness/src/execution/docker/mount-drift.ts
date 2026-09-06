@@ -11,6 +11,15 @@ export class SandboxMountsChanged extends Error {
   }
 }
 
+export class SandboxImageChanged extends Error {
+  constructor(args: { name: string; image: string }) {
+    super(
+      `the image for ${args.name} rebuilt to ${args.image} since the container was created, and Docker cannot swap an existing container's image — this worktree needs a new container: remove ${args.name} and start again`,
+    )
+    this.name = 'SandboxImageChanged'
+  }
+}
+
 export const systemMountDestinations = (config: SandboxConfig): ReadonlySet<string> =>
   new Set(
     [

@@ -1,7 +1,6 @@
-import { describe, expect, it } from 'bun:test'
+import { expect, it } from 'bun:test'
 
 import { randomUUID } from 'node:crypto'
-import { accessSync, constants } from 'node:fs'
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -10,31 +9,13 @@ import { DockerEngine } from '../engine'
 import { sandboxConfigFromHost } from '../host-environment'
 import { DEFAULT_DOCKER_SOCKET, ensureSandbox, worktreeLabel, type SandboxConfig } from '../sandbox'
 import { runSandboxScript } from '../sandbox-scripts'
+import { describeLiveDocker, quoted } from './live-docker'
 
 const SOCKET = process.env.ATLAS_DOCKER_SOCKET ?? DEFAULT_DOCKER_SOCKET
 const PREFIX = `atlas-dev-linked-worktree-${process.pid}-${randomUUID()}`
 const engine = new DockerEngine({ socketPath: SOCKET })
-const quoted = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
-const dockerUnavailableReason = async (): Promise<string | undefined> => {
-  try {
-    accessSync(SOCKET, constants.R_OK | constants.W_OK)
-    const response = await fetch('http://localhost/_ping', {
-      unix: SOCKET,
-      signal: AbortSignal.timeout(3000),
-    })
-    if (response.ok && (await response.text()).trim() === 'OK') return undefined
-    return `Docker ping returned HTTP ${response.status}`
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error)
-  }
-}
-
-const unavailableReason = await dockerUnavailableReason()
-if (unavailableReason !== undefined) {
-  console.warn(`Skipping live linked-worktree regression: ${SOCKET}: ${unavailableReason}`)
-}
-const describeDocker = unavailableReason === undefined ? describe : describe.skip
+const describeDocker = await describeLiveDocker({ socket: SOCKET, what: 'live linked-worktree regression' })
 
 const hostGit = (args: { cwd: string; argv: string[] }): string => {
   const outcome = Bun.spawnSync(['git', '-c', 'core.hooksPath=/dev/null', '-C', args.cwd, ...args.argv], {
