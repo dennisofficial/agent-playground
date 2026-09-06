@@ -126,13 +126,14 @@ classes only.
 
 ## Git
 
-- **Work in a worktree; the main checkout is read-only between merges.** Cut a worktree under
-  `.claude/worktrees/<slug>` from `origin/main`, do the work there, and merge back into `main`
-  locally when done — no PR, no review gate — then push `main` to `origin`. Remove the worktree
-  after the merge. This is
-  load-bearing, not hygiene: `atlas-dev` runs from the main tree and flags every running terminal
-  as stale the moment the tree moves, so direct edits in the main checkout turn that notice into
-  noise.
+- **Work in a worktree; the main checkout is read-only.** Cut a worktree under
+  `.atlas/worktrees/<slug>` from `origin/main` on a `dennis/<slug>` branch, do the work there,
+  then ship it as a PR: push, `gh pr create`, and merge with plain `gh pr merge --squash` — no
+  review gate, and never `--delete-branch`, which fails on the local `main` checkout after the
+  merge has already landed. Remove the worktree and delete the local branch afterwards. The
+  read-only main checkout is load-bearing, not hygiene: `atlas-dev` runs from the main tree and
+  flags every running terminal as stale the moment the tree moves, so direct edits in the main
+  checkout turn that notice into noise.
 - Never force-push, never `--no-verify`.
 - **Never use `git stash`** unless explicitly asked.
 - Conventional commits: `<type>(<scope>): <description>` — imperative, lowercase.
