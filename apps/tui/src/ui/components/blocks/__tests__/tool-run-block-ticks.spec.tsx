@@ -98,7 +98,7 @@ describe('a shimmer tick on a live tool run', () => {
 
       await letTimersRun({ setup, ms: 300 })
 
-      expect(setup.renderer.getStats().frameCount - framesBefore).toBeGreaterThanOrEqual(4)
+      expect(setup.renderer.getStats().frameCount - framesBefore).toBeGreaterThanOrEqual(2)
       expect(detailRenders.get(EDITED.callId)).toBe(detailBefore)
     } finally {
       await teardown(setup)

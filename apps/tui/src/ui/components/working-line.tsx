@@ -1,12 +1,9 @@
 import React from 'react'
 
-import { backgroundWaitLabel, isWaiting, type BackgroundWork } from '../background-wait'
-import { useShimmerClock } from '../hooks/use-shimmer-clock'
-import { beaconHeat, shimmerCrest, WORKING_SHIMMER } from '../shimmer'
+import { backgroundWaitLabel, type BackgroundWork } from '../background-wait'
 import { retryLabel, type RetryWait } from '../retry-countdown'
-import { shimmerColour, shimmerSpans } from '../shimmer-style'
-import { formatElapsed, formatTokens, spinnerFrame, theme } from '../theme'
-import { Spans } from './spans'
+import { formatElapsed, formatTokens, theme } from '../theme'
+import { ShimmerLine, SpinnerGlyph } from './shimmer-line'
 
 export enum EWorkingVerb {
   Working = 'Working',
@@ -27,13 +24,12 @@ export function WorkingLine(props: {
   verb?: EWorkingVerb | undefined
   retry?: RetryWait | null | undefined
 }): React.ReactNode {
-  const now = useShimmerClock({ active: true })
   const { retry } = props
 
   if (retry !== null && retry !== undefined && !props.interrupting) {
     return (
       <box flexDirection="column">
-        <ShimmeringLine label={retryLabel({ retry, now })} now={now} base={theme.error} />
+        <ShimmerLine label={retryLabel({ retry, now: Date.now() })} base={theme.error} />
       </box>
     )
   }
@@ -42,7 +38,8 @@ export function WorkingLine(props: {
     return (
       <box flexDirection="column">
         <text fg={theme.dim}>
-          <span fg={theme.accent}>{spinnerFrame(now)}</span> {INTERRUPTING}
+          <SpinnerGlyph fg={theme.accent} />
+          {` ${INTERRUPTING}`}
         </text>
       </box>
     )
@@ -55,7 +52,7 @@ export function WorkingLine(props: {
 
   return (
     <box flexDirection="column">
-      <ShimmeringLine label={label} now={now} />
+      <ShimmerLine label={label} />
     </box>
   )
 }
@@ -66,49 +63,23 @@ export function WorkingLine(props: {
  *
  * `since` is when the wait began and is held by whoever outlives this line, because the transcript
  * unmounts whenever the operator opens a sub-agent: measured here, the reading would restart from
- * the moment they walked back in. The fast clock stays local — the origin is the durable half.
+ * the moment they walked back in. The re-renders that count the wait up come from the shells tick
+ * above this component, so the label reads the wall clock rather than a clock of its own.
  */
 export function WaitingLine(props: {
   work: BackgroundWork
   since?: number | null
 }): React.ReactNode {
-  const waiting = isWaiting(props.work)
   const since = props.since ?? null
-  const now = useShimmerClock({ active: waiting })
   const label = backgroundWaitLabel({
     work: props.work,
-    ...(since === null ? {} : { waitedMs: Math.max(0, now - since) }),
+    ...(since === null ? {} : { waitedMs: Math.max(0, Date.now() - since) }),
   })
   if (label === null) return null
 
   return (
     <box flexDirection="row" marginTop={1} marginBottom={1}>
-      <ShimmeringLine label={label} now={now} />
+      <ShimmerLine label={label} />
     </box>
-  )
-}
-
-const TEXT_OFFSET = 2
-
-function ShimmeringLine(props: { label: string; now: number; base?: string }): React.ReactNode {
-  const cells = [...props.label].length + TEXT_OFFSET
-  const crest = shimmerCrest({ nowMs: props.now, cells, spec: WORKING_SHIMMER })
-
-  return (
-    <text>
-      <span fg={shimmerColour(beaconHeat({ crest, spec: WORKING_SHIMMER }), props.base)}>
-        {spinnerFrame(props.now)}
-      </span>
-      <span> </span>
-      <Spans
-        spans={shimmerSpans({
-          text: props.label,
-          crest,
-          spec: WORKING_SHIMMER,
-          offset: TEXT_OFFSET,
-          ...(props.base === undefined ? {} : { base: props.base }),
-        })}
-      />
-    </text>
   )
 }

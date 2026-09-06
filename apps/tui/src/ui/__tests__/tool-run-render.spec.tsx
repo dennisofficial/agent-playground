@@ -60,7 +60,6 @@ async function frameOf(
       run={run}
       width={WIDTH}
       cwd={CWD}
-      now={0}
       {...(opened === undefined ? {} : { opened })}
     />,
     { width: WIDTH, height },
@@ -557,7 +556,6 @@ function Toggling(props: { run: ToolRun }): React.ReactNode {
       run={props.run}
       width={WIDTH}
       cwd={CWD}
-      now={0}
       opened={opened}
       onToggle={handleToggle}
     />
