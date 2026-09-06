@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 
 import { EMountMode } from '../../image/mounts'
+import { declaredMountsLabel, encodeDeclaredMounts } from '../mount-drift'
 import {
   CONTAINER_GNUPG_HOME,
   sandboxCreateBody,
@@ -46,6 +47,20 @@ describe('sandboxCreateBody', () => {
 
   it('stamps the worktree label, which is the registry', () => {
     expect(sandboxCreateBody(CONFIG).Labels?.[worktreeLabel('atlas')]).toBe(CONFIG.worktree)
+  })
+
+  it('stamps the declared mounts label, which the drift check compares against later', () => {
+    const withMounts: SandboxConfig = {
+      ...CONFIG,
+      mounts: [{ path: '/data/shared', mode: EMountMode.ReadOnly }],
+    }
+
+    expect(sandboxCreateBody(withMounts).Labels?.[declaredMountsLabel('atlas')]).toBe(
+      encodeDeclaredMounts(withMounts.mounts ?? []),
+    )
+    expect(sandboxCreateBody(CONFIG).Labels?.[declaredMountsLabel('atlas')]).toBe(
+      encodeDeclaredMounts([]),
+    )
   })
 
   it('carries the resource limits through to the daemon', () => {

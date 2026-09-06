@@ -104,16 +104,19 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
       gpgAgentExtraSocket: '/Users/operator/.gnupg/S.gpg-agent.extra',
       gpgPubringPath: '/Users/operator/.gnupg/pubring.kbx',
     },
-  ])('refuses reuse without newly requested public identity mounts: %j', async (identity) => {
-    const { engine: fake, execs } = fakeEngine({
+  ])('reuses with a warning when a public identity file appears after creation: %j', async (identity) => {
+    const { engine: fake } = fakeEngine({
       existing: { id: 'kept-1', state: 'running', mounts: systemMounts },
     })
 
-    await expect(ensureSandbox({
+    const sandbox = await ensureSandbox({
       engine: fake,
       config: { ...FAKE_CONFIG, ...identity },
-    })).rejects.toThrow(/new container/)
-    expect(execs).toHaveLength(0)
+    })
+
+    expect(sandbox.created).toBe(false)
+    expect(sandbox.id).toBe('kept-1')
+    expect(sandbox.warnings.some((one) => one.includes('new container'))).toBe(true)
   })
 
   it.each([
@@ -131,8 +134,8 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     expect(execs).toHaveLength(0)
   })
 
-  it('refuses changed mounts on an existing container — a new container is needed, never a recreate', async () => {
-    const { engine: fake } = fakeEngine({
+  it('refuses changed mounts on a running container — recreating it would kill live shells', async () => {
+    const { engine: fake, removals } = fakeEngine({
       existing: { id: 'kept-1', state: 'running', mounts: systemMounts },
     })
 
@@ -145,10 +148,11 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     })
 
     await expect(attempt).rejects.toThrow(/new container/)
+    expect(removals).toHaveLength(0)
   })
 
-  it('refuses mounts removed since creation the same way', async () => {
-    const { engine: fake } = fakeEngine({
+  it('refuses mounts removed since creation the same way, while the container runs', async () => {
+    const { engine: fake, removals } = fakeEngine({
       existing: {
         id: 'kept-1',
         state: 'running',
@@ -166,10 +170,30 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     await expect(ensureSandbox({ engine: fake, config: FAKE_CONFIG })).rejects.toThrow(
       /new container/,
     )
+    expect(removals).toHaveLength(0)
   })
 
-  it('refuses reuse when the configured image no longer matches the container’s', async () => {
-    const { engine, execs } = fakeEngine({
+  it('recreates a stopped container whose declared mounts drifted, instead of refusing', async () => {
+    const { engine: fake, removals, creates } = fakeEngine({
+      existing: { id: 'stale-1', state: 'exited', mounts: systemMounts },
+    })
+
+    const sandbox = await ensureSandbox({
+      engine: fake,
+      config: {
+        ...FAKE_CONFIG,
+        mounts: [{ path: '/Users/operator/Developer/shared-lib', mode: EMountMode.ReadOnly }],
+      },
+    })
+
+    expect(removals).toEqual(['stale-1'])
+    expect(creates).toHaveLength(1)
+    expect(sandbox.created).toBe(true)
+    expect(sandbox.warnings.some((one) => one.includes('recreated'))).toBe(true)
+  })
+
+  it('refuses reuse of a running container when the configured image no longer matches', async () => {
+    const { engine, execs, removals } = fakeEngine({
       existing: {
         id: 'kept-1',
         state: 'running',
@@ -179,6 +203,46 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     })
     await expect(ensureSandbox({ engine, config: FAKE_CONFIG })).rejects.toThrow(/new container/)
     expect(execs).toHaveLength(0)
+    expect(removals).toHaveLength(0)
+  })
+
+  it('recreates a stopped container whose image drifted', async () => {
+    const { engine, removals, creates } = fakeEngine({
+      existing: {
+        id: 'stale-1',
+        state: 'exited',
+        image: 'ghcr.io/dennisofficial/atlas-sandbox:0.1.0',
+        mounts: systemMounts,
+      },
+    })
+
+    const sandbox = await ensureSandbox({ engine, config: FAKE_CONFIG })
+
+    expect(removals).toEqual(['stale-1'])
+    expect(creates).toEqual([FAKE_CONFIG.image])
+    expect(sandbox.created).toBe(true)
+  })
+
+  it('does not drift on volatile host inputs: identity files that existed at creation but vanished since', async () => {
+    const { engine: fake } = fakeEngine({
+      existing: {
+        id: 'kept-1',
+        state: 'running',
+        mounts: [
+          ...systemMounts,
+          {
+            source: '/Users/operator/.ssh/known_hosts',
+            destination: '/Users/operator/.ssh/known_hosts',
+            readOnly: true,
+          },
+        ],
+      },
+    })
+
+    const sandbox = await ensureSandbox({ engine: fake, config: FAKE_CONFIG })
+
+    expect(sandbox.created).toBe(false)
+    expect(sandbox.id).toBe('kept-1')
   })
 
   it('reuses a container whose mounts still match the config', async () => {

@@ -1,11 +1,13 @@
+import { join } from 'node:path'
+
 import { EMountMode, type Mount } from '../image/mounts'
 import { CONTAINER_GNUPG_HOME, type SandboxConfig } from './sandbox'
-import type { ContainerMount } from './engine'
+import type { ContainerDetails, ContainerMount } from './engine'
 
 export class SandboxMountsChanged extends Error {
   constructor(args: { name: string }) {
     super(
-      `the declared mounts changed since ${args.name} was created, and Docker cannot add a bind to an existing container — this worktree needs a new container: remove ${args.name} and start again`,
+      `the declared mounts changed since ${args.name} was created, and Docker cannot add a bind to an existing container — ${args.name} is still running, so recreating it would kill its shells: stop it and the next command creates a new container`,
     )
     this.name = 'SandboxMountsChanged'
   }
@@ -14,11 +16,20 @@ export class SandboxMountsChanged extends Error {
 export class SandboxImageChanged extends Error {
   constructor(args: { name: string; image: string }) {
     super(
-      `the image for ${args.name} changed to ${args.image} since the container was created, and Docker cannot swap an existing container's image — this worktree needs a new container: remove ${args.name} and start again`,
+      `the image for ${args.name} changed to ${args.image} since the container was created, and Docker cannot swap an existing container's image — ${args.name} is still running, so recreating it would kill its shells: stop it and the next command creates a new container`,
     )
     this.name = 'SandboxImageChanged'
   }
 }
+
+export const declaredMountsLabel = (prefix: string): string => `${prefix}.mounts`
+
+export const encodeDeclaredMounts = (mounts: readonly Mount[]): string =>
+  JSON.stringify(
+    [...mounts]
+      .map((mount) => ({ path: mount.path, readOnly: mount.mode === EMountMode.ReadOnly }))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+  )
 
 export const systemMountDestinations = (config: SandboxConfig): ReadonlySet<string> =>
   new Set(
@@ -26,34 +37,51 @@ export const systemMountDestinations = (config: SandboxConfig): ReadonlySet<stri
       config.worktree,
       config.dockerSocket,
       config.sshAuthSock,
-      config.sshKnownHostsPath,
-      config.gitconfigPath,
-      config.gpgAgentExtraSocket === undefined
-        ? undefined
-        : `${CONTAINER_GNUPG_HOME}/S.gpg-agent`,
-      config.gpgAgentExtraSocket === undefined || config.gpgPubringPath === undefined
-        ? undefined
-        : `${CONTAINER_GNUPG_HOME}/pubring.kbx`,
+      join(config.home, '.ssh', 'known_hosts'),
+      join(config.home, '.gitconfig'),
+      `${CONTAINER_GNUPG_HOME}/S.gpg-agent`,
+      `${CONTAINER_GNUPG_HOME}/pubring.kbx`,
       ...(config.atlasHomeSubtrees ?? []),
     ].filter((path): path is string => path !== undefined),
   )
 
-export const publicIdentityMountsDrift = (args: {
-  config: SandboxConfig
-  actual: readonly ContainerMount[]
-}): boolean => {
-  const expected: ContainerMount[] = []
-  const { config } = args
+const wantedIdentityMounts = (config: SandboxConfig): ContainerMount[] => {
+  const wanted: ContainerMount[] = []
   if (config.sshKnownHostsPath !== undefined) {
-    expected.push({ source: config.sshKnownHostsPath, destination: config.sshKnownHostsPath, readOnly: true })
+    wanted.push({
+      source: config.sshKnownHostsPath,
+      destination: config.sshKnownHostsPath,
+      readOnly: true,
+    })
   }
   if (config.gpgAgentExtraSocket !== undefined && config.gpgPubringPath !== undefined) {
-    expected.push({ source: config.gpgPubringPath, destination: `${CONTAINER_GNUPG_HOME}/pubring.kbx`, readOnly: true })
+    wanted.push({
+      source: config.gpgPubringPath,
+      destination: `${CONTAINER_GNUPG_HOME}/pubring.kbx`,
+      readOnly: true,
+    })
   }
-  return expected.some((wanted) => !args.actual.some((mount) =>
-    mount.source === wanted.source && mount.destination === wanted.destination && mount.readOnly,
-  ))
+  return wanted
 }
+
+export const missingIdentityMounts = (args: {
+  config: SandboxConfig
+  actual: readonly ContainerMount[]
+}): string[] =>
+  wantedIdentityMounts(args.config)
+    .filter(
+      (wanted) =>
+        !args.actual.some(
+          (mount) =>
+            mount.source === wanted.source &&
+            mount.destination === wanted.destination &&
+            mount.readOnly,
+        ),
+    )
+    .map(
+      (missing) =>
+        `${missing.source} appeared after this container was created, so the sandbox cannot see it — stop the container and the next command creates a new container that mounts it`,
+    )
 
 export const mountsDrift = (args: {
   requested: readonly Mount[]
@@ -75,4 +103,20 @@ export const mountsDrift = (args: {
     if (mount?.source !== path || mount.readOnly !== readOnly) return true
   }
   return false
+}
+
+export function declaredMountsDrift(args: {
+  config: SandboxConfig
+  details: ContainerDetails
+  prefix: string
+}): boolean {
+  const recorded = args.details.config.labels[declaredMountsLabel(args.prefix)]
+  const declared = args.config.mounts ?? []
+  if (recorded !== undefined) return recorded !== encodeDeclaredMounts(declared)
+
+  return mountsDrift({
+    requested: declared,
+    actual: args.details.mounts,
+    system: systemMountDestinations(args.config),
+  })
 }

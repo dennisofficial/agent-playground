@@ -173,6 +173,8 @@ export class DockerProcessPort implements ProcessPort {
       this.onStatus?.({ state: ESandboxState.Running, ports: details.ports })
       return sandbox
     } catch (error) {
+      this.sandboxPromise = undefined
+      this.imageEnv = undefined
       this.onStatus?.({
         state: ESandboxState.Failed,
         reason: error instanceof Error ? error.message : String(error),
