@@ -58,7 +58,7 @@ const washed = (args: {
  * for a light one — since the wash would only hide the status the fill is spelling.
  */
 function FooterPill(
-  props: { item: FooterItem; selected: boolean } & FooterStripHandlers,
+  props: { item: FooterItem; selected: boolean; marginLeft: number } & FooterStripHandlers,
 ): React.ReactNode {
   const { item, selected, onActivate } = props
   const activation = pressOf(item)
@@ -79,6 +79,7 @@ function FooterPill(
     <box
       flexShrink={0}
       width={footerItemCells(item)}
+      marginLeft={props.marginLeft}
       {...(ground === undefined ? {} : { backgroundColor: ground })}
       {...region.handlers}
     >
@@ -95,11 +96,9 @@ const Lead = (): React.ReactNode => (
   </text>
 )
 
-const Gap = (): React.ReactNode => <text flexShrink={0}> </text>
-
 /**
  * The dot and the gaps sit outside the pressable box on purpose: a click between two chips belongs
- * to neither of them.
+ * to neither of them. The gap is a margin for the same reason a space used to be a text of its own.
  */
 export function FooterStrip(
   props: {
@@ -113,11 +112,12 @@ export function FooterStrip(
   return (
     <>
       {items.flatMap((item, index) => [
-        ...(index === 0 ? (lead ? [<Lead key={`${item.id}-lead`} />] : []) : [<Gap key={`${item.id}-gap`} />]),
+        ...(index === 0 && lead ? [<Lead key={`${item.id}-lead`} />] : []),
         <FooterPill
           key={item.id}
           item={item}
           selected={item.id === selectedId}
+          marginLeft={index === 0 ? 0 : 1}
           {...(onActivate === undefined ? {} : { onActivate })}
         />,
       ])}
