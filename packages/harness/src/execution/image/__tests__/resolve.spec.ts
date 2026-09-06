@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { EMountMode, mountBind } from '../mounts'
+import { EBuildContext } from '../build'
 import { EConfigRefusal } from '../refusals'
 import {
   EConfigSource,
@@ -70,30 +71,57 @@ describe('resolveContainerConfig precedence', () => {
     expect(resolution.image).toEqual({
       kind: EImageKind.Dockerfile,
       path: `${DIR}/.atlas/Dockerfile`,
+      context: EBuildContext.Directory,
     })
     expect(resolution.notes.some((note) => note.includes('escape hatch'))).toBe(true)
     expect(resolution.notes.some((note) => note.includes('container.json'))).toBe(true)
+  })
+
+  it('falls back to a user-level Dockerfile in the atlas home, after the project-level one', async () => {
+    const user = await resolveContainerConfig({
+      projectDirectory: DIR,
+      atlasHome: '/operator/.atlas',
+      readText: readerOf({ '/operator/.atlas/Dockerfile': 'FROM ghcr.io/example/atlas-sandbox:1.0.0\n' }),
+    })
+
+    expect(user.source).toBe(EConfigSource.Dockerfile)
+    expect(user.image).toEqual({
+      kind: EImageKind.Dockerfile,
+      path: '/operator/.atlas/Dockerfile',
+      context: EBuildContext.DockerfileOnly,
+    })
+
+    const project = await resolveContainerConfig({
+      projectDirectory: DIR,
+      atlasHome: '/operator/.atlas',
+      readText: readerOf({
+        '/operator/.atlas/Dockerfile': 'FROM ghcr.io/example/atlas-sandbox:1.0.0\n',
+        [`${DIR}/.atlas/Dockerfile`]: 'FROM ghcr.io/example/atlas-sandbox:1.0.0\nRUN apt-get update\n',
+      }),
+    })
+
+    expect(project.image).toEqual({
+      kind: EImageKind.Dockerfile,
+      path: `${DIR}/.atlas/Dockerfile`,
+      context: EBuildContext.Directory,
+    })
   })
 
   it('answers the built-in default in silence when nothing is configured', async () => {
     const resolution = await resolveWith({})
 
     expect(resolution.source).toBe(EConfigSource.BuiltIn)
-    expect(resolution.image).toEqual({ kind: EImageKind.Image, reference: 'node:22-slim' })
+    expect(resolution.image).toEqual({
+      kind: EImageKind.Image,
+      reference: 'ghcr.io/dennisofficial/atlas-sandbox:latest',
+    })
+    expect(resolution.setup).toBeUndefined()
     expect(resolution.notes).toEqual([])
     expect(resolution.refusals).toEqual([])
     expect(resolution.mounts).toEqual([])
   })
 
-  it('makes the default toolchain self-sufficient: git, ripgrep and the Playwright system deps', async () => {
-    const resolution = await resolveWith({})
-
-    expect(resolution.setup).toContain('git')
-    expect(resolution.setup).toContain('ripgrep')
-    expect(resolution.setup).toContain('playwright')
-  })
-
-  it('keeps the default setup when container.json names no image of its own', async () => {
+  it('needs no setup when container.json names no image, because the default image bakes the toolchain', async () => {
     const resolution = await resolveWith({
       [`${DIR}/.atlas/container.json`]: JSON.stringify({
         mounts: [{ path: '/Users/operator/Developer/shared-lib' }],
@@ -101,8 +129,11 @@ describe('resolveContainerConfig precedence', () => {
     })
 
     expect(resolution.source).toBe(EConfigSource.ContainerJson)
-    expect(resolution.image).toEqual({ kind: EImageKind.Image, reference: 'node:22-slim' })
-    expect(resolution.setup).toContain('playwright')
+    expect(resolution.image).toEqual({
+      kind: EImageKind.Image,
+      reference: 'ghcr.io/dennisofficial/atlas-sandbox:latest',
+    })
+    expect(resolution.setup).toBeUndefined()
     expect(resolution.mounts).toEqual([
       { path: '/Users/operator/Developer/shared-lib', mode: EMountMode.ReadOnly },
     ])

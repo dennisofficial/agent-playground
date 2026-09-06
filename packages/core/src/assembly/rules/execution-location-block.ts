@@ -29,6 +29,7 @@ export function executionLocationNote(environment: ExecutionEnvironment): string
       `You are executing inside ${surroundingsOf(environment.location)}, not on the host.`,
       'The project directory is mounted at its usual path, so paths inside it work unchanged.',
       mounted,
+      'git config --global fails here because the mounted ~/.gitconfig is read-only by design — git configuration is fixed in the sandbox launch environment, never by you editing it.',
     ].join(' '),
   )
 }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,11 +10,8 @@ import {
   sandboxConfigFromHost,
 } from '../host-environment'
 import { EMountMode } from '../../image/mounts'
-import {
-  EConfigSource,
-  EImageKind,
-  type ContainerResolution,
-} from '../../image/resolve'
+import { EBuildContext } from '../../image/build'
+import { EConfigSource, EImageKind, type ContainerResolution } from '../../image/resolve'
 
 const hostUid = (): number => {
   const uid = process.getuid?.()
@@ -29,42 +26,108 @@ const hostGid = (): number => {
 }
 
 describe('hostSandboxEnvironment', () => {
+  let home: string
+  let env: Record<string, string | undefined>
+  let agent: ReturnType<typeof Bun.listen> | undefined
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'atlas-hostenv-'))
+    env = { HOME: home, PATH: home }
+    await writeFile(
+      join(home, 'gpgconf'),
+      '#!/bin/sh\n[ "$1 $2" = "--list-dirs agent-extra-socket" ] || exit 1\nprintf \'%s\\n\' "${GNUPGHOME:-$HOME/.gnupg}/S.gpg-agent.extra"\n',
+      { mode: 0o755 },
+    )
+  })
+
+  afterEach(async () => {
+    agent?.stop(true)
+    agent = undefined
+    await rm(home, { recursive: true, force: true })
+  })
+
   it('carries the operator uid, gid and home', () => {
-    const environment = hostSandboxEnvironment({ env: { HOME: '/Users/operator' } })
+    const environment = hostSandboxEnvironment({ env })
 
     expect(environment.uid).toBe(hostUid())
     expect(environment.gid).toBe(hostGid())
-    expect(environment.home).toBe('/Users/operator')
+    expect(environment.home).toBe(home)
   })
 
-  it('forwards an ssh agent socket only when the path is real', () => {
-    expect(hostSandboxEnvironment({ env: { HOME: '/tmp' } }).sshAuthSock).toBeUndefined()
-    expect(
-      hostSandboxEnvironment({ env: { HOME: '/tmp', SSH_AUTH_SOCK: '/no/such/socket' } })
-        .sshAuthSock,
-    ).toBeUndefined()
+  it('omits a missing ssh agent socket', () => {
+    expect(hostSandboxEnvironment({ env }).sshAuthSock).toBeUndefined()
+    env.SSH_AUTH_SOCK = join(home, 'missing.socket')
+    expect(hostSandboxEnvironment({ env }).sshAuthSock).toBeUndefined()
   })
 
   it('mounts a gitconfig only when the operator has one', async () => {
-    const home = await mkdtemp(join(tmpdir(), 'atlas-dev-hostenv-'))
-    try {
-      expect(hostSandboxEnvironment({ env: { HOME: home } }).gitconfigPath).toBeUndefined()
+    expect(hostSandboxEnvironment({ env }).gitconfigPath).toBeUndefined()
+    const gitconfig = join(home, '.gitconfig')
+    await writeFile(gitconfig, '[user]\n\tname = Operator\n')
 
-      const gitconfig = join(home, '.gitconfig')
-      await writeFile(gitconfig, '[user]\n\tname = Operator\n')
-
-      expect(hostSandboxEnvironment({ env: { HOME: home } }).gitconfigPath).toBe(gitconfig)
-    } finally {
-      await rm(home, { recursive: true, force: true })
-    }
+    expect(hostSandboxEnvironment({ env }).gitconfigPath).toBe(gitconfig)
   })
 
-  it('reports a gpg extra socket as a path or not at all', () => {
-    const environment = hostSandboxEnvironment({ env: { HOME: '/tmp' } })
+  it.each(['.gnupg', 'custom-gnupg'])(
+    'discovers only the public keyring under %s',
+    async (directory) => {
+      const gpgHome = join(home, directory)
+      if (directory !== '.gnupg') {
+        env.GNUPGHOME = gpgHome
+        await mkdir(join(home, '.gnupg'))
+        await writeFile(join(home, '.gnupg', 'pubring.kbx'), 'unused default keyring fixture')
+      }
+      const pubring = join(gpgHome, 'pubring.kbx')
+      const socket = join(gpgHome, 'S.gpg-agent.extra')
+      await mkdir(join(gpgHome, 'private-keys-v1.d'), { recursive: true })
+      await writeFile(join(gpgHome, 'private-keys-v1.d', 'key.key'), 'private key fixture')
+      await writeFile(join(gpgHome, 'secring.gpg'), 'private keyring fixture')
+      agent = Bun.listen({ unix: socket, socket: { data() {} } })
 
-    if (environment.gpgAgentExtraSocket !== undefined) {
-      expect(environment.gpgAgentExtraSocket).toContain('S.gpg-agent.extra')
-    }
+      expect(hostSandboxEnvironment({ env }).gpgAgentExtraSocket).toBe(socket)
+      expect(hostSandboxEnvironment({ env }).gpgPubringPath).toBeUndefined()
+      await mkdir(pubring)
+      expect(hostSandboxEnvironment({ env }).gpgPubringPath).toBeUndefined()
+      await rm(pubring, { recursive: true })
+      await writeFile(pubring, 'public keyring fixture')
+
+      expect(hostSandboxEnvironment({ env }).gpgPubringPath).toBe(pubring)
+    },
+  )
+
+  it.each([
+    { name: 'missing gpgconf', script: undefined },
+    { name: 'failed gpgconf', script: '#!/bin/sh\nexit 1\n' },
+    { name: 'empty gpgconf output', script: '#!/bin/sh\nexit 0\n' },
+    {
+      name: 'non-socket gpgconf output',
+      script: '#!/bin/sh\nprintf \'%s\\n\' "$HOME/.gnupg/pubring.kbx"\n',
+    },
+    { name: 'missing socket', script: '#!/bin/sh\nprintf \'%s\\n\' "$HOME/missing.socket"\n' },
+  ])('omits the agent and public keyring for $name', async ({ script }) => {
+    const pubring = join(home, '.gnupg', 'pubring.kbx')
+    await mkdir(join(home, '.gnupg'))
+    await writeFile(pubring, 'public keyring fixture')
+    if (script === undefined) await rm(join(home, 'gpgconf'))
+    else await writeFile(join(home, 'gpgconf'), script)
+
+    const environment = hostSandboxEnvironment({ env })
+    expect(environment.gpgAgentExtraSocket).toBeUndefined()
+    expect(environment.gpgPubringPath).toBeUndefined()
+  })
+
+  it('discovers only the existing ssh known_hosts file, not private keys or directories', async () => {
+    const knownHosts = join(home, '.ssh', 'known_hosts')
+    expect(hostSandboxEnvironment({ env }).sshKnownHostsPath).toBeUndefined()
+    await mkdir(join(home, '.ssh'))
+    await writeFile(join(home, '.ssh', 'id_ed25519'), 'private key fixture')
+    expect(hostSandboxEnvironment({ env }).sshKnownHostsPath).toBeUndefined()
+    await mkdir(knownHosts)
+    expect(hostSandboxEnvironment({ env }).sshKnownHostsPath).toBeUndefined()
+    await rm(knownHosts, { recursive: true })
+    await writeFile(knownHosts, 'github.com ssh-ed25519 AAAA')
+
+    expect(hostSandboxEnvironment({ env }).sshKnownHostsPath).toBe(knownHosts)
   })
 
   it('composes a sandbox config for a worktree out of the host environment and limits', () => {
@@ -73,7 +136,7 @@ describe('hostSandboxEnvironment', () => {
       limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
     })
 
-    expect(config.image).toBe('node:22-slim')
+    expect(config.image).toBe('ghcr.io/dennisofficial/atlas-sandbox:latest')
     expect(config.worktree).toBe('/Users/operator/Developer/project')
     expect(config.limits).toEqual({ cpus: 2, memoryBytes: 4 * 1024 ** 3 })
     expect(config.uid).toBe(hostUid())
@@ -105,17 +168,21 @@ describe('hostSandboxEnvironment', () => {
     ])
   })
 
-  it('refuses a Dockerfile resolution, because building is not wired — name an image instead', () => {
-    expect(() =>
-      sandboxConfigFromHost({
-        worktree: '/Users/operator/Developer/project',
-        limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
-        resolution: resolution({
-          kind: EImageKind.Dockerfile,
-          path: '/Users/operator/Developer/project/.atlas/Dockerfile',
-        }),
+  it('maps a Dockerfile resolution onto the sandbox config as a path to build from', () => {
+    const config = sandboxConfigFromHost({
+      worktree: '/Users/operator/Developer/project',
+      limits: { cpus: 2, memoryBytes: 4 * 1024 ** 3 },
+      resolution: resolution({
+        kind: EImageKind.Dockerfile,
+        path: '/Users/operator/Developer/project/.atlas/Dockerfile',
+        context: EBuildContext.Directory,
       }),
-    ).toThrow(/container\.json/)
+    })
+
+    expect(config.dockerfile).toEqual({
+      path: '/Users/operator/Developer/project/.atlas/Dockerfile',
+      context: EBuildContext.Directory,
+    })
   })
 })
 

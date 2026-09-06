@@ -54,7 +54,7 @@ export async function bindSandbox(args: {
 }> {
   const { container, engine, cwd, settings, executionLocation } = args
 
-  const resolution = await resolveContainerConfig({ projectDirectory: cwd })
+  const resolution = await resolveContainerConfig({ projectDirectory: cwd, atlasHome: args.atlasHome })
   const atlasSubtrees = mountedAtlasHomeSubtrees({
     worktree: cwd,
     declared: resolution.mounts,

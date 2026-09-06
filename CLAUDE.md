@@ -201,6 +201,10 @@ typecheck cannot: runtime assets loaded by path, and optional peer dependencies 
 Nest was the original reason for that warning and now lives only under `deprecated/`, but the class of
 failure is not specific to it — the tree-sitter grammars are the live example.
 
+## Sandbox image
+
+The sandbox image is a private GHCR listing; access rides on GitHub.
+
 ## Agent skills
 
 ### Issue tracker
