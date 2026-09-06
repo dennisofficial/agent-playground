@@ -122,7 +122,7 @@ export function useAgents({
   const now = useTickingNow(own.some(subagentShowsElapsed) || graceIsRunning({ members, viewing }))
   const spend = useAgentSpend({ app, children: own })
 
-  return useMemo(() => {
+  const crew = useMemo(() => {
     const subagents = subagentRows({ snapshots: own, now, spend, viewing })
     const { standings } = partitionCrew({
       crew: members,
@@ -139,11 +139,20 @@ export function useAgents({
     })
 
     return {
-      sidebar: withCrew({ model: sidebar, subagents: folded.shown, fold: folded }),
-      everywhere,
-      visits,
+      folded,
       running: subagents.filter(isSubagentRunning).length,
       count: subagents.length,
     }
-  }, [everywhere, members, now, own, sidebar, spend, viewing, visits])
+  }, [members, now, own, spend, viewing])
+
+  return useMemo(
+    () => ({
+      sidebar: withCrew({ model: sidebar, subagents: crew.folded.shown, fold: crew.folded }),
+      everywhere,
+      visits,
+      running: crew.running,
+      count: crew.count,
+    }),
+    [crew, everywhere, sidebar, visits],
+  )
 }

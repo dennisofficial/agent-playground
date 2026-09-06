@@ -36,13 +36,15 @@ import type {
   TranscriptEntry,
   TranscriptModel,
 } from "./transcript-model";
+import { IDLE_PROGRESS, turnObserved, type TurnProgress } from "./turn-progress";
 
 export type ConversationStore = {
   subscribe(listener: () => void): Unsubscribe
   getSnapshot(): TranscriptModel
   getSidebar(): SidebarModel
+  getTurn(): TurnClock
   setEvents(args: { events: readonly Event[]; turns?: readonly TurnSpend[] | undefined }): void
-  setTurn(turn: TurnClock): void
+  stampTurn(advance: (progress: TurnProgress) => TurnProgress): void
   supersedeFailure(): void
   resetSteps(): void
   setThinking(thinking: EThinkingVisibility): void
@@ -67,13 +69,16 @@ export function createConversationStore(args: {
   priceOf?: ModelPriceLookup | undefined;
   projectEvents?: ((args: { events: readonly Event[] }) => void) | undefined;
   sandbox?: SandboxStatusSource | undefined;
+  readClock?: (() => number) | undefined;
 }): ConversationStore {
   const paceReveal = args.paceReveal ?? false;
+  const readClock = args.readClock ?? Date.now;
   let thinking: EThinkingVisibility = args.thinking ?? SHIPPED_THINKING;
   let tldrStatus = true;
   let name: string | null = args.name ?? null;
   let events: readonly Event[] = args.events ?? [];
   let turns: readonly TurnSpend[] = args.turns ?? NO_TURNS;
+  let progress: TurnProgress = IDLE_PROGRESS;
   let turn: TurnClock = IDLE_TURN;
   let gate: RevealGate | null = null;
   let sandbox: SidebarContainer | null = args.sandbox?.current() ?? null;
@@ -122,12 +127,8 @@ export function createConversationStore(args: {
     for (const listener of [...listeners]) listener();
   };
 
-  const sameFailure = (
-    left: StepFailure | null,
-    right: StepFailure | null,
-  ): boolean =>
-    left === right ||
-    (left !== null && right !== null && left.message === right.message);
+  const sameFailure = (left: StepFailure | null, right: StepFailure | null): boolean =>
+    left === right || (left !== null && right !== null && left.message === right.message);
 
   const settled = (derived: TranscriptModel): TranscriptModel => {
     const entries = stabilisedEntries({
@@ -161,6 +162,7 @@ export function createConversationStore(args: {
   };
 
   const republish = () => {
+    turn = progress.clock;
     tracker.pruneSuperseded(events);
     pruneTails();
     model = settled(
@@ -197,11 +199,11 @@ export function createConversationStore(args: {
   };
 
   const handleSignal = (signal: ChannelSignal) => {
-    if (
-      signal.type === "events-appended" ||
-      signal.type === "retry-waiting" ||
-      signal.type === "retry-cleared"
-    ) {
+    progress = turnObserved({ progress, signal, now: readClock() });
+
+    if (signal.type === "events-appended" || signal.type === "retry-cleared") return;
+    if (signal.type === "retry-waiting") {
+      republish();
       return;
     }
 
@@ -265,6 +267,8 @@ export function createConversationStore(args: {
 
     getSidebar: () => sidebar,
 
+    getTurn: () => turn,
+
     setEvents(next) {
       const logMoved = !sameEvents({ left: events, right: next.events });
       const spendMoved =
@@ -276,15 +280,11 @@ export function createConversationStore(args: {
       republish();
     },
 
-    setTurn(next) {
-      if (next === turn) return;
-
-      turn = next
-      const nextSidebar = sidebarNow()
-      if (sameSidebar(sidebar, nextSidebar)) return
-
-      sidebar = nextSidebar
-      wake()
+    stampTurn(advance) {
+      const next = advance(progress);
+      const clockMoved = next.clock !== progress.clock;
+      progress = next;
+      if (clockMoved) republish();
     },
 
     supersedeFailure() {

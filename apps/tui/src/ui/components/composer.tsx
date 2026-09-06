@@ -4,12 +4,12 @@ import React, { useCallback, useLayoutEffect, useRef, useState } from 'react'
 import { composerEdge, EComposerEdge } from '../composer-edge-store'
 import { charRangeOf } from '../highlight-offsets'
 import { mentionStyleId, mentionSyntaxStyle } from '../mention-style'
+import { useAppearance } from '../hooks/use-appearance'
 import type { DraftControls } from '../hooks/use-draft'
-import { cellsOf } from '../hint-layout'
 import { glyph, theme } from '../theme'
+import { composerTitle } from './composer-title'
 import { EFrameRule, Frame, FRAME_INSET, FRAME_PAD } from './frame'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
-import { truncateCells } from './sidebar/cells'
 
 const DEFAULT_MAX_ROWS = 8
 
@@ -19,6 +19,8 @@ const NOTHING_HIGHLIGHTED: readonly HighlightSpan[] = []
 
 const spanKey = (spans: readonly HighlightSpan[]): string =>
   spans.map((span) => `${span.start}:${span.end}`).join(',')
+
+export { composerTitle } from './composer-title'
 
 export function composerRows(height: number): number {
   return Math.max(DEFAULT_MAX_ROWS, Math.floor(height / 2) - 2)
@@ -64,49 +66,13 @@ const UNBOUNDED = 10_000
 const overflowBadge = (hidden: number): string =>
   hidden === 1 ? '⋯ 1 more row' : `⋯ ${hidden} more rows`
 
-const TITLE_PAD = 1
-
-const TITLE_MIN_CELLS = 8
-
-const RAIL_COLUMNS = 1
-
-const CLOSING_RULE_COLUMNS = 1
-
 const chromeColumns = (edge: EComposerEdge): number => {
   if (edge === EComposerEdge.Bordered) return FRAME_CHROME_COLUMNS
   if (edge === EComposerEdge.Claude) return CARET_CHROME_COLUMNS
   return CHROME_COLUMNS
 }
 
-const TITLE_RUNWAY = 4
-
-const slabCells = (text: string): number => cellsOf(text) + TITLE_PAD * 2
-
-/**
- * The head row is shared: whatever the badge takes, plus the `▄` between them, is gone before the
- * title starts. Below `TITLE_MIN_CELLS` of what is left there is no title worth truncating to. A
- * bordered composer closes the row on a corner as well, so it has one column less to give.
- */
-export function composerTitle(args: {
-  title: string
-  width: number
-  badge: string | null
-  edge?: EComposerEdge
-}): string | null {
-  const closing = args.edge === EComposerEdge.Bordered ? CLOSING_RULE_COLUMNS : 0
-  const spent =
-    RAIL_COLUMNS +
-    TITLE_RUNWAY +
-    PANEL_PAD +
-    closing +
-    (args.badge === null ? 0 : slabCells(args.badge) + 1)
-  const room = args.width - spent - TITLE_PAD * 2
-  if (room < TITLE_MIN_CELLS) return null
-
-  return truncateCells({ text: args.title, cells: room })
-}
-
-export function Composer(props: {
+function DerivedComposer(props: {
   draft: DraftControls
   width: number
   tone?: EComposerTone
@@ -118,6 +84,7 @@ export function Composer(props: {
   highlights?: readonly HighlightSpan[]
   onCursorMoved?: (() => void) | undefined
 }): React.ReactNode {
+  useAppearance()
   const tone = props.tone ?? EComposerTone.Idle
   const rail = railColour(tone, props.accent ?? theme.accent)
   const edge = composerEdge()
@@ -239,7 +206,6 @@ export function Composer(props: {
       ? null
       : composerTitle({ title: props.title, width: props.width, badge, edge })
 
-
   const draft = (
     <textarea
       ref={editor}
@@ -304,3 +270,5 @@ export function Composer(props: {
     </Panel>
   )
 }
+
+export const Composer = React.memo(DerivedComposer)

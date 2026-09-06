@@ -61,7 +61,7 @@ describe('snapshot identity', () => {
   it('leaves the transcript snapshot untouched when only the turn clock advanced', () => {
     const before = store.getSnapshot()
 
-    store.setTurn({ ...IDLE_TURN, startedAt: 1000, outputTokens: 12 })
+    store.stampTurn(() => ({ characters: 48, clock: { ...IDLE_TURN, startedAt: 1000, outputTokens: 12 } }))
 
     expect(store.getSnapshot()).toBe(before)
   })
@@ -69,7 +69,7 @@ describe('snapshot identity', () => {
   it('still tells the sidebar that the turn clock advanced', () => {
     const before = store.getSidebar()
 
-    store.setTurn({ ...IDLE_TURN, startedAt: 1000, outputTokens: 12 })
+    store.stampTurn(() => ({ characters: 48, clock: { ...IDLE_TURN, startedAt: 1000, outputTokens: 12 } }))
 
     expect(store.getSidebar()).not.toBe(before)
   })
@@ -80,7 +80,7 @@ describe('snapshot identity', () => {
       woke += 1
     })
 
-    store.setTurn({ ...IDLE_TURN, startedAt: 1000, outputTokens: 12 })
+    store.stampTurn(() => ({ characters: 48, clock: { ...IDLE_TURN, startedAt: 1000, outputTokens: 12 } }))
 
     expect(woke).toBe(1)
   })

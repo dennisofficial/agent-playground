@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { RGBA } from "@opentui/core";
 import React from "react";
 
+import { useAppearance } from "../hooks/use-appearance";
 import { collapseHome, compactPath } from "../paths";
 import { theme } from "../theme";
 import type { ServiceSnapshot, ShellSnapshot } from "@dltech/atlas-harness";
@@ -85,7 +86,7 @@ function Scrim(): React.ReactNode {
  * from it at its last value, so a sidebar that stopped floating would stay out of the flow and
  * the transcript would keep the whole terminal and draw underneath it.
  */
-export function Sidebar(props: {
+function DerivedSidebar(props: {
   width: number;
   model: SidebarModel;
   root: string;
@@ -102,6 +103,7 @@ export function Sidebar(props: {
   onSelectSubagent?: (agentId: string) => void;
   onRevokeGrant?: (grantId: string) => void;
 }): React.ReactNode {
+  useAppearance();
   const { model } = props;
   const cells = sidebarCells({ width: props.width });
   const floating = props.overlay === true;
@@ -192,3 +194,5 @@ export function Sidebar(props: {
     </>
   );
 }
+
+export const Sidebar = React.memo(DerivedSidebar);

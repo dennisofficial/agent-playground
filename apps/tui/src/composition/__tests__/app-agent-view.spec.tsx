@@ -88,6 +88,15 @@ async function pressChord(setup: Mounted, key: string): Promise<void> {
   await setup.flush()
 }
 
+async function tokensCounted(setup: Mounted): Promise<void> {
+  const deadline = Date.now() + 5_000
+  while (!setup.captureCharFrame().includes('↓ ') && Date.now() < deadline) {
+    await settle(50)
+    await setup.flush()
+  }
+  expect(setup.captureCharFrame()).toContain('↓ ')
+}
+
 async function selectChild(setup: Mounted): Promise<void> {
   const row = sidebarRowOf(setup, CHILD_INTENT)
   expect(row).toBeGreaterThan(-1)
@@ -315,6 +324,7 @@ describe('viewing a sub-agent', () => {
 
       expect(setup.captureCharFrame()).toContain(STEERING)
 
+      await tokensCounted(setup)
       await selectChild(setup)
 
       const frame = setup.captureCharFrame()
