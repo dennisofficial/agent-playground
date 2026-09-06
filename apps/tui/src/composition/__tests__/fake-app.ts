@@ -59,7 +59,7 @@ import { FileBrowser } from '@dltech/atlas-harness'
 
 import type { PullRequestPort } from '../../plugins/github/pure'
 
-import { createPendingQueue } from '../../store'
+import { createPendingQueues } from '../../store'
 import { userSaidDraft } from '../user-said'
 import type { AtlasApp } from '../compose'
 import type { ActiveConversation } from '../resume-hint'
@@ -534,7 +534,7 @@ export function fakeApp(args: {
   const threads = fakeThreadStore({ log })
   const ids = new RandomIds()
   const ledger = fakeLedger()
-  const pending = createPendingQueue()
+  const pending = createPendingQueues()
   const shells = fakeShellRegistry()
   const agents = fakeAgentRegistry()
   const services = fakeServiceRegistry()
@@ -547,7 +547,8 @@ export function fakeApp(args: {
       ids,
       assembly: defaultPipeline({ prompt: () => EMPTY_PROMPT, launchDirectory: FAKE_CONFIG.cwd }),
       spend: { ledger, clock: new SystemClock() },
-      drainPending: async () => pending.drain().map(userSaidDraft),
+      drainPending: async ({ threadId }) =>
+        pending.forThread({ threadId }).drain().map(userSaidDraft),
     },
   })
 

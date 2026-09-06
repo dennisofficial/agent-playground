@@ -27,6 +27,7 @@ const description = [
   'Matches against the directory you are currently in unless path names a different one; a relative path resolves against the project directory.',
   `Returns at most ${RESULT_LIMIT} paths; when more match, the result says how many were left out.`,
   'Hidden files and directories are not matched.',
+  'Symbolic links are followed.',
 ].join(' ')
 
 type DatedPath = { path: string; modifiedAt: number }

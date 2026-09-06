@@ -1,5 +1,5 @@
 import type { ThreadId } from '@dltech/atlas-core'
-import { useCallback } from 'react'
+import { useCallback, type RefObject } from 'react'
 
 import type { AtlasApp } from './compose'
 import { EOpenMode } from './config'
@@ -21,21 +21,21 @@ export type ThreadSwap = {
 export function useThreadSwap(args: {
   app: AtlasApp
   threadId: ThreadId
-  working: boolean
+  working: RefObject<boolean>
   adopt: (next: OpenedConversation) => void
   onFailure: (reason: string) => void
 }): ThreadSwap {
   const { app, threadId, working, adopt, onFailure } = args
 
   const handleNewConversation = useCallback(() => {
-    if (working) return
+    if (working.current) return
 
     adopt(unstartedConversation({ ids: app.ids }))
   }, [adopt, app.ids, working])
 
   const handleOpenThread = useCallback(
     (asked: string) => {
-      if (working || asked === threadId) return
+      if (working.current || asked === threadId) return
 
       void openConversation({
         threads: app.threads,

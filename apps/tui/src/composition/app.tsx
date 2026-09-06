@@ -657,7 +657,7 @@ function Workspace(props: {
           compacting: conversation.compacting !== null,
           approvalOpen: conversation.approval.state !== null,
           exitGuardOpen: exitGuard.state !== null,
-          queuedMessages: props.app.pending.getSnapshot().length,
+          queuedMessages: props.app.pending.waitingCount(),
           runningTasks: shells.running + agents.running + services.running,
           draftEmpty: (draft.editor.current?.plainText ?? draft.value).length === 0,
         }),
@@ -868,6 +868,11 @@ function Workspace(props: {
           ? {}
           : { loadFile: workspaceFileLoader(props.app.files) }),
       }).then((dispatched) => {
+        if (dispatched.type === EDispatch.Queued) {
+          tokens.restore(readyImages)
+          conversation.handleQueueSettled(dispatched.entry)
+          return
+        }
         if (dispatched.type === EDispatch.Refused) {
           putBack()
           conversation.handleReportProblem(dispatched.reason)
@@ -1200,8 +1205,8 @@ function Workspace(props: {
                 onToggle={handleToggle}
               />
             )}
-            <NoticeStack width={chromeWidth} />
           </box>
+          <NoticeStack width={chromeWidth} />
           {panel === EChromePanel.Shortcuts ? <Shortcuts width={chromeWidth} /> : null}
           {panel === EChromePanel.AgentTypes ? (
             <AgentTypes width={chromeWidth} catalog={props.app.agentTypes} />

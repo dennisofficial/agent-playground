@@ -82,7 +82,11 @@ export function registerBuiltinTools({ container }: { container: DependencyConta
       ),
   })
   container.register(portToken(ToolDefinition), {
-    useFactory: (resolver) => new GrepTool(resolver.resolve(portToken(ProcessPort))),
+    useFactory: (resolver) =>
+      new GrepTool(
+        resolver.resolve(portToken(ProcessPort)),
+        resolver.resolve(portToken(FileSystemPort)),
+      ),
   })
   container.register(portToken(ToolDefinition), {
     useFactory: (resolver) => new GlobTool(resolver.resolve(portToken(FileSystemPort))),

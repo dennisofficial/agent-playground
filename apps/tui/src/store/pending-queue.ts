@@ -11,7 +11,6 @@ export type PendingQueue = {
   takeBackLast(): PendingMessage | null
   drain(): readonly PendingSaid[]
   settleTaken(args: { events: readonly Event[] }): void
-  clear(): void
 }
 
 const NOTHING_PENDING: readonly PendingMessage[] = Object.freeze([])
@@ -97,11 +96,6 @@ export function createPendingQueue(): PendingQueue {
       if (!takenRunAnsweredIn({ events, taken })) return
 
       settle({ taken: NOTHING_PENDING })
-    },
-
-    clear() {
-      if (snapshot.length === 0) return
-      settle({ taken: NOTHING_PENDING, waiting: NOTHING_PENDING })
     },
   }
 }

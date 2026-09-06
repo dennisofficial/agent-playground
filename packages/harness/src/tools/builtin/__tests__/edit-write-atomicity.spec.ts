@@ -1,5 +1,5 @@
 import { toThreadId, type ToolOutcome } from '@dltech/atlas-core'
-import { chmod, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdtemp, readFile, readdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'bun:test'
@@ -75,6 +75,30 @@ describe('edit and write land whole or not at all', () => {
 
     expect((await invoke(new WriteTool(), { path, content: 'x\n' })).ok).toBe(true)
     expect(await readFile(path, 'utf8')).toBe('x\n')
+  })
+
+  it('edits through a symlink without breaking the link', async () => {
+    const target = await fileHolding({ name: 'real.txt', text: 'old\n' })
+    const link = join(root, 'link.txt')
+    await symlink(target, link)
+
+    const outcome = await invoke(new EditTool(), { path: link, oldString: 'old', newString: 'new' })
+
+    expect(outcome.ok).toBe(true)
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
+    expect(await readFile(target, 'utf8')).toBe('new\n')
+  })
+
+  it('writes through a symlink without breaking the link', async () => {
+    const target = await fileHolding({ name: 'real-write.txt', text: 'old\n' })
+    const link = join(root, 'link-write.txt')
+    await symlink(target, link)
+
+    const outcome = await invoke(new WriteTool(), { path: link, content: 'new\n' })
+
+    expect(outcome.ok).toBe(true)
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
+    expect(await readFile(target, 'utf8')).toBe('new\n')
   })
 
   it('reports the bytes it wrote, counting UTF-8 rather than characters', async () => {

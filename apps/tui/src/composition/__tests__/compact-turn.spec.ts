@@ -15,6 +15,7 @@ import { EEntryKind } from '../../store/transcript-model'
 import { autoCompactAfterTurn, EAutoCompact } from '@dltech/atlas-core'
 
 import { compactTurn, ECompaction } from '../compact-turn'
+import { fakeAgentRegistry } from './fake-agents'
 import { fakeThreadStore, fakeEventLog } from './fake-backend'
 
 const THREAD = toThreadId('compacting')
@@ -55,6 +56,7 @@ describe('compacting a conversation the operator asked to compact', () => {
     const compaction = await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises('Forty turns of parser work.'),
     })
@@ -69,6 +71,7 @@ describe('compacting a conversation the operator asked to compact', () => {
     const compaction = await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises('the earlier turns'),
     })
@@ -83,6 +86,7 @@ describe('compacting a conversation the operator asked to compact', () => {
     const compaction = await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises('should never be asked for'),
     })
@@ -96,6 +100,7 @@ describe('compacting a conversation the operator asked to compact', () => {
     const compaction = await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises(null),
     })
@@ -115,6 +120,7 @@ describe('compacting a conversation the operator asked to compact', () => {
     const compaction = await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises('a summary'),
     })
@@ -130,6 +136,7 @@ describe('what the transcript shows after a compaction', () => {
     const compaction = await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises('Forty turns of parser work.'),
     })
@@ -157,6 +164,7 @@ describe('what the transcript shows after a compaction', () => {
     await compactTurn({
       log,
       threads: fakeThreadStore({ log, existing: [THREAD] }),
+      agents: fakeAgentRegistry(),
       threadId: THREAD,
       summarise: summarises('Forty turns of parser work.'),
     })

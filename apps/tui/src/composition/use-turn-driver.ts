@@ -10,8 +10,8 @@ import { ETurnStatus, rewindThread, type TurnOutcome } from '@dltech/atlas-harne
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
 
 import { unansweredApproval, type ApprovalQuestion } from '../ui/approval-model'
+import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { useApproval, type ApprovalControl } from './use-approval'
-import { MID_TURN } from './commands/dispatch'
 import type { AtlasApp } from './compose'
 import { discardInterrupted, EDiscard } from './resume-turn'
 import { EUndo, undoTurn } from './undo-turn'
@@ -58,6 +58,7 @@ const commitGate = (): CommitGate => {
 
 export type TurnDriver = {
   working: boolean
+  workingRef: RefObject<boolean>
   approval: ApprovalControl
   drive: (drafts: readonly EventDraft[]) => Promise<void>
   handleInterrupt: () => void
@@ -84,15 +85,17 @@ export function useTurnDriver(args: {
   used: RefObject<number>
   compactIfFull: (used: number) => Promise<void>
   cancelCompaction: () => boolean
+  onSettled: () => Promise<void>
   onUndone: (text: string) => void
   setFailure: (reason: string | null) => void
   forgetUsage: () => void
 }): TurnDriver {
   const { app, threadId, started, view, readClock, used, compactIfFull } = args
-  const { cancelCompaction, onUndone, setFailure, forgetUsage } = args
+  const { cancelCompaction, onSettled, onUndone, setFailure, forgetUsage } = args
   const { store, events, refresh, stamp } = view
 
   const [working, setWorking] = useState(false)
+  const workingRef = useRef(false)
   const abort = useRef<AbortController | null>(null)
   const driveLatest = useRef<(drafts: readonly EventDraft[]) => Promise<void>>(async () => undefined)
 
@@ -130,7 +133,7 @@ export function useTurnDriver(args: {
   )
 
   const undo = useCallback(async () => {
-    const undone = await undoTurn({ log: app.log, threads: app.threads, threadId })
+    const undone = await undoTurn({ log: app.log, threads: app.threads, agents: app.agents, threadId })
 
     if (undone.type === EUndo.Refused) {
       setFailure(undone.reason)
@@ -140,7 +143,7 @@ export function useTurnDriver(args: {
 
     await refresh()
     onUndone(undone.text)
-  }, [app.log, app.threads, onUndone, refresh, setFailure, threadId])
+  }, [app.agents, app.log, app.threads, onUndone, refresh, setFailure, threadId])
 
   const drive = useCallback(
     (drafts: readonly EventDraft[]): Promise<void> => {
@@ -148,12 +151,14 @@ export function useTurnDriver(args: {
       const gate = commitGate()
 
       abort.current = controller
+      workingRef.current = true
       setWorking(true)
       setFailure(null)
       store.supersedeFailure()
       stamp(() => turnStarted({ now: readClock() }))
 
       void (async () => {
+        let pausedForApproval = false
         try {
           if (drafts.length > 0) {
             await commit(drafts)
@@ -163,16 +168,21 @@ export function useTurnDriver(args: {
           const outcome = await app.runner.runTurn({ threadId, signal: controller.signal })
           const asked = await pausedOnApproval({ log: app.log, threadId, outcome })
           if (asked === null) setFailure(stoppageOf(outcome))
-          else openApproval(asked)
+          else {
+            pausedForApproval = true
+            openApproval(asked)
+          }
           if (committedNothing(outcome)) await undo()
         } catch (error) {
           setFailure(messageOf(error))
         } finally {
           gate.settle()
           abort.current = null
-          setWorking(false)
+          workingRef.current = false
           stamp((current) => turnSettled({ progress: current, now: readClock() }))
           await refresh().catch(() => undefined)
+          if (!pausedForApproval) await onSettled().catch(() => undefined)
+          setWorking(false)
           await compactIfFull(used.current).catch(() => undefined)
         }
       })()
@@ -183,6 +193,7 @@ export function useTurnDriver(args: {
       app,
       commit,
       compactIfFull,
+      onSettled,
       openApproval,
       readClock,
       refresh,
@@ -219,6 +230,7 @@ export function useTurnDriver(args: {
       const discarded = await discardInterrupted({
         log: app.log,
         threads: app.threads,
+        agents: app.agents,
         threadId,
       })
 
@@ -231,19 +243,31 @@ export function useTurnDriver(args: {
       await refresh()
       void drive([])
     })()
-  }, [app.log, app.threads, drive, forgetUsage, refresh, setFailure, threadId, working])
+  }, [app.agents, app.log, app.threads, drive, forgetUsage, refresh, setFailure, threadId, working])
 
   const rewindTo = useCallback(
     async (toSeq: number) => {
       if (abort.current !== null) {
-        setFailure(MID_TURN('rewind'))
+        notify({
+          key: 'rewind-mid-turn',
+          tone: ENoticeTone.Warn,
+          ttlMs: NOTICE_WARN_MS,
+          text: '/rewind has to wait for this turn — pick the point again when it settles',
+        })
         return
       }
 
       cancelCompaction()
+      workingRef.current = true
       setWorking(true)
       try {
-        const rewound = await rewindThread({ log: app.log, threads: app.threads, threadId, toSeq })
+        const rewound = await rewindThread({
+          log: app.log,
+          threads: app.threads,
+          agents: app.agents,
+          threadId,
+          toSeq,
+        })
 
         if (!rewound.ok) {
           setFailure(rewound.reason)
@@ -253,10 +277,11 @@ export function useTurnDriver(args: {
         forgetUsage()
         await refresh()
       } finally {
+        workingRef.current = false
         setWorking(false)
       }
     },
-    [app.log, app.threads, cancelCompaction, forgetUsage, refresh, setFailure, store, threadId],
+    [app.agents, app.log, app.threads, cancelCompaction, forgetUsage, refresh, setFailure, store, threadId],
   )
 
   /**
@@ -279,6 +304,7 @@ export function useTurnDriver(args: {
 
   return {
     working,
+    workingRef,
     approval,
     drive,
     handleInterrupt,

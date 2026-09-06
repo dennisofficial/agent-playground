@@ -50,6 +50,16 @@ export class AgentNoticeQueue {
     this.settle(kept)
   }
 
+  forgetAgents({ threadId, agentIds }: { threadId: ThreadId; agentIds: readonly ThreadId[] }): void {
+    const removed = new Set(agentIds)
+    const kept = this.queued.filter(
+      (notice) => notice.threadId !== threadId || !removed.has(notice.snapshot.agentId),
+    )
+    if (kept.length === this.queued.length) return
+
+    this.settle(kept)
+  }
+
   /**
    * The snapshots are held rather than derived per call: pending backs a React external store,
    * which reads it on every render and requires a stable value between changes.
