@@ -59,3 +59,15 @@ export function useShimmerClock(args: { active: boolean; intervalMs?: number }):
   const ticker = args.active ? tickerFor(args.intervalMs ?? SHIMMER_FRAME_MS) : IDLE
   return useSyncExternalStore(ticker.subscribe, ticker.getSnapshot)
 }
+
+/**
+ * For animation that writes straight to a renderable instead of through React: the listener runs on
+ * the shared tick and nothing re-renders.
+ */
+export function subscribeTicker(args: {
+  intervalMs: number
+  onTick: (now: number) => void
+}): () => void {
+  const ticker = tickerFor(args.intervalMs)
+  return ticker.subscribe(() => args.onTick(ticker.getSnapshot()))
+}

@@ -26,13 +26,15 @@ import {
 } from '../../../store/tools'
 import { useClickRegion } from '../../hooks/use-click-region'
 import { useHighWater } from '../../hooks/use-high-water'
-import { useShimmerClock } from '../../hooks/use-shimmer-clock'
 import { tailOfPath } from '../../paths'
-import { spinnerFrame, theme, TRANSCRIPT_INSET } from '../../theme'
+import { theme, TRANSCRIPT_INSET } from '../../theme'
 import { markPaint, SHIPPED_MARK, type EMark } from '../../tool-marks'
+import { SpinnerGlyph } from '../shimmer-line'
 import { moreKey, sentenceKey } from './tool-run-expansion'
 import { MergedBlock } from './tool-run-merged'
 import { GAP, Row, RunDetail, STREAM_TAIL, Streaming } from './tool-run-rows'
+
+const RUNNING = ' '
 
 const NARROWEST_BAND = 24
 
@@ -40,7 +42,6 @@ const SentenceBlock = React.memo(function SentenceBlock(props: {
   reads: readonly Read[]
   inner: number
   cwd: string
-  now: number
   mark: EMark
   opensCluster: boolean
   blockKey: string
@@ -58,15 +59,21 @@ const SentenceBlock = React.memo(function SentenceBlock(props: {
     klass: EToolClass.Gathered,
     ok: true,
     opensCluster: props.opensCluster,
-    ...(running === undefined ? {} : { spinner: spinnerFrame(props.now) }),
+    ...(running === undefined ? {} : { spinner: RUNNING }),
   })
 
   return (
     <box flexDirection="column" marginBottom={1} width={props.inner} flexShrink={0}>
       <text wrapMode="none" width={props.inner} flexShrink={0} {...region.handlers}>
-        <span fg={paint.fg} {...region.wash}>
-          {paint.glyph}
-        </span>
+        {running === undefined ? (
+          <span fg={paint.fg} {...region.wash}>
+            {paint.glyph}
+          </span>
+        ) : (
+          <>
+            <SpinnerGlyph fg={paint.fg} />{' '}
+          </>
+        )}
         <span fg={paint.text} {...region.wash}>
           {done.length === 0 ? 'Working…' : sentenceOf(done)}
         </span>
@@ -99,7 +106,6 @@ const AloneBlock = React.memo(function AloneBlock(props: {
   repeats: number
   inner: number
   cwd: string
-  now: number
   mark: EMark
   opensCluster: boolean
   opened: ReadonlySet<string>
@@ -115,7 +121,7 @@ const AloneBlock = React.memo(function AloneBlock(props: {
     klass: reading.klass,
     ok: !reading.failed,
     opensCluster: props.opensCluster,
-    ...(running ? { spinner: spinnerFrame(props.now) } : {}),
+    ...(running ? { spinner: RUNNING } : {}),
   })
   const room = Math.max(8, props.inner - 2 - reading.note.length - GAP)
   const label = tailOfPath({ path: said, cells: room })
@@ -143,9 +149,15 @@ const AloneBlock = React.memo(function AloneBlock(props: {
   return (
     <box flexDirection="column" marginBottom={1} width={props.inner} flexShrink={0}>
       <text wrapMode="none" width={props.inner} flexShrink={0} {...region.handlers}>
-        <span fg={paint.fg} {...region.wash}>
-          {paint.glyph}
-        </span>
+        {running ? (
+          <>
+            <SpinnerGlyph fg={paint.fg} />{' '}
+          </>
+        ) : (
+          <span fg={paint.fg} {...region.wash}>
+            {paint.glyph}
+          </span>
+        )}
         <span fg={paint.text} {...region.wash}>{`${label}${pad}`}</span>
         <span fg={paint.note} {...region.wash}>{`${' '.repeat(GAP)}${reading.note}`}</span>
       </text>
@@ -178,18 +190,10 @@ const rowsOf = (segment: Segment, opened: ReadonlySet<string>): number => {
   return 2 + (opened.has(sentenceKey(segment.key)) ? segment.reads.length : 0)
 }
 
-const isLive = (segment: Segment): boolean =>
-  segment.kind === 'alone'
-    ? !settled(segment.read.call)
-    : segment.reads.some((read) => !settled(read.call))
-
-const SETTLED_CLOCK = 0
-
 export function ToolRunBlock(props: {
   run: ToolRun
   width: number
   cwd: string
-  now?: number
   mark?: EMark
   /**
    * Whether the entry above this one was also a tool run. When it was, this block continues a cluster
@@ -201,8 +205,6 @@ export function ToolRunBlock(props: {
 }): React.ReactNode {
   const { calls } = props.run
   const live = calls.some((call) => !settled(call))
-  const clock = useShimmerClock({ active: live && props.now === undefined })
-  const now = props.now ?? clock
   const opened = props.opened ?? NOTHING_OPEN
   const onToggle = props.onToggle ?? ignore
   const inner = Math.max(NARROWEST_BAND, props.width - TRANSCRIPT_INSET)
@@ -221,7 +223,6 @@ export function ToolRunBlock(props: {
               reads={segment.reads}
               inner={inner}
               cwd={props.cwd}
-              now={isLive(segment) ? now : SETTLED_CLOCK}
               mark={mark}
               opensCluster={index === 0 && props.continues !== true}
               blockKey={sentenceKey(segment.key)}
@@ -250,7 +251,19 @@ export function ToolRunBlock(props: {
             repeats={segment.repeats}
             inner={inner}
             cwd={props.cwd}
-            now={isLive(segment) ? now : SETTLED_CLOCK}
+            mark={mark}
+            opensCluster={index === 0 && props.continues !== true}
+            opened={opened}
+            onToggle={onToggle}
+          />
+        )
+      })}
+          <AloneBlock
+            key={segment.key}
+            read={segment.read}
+            repeats={segment.repeats}
+            inner={inner}
+            cwd={props.cwd}
             mark={mark}
             opensCluster={index === 0 && props.continues !== true}
             opened={opened}
