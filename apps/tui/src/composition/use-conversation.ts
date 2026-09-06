@@ -16,7 +16,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 
 import {
   pendingRows,
-  trailingSaid,
   type EThinkingVisibility,
   type PendingRow,
   type PendingSaid,
@@ -34,6 +33,7 @@ import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
 import { ECompactScope } from './compact-turn'
 import { useRevokeGrant } from './revoke-grant'
 import type { Renaming } from './session-rename'
+import { retractTrailingSaid } from './take-back'
 import { terminalTitleSequence } from './terminal-title'
 import { threadHandle } from './thread-slug'
 import { userSaidDraft } from './user-said'
@@ -78,7 +78,7 @@ export type Conversation = {
     images?: readonly SaidImage[]
     context?: readonly EventDraft[]
   }) => void
-  handleTakeBackPending: () => PendingSaid | null
+  handleTakeBackPending: () => Promise<PendingSaid | null> | null
   handleRetry: (() => void) | null
   handleResume: (() => void) | null
   handleReportProblem: (reason: string) => void
@@ -144,7 +144,7 @@ export function useConversation(args: {
    * the composer, which is why the view reports the read rather than knowing what to do about it.
    */
   const afterRead = useCallback(
-    (read: readonly Event[]) => pending.settleTaken({ landed: trailingSaid(read) }),
+    (read: readonly Event[]) => pending.settleTaken({ events: read }),
     [pending],
   )
 
@@ -268,7 +268,33 @@ export function useConversation(args: {
     [drive, nameSession, pending, working],
   )
 
-  const handleTakeBackPending = useCallback(() => pending.takeBackLast(), [pending])
+  const retraction = useRef<Promise<unknown>>(Promise.resolve(true))
+
+  const handleTakeBackPending = useCallback((): Promise<PendingSaid | null> | null => {
+    const last = pending.takeBackLast()
+    if (last === null) return null
+    if (!last.taken) return Promise.resolve(last)
+
+    const retracted = retraction.current.then(() =>
+      retractTrailingSaid({ log: app.log, threads: app.threads, threadId, text: last.text }),
+    )
+    retraction.current = retracted
+
+    return retracted.then((retractedOk) => {
+      if (!retractedOk) {
+        notify({
+          key: 'take-back-too-late',
+          tone: ENoticeTone.Warn,
+          ttlMs: NOTICE_WARN_MS,
+          text: 'the agent is already answering that one — send the edit as a follow-up',
+        })
+        return null
+      }
+
+      refresh()
+      return last
+    })
+  }, [app.log, app.threads, pending, refresh, threadId])
 
   /**
    * Shell endings are not dropped on the way out: they belong to the thread that started the shell,

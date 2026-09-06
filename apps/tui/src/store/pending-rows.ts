@@ -25,7 +25,7 @@ export enum EPendingKind {
 }
 
 export type PendingRow =
-  | { kind: EPendingKind.Operator; id: string; text: string; taken: boolean }
+  | { kind: EPendingKind.Operator; id: string; text: string }
   | { kind: EPendingKind.BackgroundShell; id: string; text: string; failed: boolean }
   | { kind: EPendingKind.Agent; id: string; text: string; failed: boolean }
   | { kind: EPendingKind.Service; id: string; text: string; failed: boolean }
@@ -119,7 +119,6 @@ export function pendingRows(args: {
         kind: EPendingKind.Operator,
         id: message.id,
         text: message.text,
-        taken: message.taken,
       }),
     ),
     ...args.notices.map((notice): PendingRow => pendingShellRow(notice)),

@@ -938,16 +938,20 @@ function Workspace(props: {
   )
 
   const handleTakeBackPending = useCallback((): boolean => {
-    const taken = conversation.handleTakeBackPending()
-    if (taken === null) return false
+    const taking = conversation.handleTakeBackPending()
+    if (taking === null) return false
 
-    /**
-     * A draft taken back out of the queue arrives as plain text, so its tokens come back without
-     * the extmarks that made them whole. They are re-marked from the images it carried, or a
-     * picture that survived a take-back would be the one the cursor could still walk into.
-     */
-    draft.setValue(taken.text)
-    tokens.restore(restoredImages({ images: taken.images, text: taken.text }))
+    void taking.then((taken) => {
+      if (taken === null) return
+
+      /**
+       * A draft taken back out of the queue arrives as plain text, so its tokens come back without
+       * the extmarks that made them whole. They are re-marked from the images it carried, or a
+       * picture that survived a take-back would be the one the cursor could still walk into.
+       */
+      draft.setValue(taken.text)
+      tokens.restore(restoredImages({ images: taken.images, text: taken.text }))
+    })
     return true
   }, [conversation, draft, tokens])
 
