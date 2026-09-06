@@ -55,7 +55,7 @@ describe('rewindThread', () => {
   it('truncates the thread to a settled point and reports what it discarded', async () => {
     const { fixture: store, threadId } = await openExchange()
 
-    const result = await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 2 })
+    const result = await rewindThread({ log: store.log, threads: store.threads, agents: store.agents, threadId, toSeq: 2 })
 
     expect(result).toEqual({ ok: true, discarded: 3 })
     expect((await store.log.read({ threadId })).map((event) => event.type)).toEqual([
@@ -68,7 +68,7 @@ describe('rewindThread', () => {
   it('refuses a target that would re-dispatch a tool call, which the surviving idempotencyKey does not deduplicate', async () => {
     const { fixture: store, threadId } = await openExchange()
 
-    const result = await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 3 })
+    const result = await rewindThread({ log: store.log, threads: store.threads, agents: store.agents, threadId, toSeq: 3 })
 
     expect(result).toMatchObject({ ok: false, refusal: ERewindRefusal.UnsettledToolCall })
     expect((await store.log.read({ threadId })).length).toBe(5)
@@ -78,7 +78,7 @@ describe('rewindThread', () => {
   it('refuses a sequence the thread never reached, and writes nothing', async () => {
     const { fixture: store, threadId } = await openExchange()
 
-    const result = await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 9 })
+    const result = await rewindThread({ log: store.log, threads: store.threads, agents: store.agents, threadId, toSeq: 9 })
 
     expect(result).toMatchObject({ ok: false, refusal: ERewindRefusal.NoSuchTarget })
     expect((await store.log.read({ threadId })).length).toBe(5)
@@ -88,7 +88,7 @@ describe('rewindThread', () => {
   it('leaves the thread ready for the next exchange', async () => {
     const { fixture: store, threadId } = await openExchange()
 
-    await rewindThread({ log: store.log, threads: store.threads, threadId, toSeq: 0 })
+    await rewindThread({ log: store.log, threads: store.threads, agents: store.agents, threadId, toSeq: 0 })
     const appended = await store.log.append({ threadId, runId, drafts: [said('start over')] })
 
     expect(appended.map((event) => event.seq)).toEqual([1])
@@ -131,6 +131,7 @@ describe('rewindThread on a thread that delegated', () => {
     const result = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId,
       toSeq: 1,
     })
@@ -151,6 +152,7 @@ describe('rewindThread on a thread that delegated', () => {
     const result = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId,
       toSeq: 1,
     })

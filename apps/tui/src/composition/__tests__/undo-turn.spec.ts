@@ -10,6 +10,7 @@ import {
 import { describe, expect, it } from 'bun:test'
 
 import { EUndo, undoTurn } from '../undo-turn'
+import { fakeAgentRegistry } from './fake-agents'
 import { fakeThreadStore, fakeEventLog } from './fake-backend'
 
 const THREAD = toThreadId('undoing')
@@ -33,30 +34,30 @@ const stamped = (drafts: readonly EventDraft[]): Event[] =>
 
 const backedBy = (drafts: readonly EventDraft[]) => {
   const log = fakeEventLog(stamped(drafts))
-  return { log, threads: fakeThreadStore({ log, existing: [THREAD] }) }
+  return { log, threads: fakeThreadStore({ log, existing: [THREAD] }), agents: fakeAgentRegistry() }
 }
 
 describe('undoing the exchange an interrupted turn never answered', () => {
   it('takes the message back and leaves the thread as it was before it was sent', async () => {
-    const { log, threads } = backedBy([
+    const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'rewrite the loop' },
       { type: 'assistant-said', parts: [{ type: 'reasoning', text: 'weighing it' }], interrupted: true },
     ])
 
-    const undone = await undoTurn({ log, threads, threadId: THREAD })
+    const undone = await undoTurn({ log, threads, agents, threadId: THREAD })
 
     expect(undone).toEqual({ type: EUndo.Restored, text: 'rewrite the loop' })
     expect(await log.read({ threadId: THREAD })).toEqual([])
   })
 
   it('rewinds only the last exchange, leaving the ones before it durable', async () => {
-    const { log, threads } = backedBy([
+    const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'first' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'answered' }] },
       { type: 'user-said', text: 'second' },
     ])
 
-    const undone = await undoTurn({ log, threads, threadId: THREAD })
+    const undone = await undoTurn({ log, threads, agents, threadId: THREAD })
 
     expect(undone).toEqual({ type: EUndo.Restored, text: 'second' })
     expect((await log.read({ threadId: THREAD })).map((event) => event.type)).toEqual([
@@ -66,18 +67,18 @@ describe('undoing the exchange an interrupted turn never answered', () => {
   })
 
   it('has nothing to undo on a thread the developer never spoke on', async () => {
-    const { log, threads } = backedBy([])
+    const { log, threads, agents } = backedBy([])
 
-    expect(await undoTurn({ log, threads, threadId: THREAD })).toEqual({ type: EUndo.Nothing })
+    expect(await undoTurn({ log, threads, agents, threadId: THREAD })).toEqual({ type: EUndo.Nothing })
   })
 
   it('reports the refusal rather than half-rewinding when the target would strand a tool call', async () => {
-    const { log, threads } = backedBy([
+    const { log, threads, agents } = backedBy([
       { type: 'tool-called', callId: toCallId('call-1'), name: 'write_file', input: {}, ordinal: 0 },
       { type: 'user-said', text: 'stop, do it differently' },
     ])
 
-    const undone = await undoTurn({ log, threads, threadId: THREAD })
+    const undone = await undoTurn({ log, threads, agents, threadId: THREAD })
 
     expect(undone.type).toBe(EUndo.Refused)
     expect(undone.type === EUndo.Refused ? undone.reason : '').toContain('write_file')

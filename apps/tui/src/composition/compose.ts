@@ -610,6 +610,7 @@ export async function composeAtlas(args: {
     const compaction = await compactTurn({
       log,
       threads,
+      agents,
       threadId,
       summarise,
     })

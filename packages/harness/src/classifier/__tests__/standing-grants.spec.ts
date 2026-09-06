@@ -139,6 +139,7 @@ describe('a permission the operator gave once', () => {
     const compacted = await compactThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId,
       anchor: ECompactionAnchor.Prefix,
       seq: 3,
@@ -166,6 +167,7 @@ describe('a permission the operator gave once', () => {
     const rewound = await rewindThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId,
       toSeq: 2,
     })

@@ -625,6 +625,19 @@ means a reconstructed `agent-spawned` can only land at `head + 1`, and `rewindTa
 un-rewindable**. Fabricating history to paper over a gap in history costs more than the gap. Store-only
 orphans are therefore reported, never invented.
 
+**A rewind that deletes a delegation removes the delegate.** Rewind deletes the parent's rows
+outright, so an `agent-spawned` above the target leaves a child thread nothing records — and the
+recovery above would report it as an orphan forever, a false alarm for history the operator
+deliberately cut. So `rewindThread` hands the cut spawns to two removals: the supervisor forgets
+the child (aborting it first if it was resumed and is stepping again — the first-stepping case is
+already refused as `UnendedSubAgent`), dropping any ending it queued; and the store deletes the
+child's thread in the same transaction as the parent's rows, events and turns cascading. A child
+that was forked from cannot be deleted — the fork relation is `onDelete: Restrict` because a
+reference fork reads the child's rows — so it survives detached, its supervision attribution
+cleared, an ordinary conversation rather than a phantom. A child whose spawn sits at or below the
+target keeps its thread, and a thread the parent never recorded (the crash-window orphan above) is
+never touched: removal follows the deleted spawn rows, nothing else.
+
 **The window that produces them is a live trade, not residue.**
 `ThreadStorePort.createWithFirstEvents` makes the thread row and its opening events atomic, so a
 child never exists without its brief — but the parent's `agent-spawned` is deliberately left

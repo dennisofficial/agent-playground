@@ -130,7 +130,7 @@ export function useTurnDriver(args: {
   )
 
   const undo = useCallback(async () => {
-    const undone = await undoTurn({ log: app.log, threads: app.threads, threadId })
+    const undone = await undoTurn({ log: app.log, threads: app.threads, agents: app.agents, threadId })
 
     if (undone.type === EUndo.Refused) {
       setFailure(undone.reason)
@@ -140,7 +140,7 @@ export function useTurnDriver(args: {
 
     await refresh()
     onUndone(undone.text)
-  }, [app.log, app.threads, onUndone, refresh, setFailure, threadId])
+  }, [app.agents, app.log, app.threads, onUndone, refresh, setFailure, threadId])
 
   const drive = useCallback(
     (drafts: readonly EventDraft[]): Promise<void> => {
@@ -219,6 +219,7 @@ export function useTurnDriver(args: {
       const discarded = await discardInterrupted({
         log: app.log,
         threads: app.threads,
+        agents: app.agents,
         threadId,
       })
 
@@ -231,7 +232,7 @@ export function useTurnDriver(args: {
       await refresh()
       void drive([])
     })()
-  }, [app.log, app.threads, drive, forgetUsage, refresh, setFailure, threadId, working])
+  }, [app.agents, app.log, app.threads, drive, forgetUsage, refresh, setFailure, threadId, working])
 
   const rewindTo = useCallback(
     async (toSeq: number) => {
@@ -243,7 +244,13 @@ export function useTurnDriver(args: {
       cancelCompaction()
       setWorking(true)
       try {
-        const rewound = await rewindThread({ log: app.log, threads: app.threads, threadId, toSeq })
+        const rewound = await rewindThread({
+          log: app.log,
+          threads: app.threads,
+          agents: app.agents,
+          threadId,
+          toSeq,
+        })
 
         if (!rewound.ok) {
           setFailure(rewound.reason)
@@ -256,7 +263,7 @@ export function useTurnDriver(args: {
         setWorking(false)
       }
     },
-    [app.log, app.threads, cancelCompaction, forgetUsage, refresh, setFailure, store, threadId],
+    [app.agents, app.log, app.threads, cancelCompaction, forgetUsage, refresh, setFailure, store, threadId],
   )
 
   /**

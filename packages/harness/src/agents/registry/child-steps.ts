@@ -87,6 +87,8 @@ export class ChildSteps {
   }
 
   private finish({ child, status }: { child: ChildState; status: EAgentStatus }): void {
+    if (this.roster.find(child.agentId) === undefined) return
+
     child.status = status
     child.endedAt = this.clock.now()
     child.steppingSince = undefined
