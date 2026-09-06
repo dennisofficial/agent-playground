@@ -35,7 +35,6 @@ export function FileHeader(props: {
         <span fg={theme.ok}>{`+${props.file.added}`}</span>
         <span>{' '}</span>
         <span fg={theme.error}>{`${MINUS_SIGN}${props.file.removed}`}</span>
-        <span fg={theme.rule}>{props.revealed ? ' · ' : ''}</span>
       </text>
       <CopyButton text={props.patch} revealed={props.revealed} />
     </>
