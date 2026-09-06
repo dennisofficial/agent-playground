@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { defaultPipeline, EMPTY_PROMPT, type Event, type EventOfType } from '@dltech/atlas-core'
+import { defaultPipeline, EMPTY_PROMPT, toCallId, type Event, type EventOfType } from '@dltech/atlas-core'
 
 import type { LanguageModel } from 'ai'
 
@@ -216,6 +216,54 @@ describe('running a turn', () => {
     expect(ended.end).toBe(EStepEnd.Interrupted)
     expect(ended.supersededBy).toEqual({ eventId: durable.id, seq: durable.seq })
     expect(deltasOf(seen, 'text-delta')).toBe(textOf(durable))
+    expect(channel.snapshot({ threadId: thread.id })).toEqual([])
+  })
+})
+
+describe('a turn whose tool prints while it runs', () => {
+  it('publishes each chunk keyed by the call, between the steps around it', async () => {
+    const harness = await openHarness([
+      { text: 'reading', calls: [{ callId: 'call-1', name: 'read', input: { path: 'a.ts' } }] },
+      { text: 'one line' },
+    ])
+    const thread = await harness.threads.create({})
+    const channel = createDeltaChannel()
+    const { seen, listener } = recorder()
+    channel.subscribe({ threadId: thread.id, listener })
+    const runner = new PublishingTurnRunner({
+      channel,
+      deps: {
+        ...depsOf(harness),
+        dispatch: {
+          dispatch: async (args) => {
+            args.onOutput?.({ stream: 'stdout', text: 'const a = 1\n' })
+            return [
+              {
+                type: 'tool-result' as const,
+                callId: args.call.callId,
+                name: args.call.name,
+                output: 'const a = 1',
+                modelText: '1\tconst a = 1',
+              },
+            ]
+          },
+        },
+      },
+    })
+
+    const outcome = await runner.say({ threadId: thread.id, text: 'read a.ts' })
+
+    expect(outcome.status).toBe(ETurnStatus.Completed)
+    expect(seen).toContainEqual({
+      type: 'tool-output',
+      callId: toCallId('call-1'),
+      text: 'const a = 1\n',
+    })
+    const toolOutputAt = seen.findIndex((signal) => signal.type === 'tool-output')
+    const endedBefore = seen.slice(0, toolOutputAt).some((signal) => signal.type === 'step-ended')
+    const startedAfter = seen.slice(toolOutputAt).some((signal) => signal.type === 'step-started')
+    expect(endedBefore).toBe(true)
+    expect(startedAfter).toBe(true)
     expect(channel.snapshot({ threadId: thread.id })).toEqual([])
   })
 })

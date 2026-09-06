@@ -54,7 +54,14 @@ export function ToolTerminal(props: {
   const expand = props.expand ?? NOT_EXPANDABLE
   const command = str(inputOf(props.call).command)
   const printed = detailOf(props.call).map(stripAnsi)
-  const shown = shownOf({ body: printed, cap: MAX_ROWS, expand })
+  /**
+   * A running command's output arrives live and is read from its TAIL — the panel is a terminal,
+   * and a terminal shows where the output is now, not where it started. Once the call settles the
+   * durable output takes over, read from its head with the rest behind the count as usual.
+   */
+  const live = (props.call.liveOutput ?? '').replace(/\n+$/, '').split('\n').map(stripAnsi)
+  const running = printed.length === 0 && (props.call.liveOutput?.length ?? 0) > 0
+  const shown = running ? live.slice(-MAX_ROWS) : shownOf({ body: printed, cap: MAX_ROWS, expand })
   const width = Math.max(24, props.inner - PANEL_PAD)
   const columns = Math.max(8, width - CHROME - PROMPT.length)
 
@@ -70,7 +77,9 @@ export function ToolTerminal(props: {
             </span>
           </text>
         ))}
-        <MoreToggle hidden={printed.length - MAX_ROWS} indent="" expand={expand} />
+        {running ? null : (
+          <MoreToggle hidden={printed.length - MAX_ROWS} indent="" expand={expand} />
+        )}
       </Panel>
     </box>
   )

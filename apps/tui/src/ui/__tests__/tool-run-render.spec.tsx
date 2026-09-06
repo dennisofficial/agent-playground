@@ -27,6 +27,7 @@ const call = (args: {
   output?: unknown
   state?: ECallState
   note?: string
+  liveOutput?: string
 }): ToolCall => {
   ordinal += 1
   return {
@@ -39,6 +40,7 @@ const call = (args: {
     note: args.note ?? null,
     at: null,
     settledAt: args.state === ECallState.Pending ? null : '2026-08-29T00:00:00.000Z',
+    ...(args.liveOutput === undefined ? {} : { liveOutput: args.liveOutput }),
   }
 }
 
@@ -226,16 +228,13 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).toContain('const two')
   })
 
-  it('draws a settled command as a terminal — the command above what it printed', async () => {
-    const frame = await frameOf(
-      runOf([
-        call({
-          name: 'bash',
-          input: { command: 'bun run build', description: 'Build the workspace' },
-          output: { command: 'bun run build', stdout: 'bundled 3 entry points', exitCode: 0 },
-        }),
-      ]),
-    )
+  it('draws an opened command as a terminal — the command above what it printed', async () => {
+    const built = call({
+      name: 'bash',
+      input: { command: 'bun run build', description: 'Build the workspace' },
+      output: { command: 'bun run build', stdout: 'bundled 3 entry points', exitCode: 0 },
+    })
+    const frame = await frameOf(runOf([built]), new Set([built.callId]), TALL)
     const rows = frame.split('\n')
 
     expect(frame).toContain('Build the workspace')
@@ -246,15 +245,12 @@ describe('a run of tool calls in the transcript', () => {
   })
 
   it('strips the colour codes out of what a command printed', async () => {
-    const frame = await frameOf(
-      runOf([
-        call({
-          name: 'bash',
-          input: { command: 'nix build' },
-          output: { command: 'nix build', stdout: '\x1b[31m✗ 3 fail\x1b[0m', exitCode: 1 },
-        }),
-      ]),
-    )
+    const built = call({
+      name: 'bash',
+      input: { command: 'nix build' },
+      output: { command: 'nix build', stdout: '\x1b[31m✗ 3 fail\x1b[0m', exitCode: 1 },
+    })
+    const frame = await frameOf(runOf([built]), new Set([built.callId]), TALL)
 
     expect(frame).toContain('✗ 3 fail')
     expect(frame).not.toContain('[31m')
@@ -272,6 +268,55 @@ describe('a run of tool calls in the transcript', () => {
     )
 
     expect(frame).toContain('$ bun run bu')
+  })
+
+  it('shows what a running command has printed so far, read from its tail', async () => {
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'bash',
+          state: ECallState.Pending,
+          input: { command: 'bun run build', description: 'Build the workspace' },
+          liveOutput: 'compiling 1/3\ncompiling 2/3\ncompiling 3/3',
+        }),
+      ]),
+    )
+    const rows = frame.split('\n')
+
+    const command = rows.findIndex((row) => row.includes('$ bun run build'))
+    const printed = rows.findIndex((row) => row.includes('compiling 3/3'))
+    expect(command).toBeGreaterThanOrEqual(0)
+    expect(printed).toBeGreaterThan(command)
+  })
+
+  it('keeps only the freshest lines of a running command in view', async () => {
+    const printed = Array.from({ length: 20 }, (_unused, index) => `out ${index + 1}`)
+    const frame = await frameOf(
+      runOf([
+        call({
+          name: 'bash',
+          state: ECallState.Pending,
+          input: { command: 'yes' },
+          liveOutput: printed.join('\n'),
+        }),
+      ]),
+    )
+
+    expect(frame).toContain('out 20')
+    expect(frame).not.toContain('out 1\n')
+    expect(frame).not.toContain('… +8 more')
+  })
+
+  it('reads a settled command from its durable output, not its old live tail', async () => {
+    const ran = call({
+      name: 'bash',
+      input: { command: 'ls docs' },
+      output: { command: 'ls docs', stdout: 'architecture.md', exitCode: 0 },
+      liveOutput: 'archite',
+    })
+    const frame = await frameOf(runOf([ran]), new Set([ran.callId]), TALL)
+
+    expect(frame).toContain('architecture.md')
   })
 
   it('opens a folded read’s terminal when its row is clicked', async () => {
@@ -308,7 +353,7 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).not.toContain('failed')
   })
 
-  it('shows a broken command’s terminal unasked, the way an edit shows its diff', async () => {
+  it('settles a command back to its row, keeping the terminal for when it is opened', async () => {
     const broken = call({
       name: 'bash',
       input: { command: 'bun run typecheck' },
@@ -318,11 +363,16 @@ describe('a run of tool calls in the transcript', () => {
         exitCode: 2,
       },
     })
-    const frame = await frameOf(runOf([broken]))
+    const run = runOf([broken])
 
-    expect(frame).toContain('Typecheck')
-    expect(frame).toContain('$ bun run typecheck')
-    expect(frame).toContain('TS2769')
+    const shut = await frameOf(run)
+    expect(shut).toContain('Typecheck')
+    expect(shut).not.toContain('$ bun run typecheck')
+    expect(shut).not.toContain('TS2769')
+
+    const open = await frameOf(run, new Set([broken.callId]), TALL)
+    expect(open).toContain('$ bun run typecheck')
+    expect(open).toContain('TS2769')
   })
 
   it('keeps a sentence whole when a later stage owns the exit code the clause does not', async () => {

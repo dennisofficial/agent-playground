@@ -139,6 +139,10 @@ export type ToolDeclaration = {
   revealsLinesOf?(args: RevealedLines<unknown>): readonly string[]
 }
 
+export type ToolOutputChunk = { stream: 'stdout' | 'stderr'; text: string }
+
+export type OnToolOutput = (chunk: ToolOutputChunk) => void
+
 export type ToolInvocation = {
   input: unknown
   signal: AbortSignal
@@ -147,6 +151,7 @@ export type ToolInvocation = {
   homeDirectory?: string | undefined
   activeWorktree?: ActiveWorktree | undefined
   threadId: ThreadId
+  onOutput?: OnToolOutput | undefined
 }
 
 export type ToolRun<TSchema extends ZodType> = {
@@ -157,6 +162,7 @@ export type ToolRun<TSchema extends ZodType> = {
   homeDirectory?: string | undefined
   activeWorktree: ActiveWorktree | undefined
   threadId: ThreadId
+  onOutput?: OnToolOutput | undefined
 }
 
 export abstract class ToolDefinition<TSchema extends ZodType = ZodType> {
@@ -185,6 +191,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
     homeDirectory,
     activeWorktree,
     threadId,
+    onOutput,
   }: ToolInvocation): Promise<ToolOutcome> {
     const parsed = this.inputSchema.safeParse(input)
     if (!parsed.success) {
@@ -199,6 +206,7 @@ export abstract class SchemaTool<TSchema extends ZodType = ZodType> extends Tool
       homeDirectory,
       activeWorktree,
       threadId,
+      onOutput,
     })
   }
 }

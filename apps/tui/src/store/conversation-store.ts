@@ -1,4 +1,4 @@
-import type { ThreadId, Event } from "@dltech/atlas-core";
+import type { CallId, ThreadId, Event } from "@dltech/atlas-core";
 import type {
   ChannelSignal,
   DeltaChannel,
@@ -53,6 +53,9 @@ export type ConversationStore = {
 
 const NO_TURNS: readonly TurnSpend[] = Object.freeze([])
 
+/** A running command's panel reads only its freshest lines, so the tail itself stays shallow. */
+const MAX_TAIL_CHARACTERS = 60_000;
+
 export function createConversationStore(args: {
   channel: DeltaChannel;
   threadId: ThreadId;
@@ -77,6 +80,7 @@ export function createConversationStore(args: {
   let pendingTldr = pendingTldrOf(args.threadId) ?? null;
   let frame: ReturnType<typeof setTimeout> | undefined;
   const tracker = createStepTracker();
+  const tails = new Map<CallId, string>();
   let durable: {
     events: readonly Event[];
     turns: readonly TurnSpend[];
@@ -139,8 +143,26 @@ export function createConversationStore(args: {
     return unchanged ? model : { ...derived, entries };
   };
 
+  const pruneTails = () => {
+    if (tails.size === 0) return;
+
+    const called = new Set<CallId>();
+    const settledIds = new Set<CallId>();
+    for (const event of events) {
+      if (event.type === "tool-called") called.add(event.callId);
+      if (event.type === "tool-result" || event.type === "tool-denied") {
+        settledIds.add(event.callId);
+      }
+    }
+
+    for (const callId of [...tails.keys()]) {
+      if (settledIds.has(callId) || !called.has(callId)) tails.delete(callId);
+    }
+  };
+
   const republish = () => {
     tracker.pruneSuperseded(events);
+    pruneTails();
     model = settled(
       assembleTranscript({
         durable: durableNow(),
@@ -150,6 +172,7 @@ export function createConversationStore(args: {
         pendingTldr,
         tldrStatus,
         sandbox,
+        outputs: tails,
       }),
     )
     const nextSidebar = sidebarNow()
@@ -179,6 +202,15 @@ export function createConversationStore(args: {
       signal.type === "retry-waiting" ||
       signal.type === "retry-cleared"
     ) {
+      return;
+    }
+
+    if (signal.type === "tool-output") {
+      tails.set(
+        signal.callId,
+        ((tails.get(signal.callId) ?? "") + signal.text).slice(-MAX_TAIL_CHARACTERS),
+      );
+      republish();
       return;
     }
 
@@ -263,6 +295,7 @@ export function createConversationStore(args: {
 
     resetSteps() {
       tracker.reset()
+      tails.clear()
       republish()
     },
 

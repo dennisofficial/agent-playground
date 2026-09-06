@@ -35,7 +35,7 @@ import type { ToolDispatcher } from '../tools/dispatch'
 import { takeModelStepWithRetry, type RetryDeps } from './retrying-step'
 import { openTurnSpend, TURN_CRASHED, type TurnLedgerDeps, type TurnSpendTally } from '../ledger/record-turn-spend'
 import { appendResumeDrafts } from './resume-turn'
-import { createSettlePending, type SettlePending } from './settle-pending'
+import { createSettlePending, type OnToolOutputNotice, type SettlePending } from './settle-pending'
 import { draftsFor, interruptedDrafts } from './step-drafts'
 import { faultReport, overflowReport, stalledReport, swallowedReport } from './turn-faults'
 import { committedSinceLastMessage, messageArrivedSince } from './turn-position'
@@ -50,6 +50,7 @@ export type TurnDeps = {
   tools?: (() => readonly ToolDeclaration[]) | undefined
   countTokens?: ((assembled: Assembled) => number) | undefined
   onChunk?: ChunkFilter | undefined
+  onToolOutput?: OnToolOutputNotice | undefined
   onContext?: ((args: { tokens: number; window: number }) => void) | undefined
   dispatch?: ToolDispatcher | undefined
   hooks?: HookChain | undefined
@@ -110,6 +111,7 @@ export class LoopTurnRunner extends TurnRunner {
             dispatch: deps.dispatch,
             tools: this.tools,
             launchDirectory: deps.launchDirectory,
+            onToolOutput: deps.onToolOutput,
           })
   }
 
