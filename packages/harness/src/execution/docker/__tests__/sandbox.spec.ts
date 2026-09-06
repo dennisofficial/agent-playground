@@ -168,6 +168,19 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     )
   })
 
+  it('refuses reuse when the configured image no longer matches the container’s', async () => {
+    const { engine, execs } = fakeEngine({
+      existing: {
+        id: 'kept-1',
+        state: 'running',
+        image: 'ghcr.io/dennisofficial/atlas-sandbox:0.1.0',
+        mounts: systemMounts,
+      },
+    })
+    await expect(ensureSandbox({ engine, config: FAKE_CONFIG })).rejects.toThrow(/new container/)
+    expect(execs).toHaveLength(0)
+  })
+
   it('reuses a container whose mounts still match the config', async () => {
     const { engine: fake } = fakeEngine({
       existing: {
