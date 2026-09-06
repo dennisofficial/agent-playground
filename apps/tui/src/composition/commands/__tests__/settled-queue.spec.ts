@@ -9,10 +9,25 @@ import {
   type QueuedSettled,
 } from '../settled-queue'
 
-const compact: QueuedSettled = { name: 'compact', dropsQueue: false, run: () => RAN }
-const compactAll: QueuedSettled = { name: 'compact', dropsQueue: false, run: () => RAN }
-const rewind: QueuedSettled = { name: 'rewind', dropsQueue: false, run: () => RAN }
-const fresh: QueuedSettled = { name: 'new', dropsQueue: true, run: () => RAN }
+const compact: QueuedSettled = {
+  name: 'compact',
+  dropsQueue: false,
+  losesWaiting: false,
+  run: () => RAN,
+}
+const compactAll: QueuedSettled = {
+  name: 'compact',
+  dropsQueue: false,
+  losesWaiting: false,
+  run: () => RAN,
+}
+const rewind: QueuedSettled = {
+  name: 'rewind',
+  dropsQueue: false,
+  losesWaiting: false,
+  run: () => RAN,
+}
+const fresh: QueuedSettled = { name: 'new', dropsQueue: true, losesWaiting: false, run: () => RAN }
 
 describe('createSettledQueue', () => {
   it('queues commands in the order they were submitted', () => {

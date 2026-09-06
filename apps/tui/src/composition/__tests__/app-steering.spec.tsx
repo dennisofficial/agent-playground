@@ -44,7 +44,7 @@ describe('typing while the turn is running', () => {
 
       expect(queued).toBe(true)
       expect(mounted.app.turnsDriven).toBe(1)
-      expect(mounted.app.pending.getSnapshot().map((message) => message.text)).toEqual([STEER])
+      expect(mounted.app.pending.forThread({ threadId: THREAD }).getSnapshot().map((message) => message.text)).toEqual([STEER])
 
       const midTurn = await mounted.app.log.read({ threadId: THREAD })
       expect(midTurn.filter((event) => event.type === 'user-said').length).toBe(1)
@@ -86,7 +86,7 @@ describe('typing while the turn is running', () => {
       })
 
       expect(returned).toBe(true)
-      expect(mounted.app.pending.getSnapshot()).toEqual([])
+      expect(mounted.app.pending.forThread({ threadId: THREAD }).getSnapshot()).toEqual([])
     } finally {
       await mounted.done()
     }
@@ -131,7 +131,7 @@ describe('typing while the turn is running', () => {
       })
 
       expect(returned).toBe(true)
-      expect(mounted.app.pending.getSnapshot()).toEqual([])
+      expect(mounted.app.pending.forThread({ threadId: THREAD }).getSnapshot()).toEqual([])
     } finally {
       await mounted.done()
     }
@@ -209,7 +209,7 @@ describe('typing while the turn is running', () => {
       const released = await until({
         holds: async () => {
           await mounted.frame()
-          return mounted.app.pending.getSnapshot().length === 0
+          return mounted.app.pending.forThread({ threadId: THREAD }).getSnapshot().length === 0
         },
         within: 20_000,
       })

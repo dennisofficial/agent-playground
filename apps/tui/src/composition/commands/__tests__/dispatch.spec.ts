@@ -428,6 +428,7 @@ describe('the restart command', () => {
     expect(dispatched.type).toBe(EDispatch.Queued)
     if (dispatched.type !== EDispatch.Queued) return
     expect(dispatched.entry.dropsQueue).toBe(true)
+    expect(dispatched.entry.losesWaiting).toBe(true)
     expect(restarts).toBe(0)
   })
 

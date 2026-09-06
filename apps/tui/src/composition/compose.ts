@@ -132,7 +132,7 @@ import {
   type SettingsService,
 } from '@dltech/atlas-harness'
 
-import { createPendingQueue, type PendingQueue } from '../store'
+import { createPendingQueues, type PendingQueues } from '../store'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
@@ -265,7 +265,7 @@ export type AtlasApp = {
   threads: ThreadStorePort
   ledger: TurnLedgerPort
   ids: IdPort
-  pending: PendingQueue
+  pending: PendingQueues
   shells: ShellRegistryPort
   agents: AgentRegistryPort
   services: ServiceRegistryPort
@@ -589,7 +589,7 @@ export async function composeAtlas(args: {
   const services = container.resolve(portToken(ServiceRegistryPort))
 
   const channel = createDeltaChannel()
-  const pending = createPendingQueue()
+  const pending = createPendingQueues()
 
   let activeThread: ActiveConversation | null = null
 
@@ -693,7 +693,7 @@ export async function composeAtlas(args: {
     hooks: container.resolve(HookChainToken),
     drainPending: async (args) => [
       ...(await drainNotices(args)),
-      ...pending.drain().map(userSaidDraft),
+      ...pending.forThread({ threadId: args.threadId }).drain().map(userSaidDraft),
     ],
     spend: { ledger, clock: container.resolve(portToken(ClockPort)) },
     compact: compactBeforeOverflow,

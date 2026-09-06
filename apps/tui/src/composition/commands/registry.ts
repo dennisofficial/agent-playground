@@ -262,6 +262,7 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
             timing: ECommandTiming.Settled,
             echo: ECommandEcho.Silent,
             dropsQueue: true,
+            losesWaiting: true,
             run: () => {
               handlers.onRestart?.()
               return RAN
