@@ -27,7 +27,7 @@ import { accountMeterSpans } from '../ui/account-meters'
 import { accountOf, type AccountRow } from '../ui/accounts-model'
 import { isWaiting, type BackgroundWork } from '../ui/background-wait'
 import type { Span } from '../ui/components/spans'
-import { usageMeters, type FooterMeter } from '../ui/usage-meters'
+import type { FooterMeter } from '../ui/usage-meters'
 import { CommandMenu } from '../ui/components/command-menu'
 import { FileMenu } from '../ui/components/file-menu'
 import { Composer, composerRows, composerTone } from '../ui/components/composer'
@@ -135,6 +135,7 @@ import { useThreadModel } from './use-thread-model'
 import { useContainerPill } from './use-container-pill'
 import { useExecutionLocation } from './use-execution-location'
 import { useThreads } from './use-threads'
+import { useUsageMeters } from './use-usage-meters'
 
 const PLACEHOLDER = 'Ask anything'
 
@@ -221,7 +222,7 @@ function Workspace(props: {
   useSyncExternalStore(subscribePalette, paletteVersion)
   useSyncExternalStore(subscribeDensity, densityVersion)
   useSyncExternalStore(subscribeComposerEdge, composerEdgeVersion)
-  useSyncExternalStore(props.app.usage.subscribe, props.app.usage.version)
+  const usageVersion = useSyncExternalStore(props.app.usage.subscribe, props.app.usage.version)
 
   const chooseDefaultModel = useRef<(() => void) | null>(null)
   const handleChooseDefaultModel = useCallback(() => chooseDefaultModel.current?.(), [])
@@ -289,16 +290,18 @@ function Workspace(props: {
 
   const metered = props.app.models.subscribed(selection.ref.providerId)
 
-  const meters = metered
-    ? usageMeters({
-        usage: props.app.usage.snapshot(),
-        show: settings.footerMeters,
-        warn: settings.usageWarn,
-        now: Date.now(),
-      })
-    : []
+  const meters = useUsageMeters({
+    usage: props.app.usage,
+    metered,
+    show: settings.footerMeters,
+    warn: settings.usageWarn,
+  })
 
-  const readout = readoutOf({ card, used: conversation.contextTokens, meters })
+  const { contextTokens } = conversation
+  const readout = useMemo(
+    () => readoutOf({ card, used: contextTokens, meters }),
+    [card, contextTokens, meters],
+  )
 
   useEffect(() => {
     const warning = unmeasuredWindowWarning({
@@ -455,7 +458,10 @@ function Workspace(props: {
    * looked at a child and came back. Nothing about the wait is a fact about which thread is on
    * screen, so nothing about it belongs below this point.
    */
-  const background: BackgroundWork = { agents: agents.running, shells: shells.running }
+  const background = useMemo(
+    (): BackgroundWork => ({ agents: agents.running, shells: shells.running }),
+    [agents.running, shells.running],
+  )
   const waitingSince = useSince(isWaiting(background))
 
   /**
@@ -524,18 +530,23 @@ function Workspace(props: {
     }
   }, [accountRows, accountsOpen, usage])
 
-  const accountMeters = useCallback(
-    (row: AccountRow): readonly Span[] => {
-      const account = accountOf(row)
-      if (account === undefined) return []
+  /**
+   * Keyed on the usage version so the memoised overlay repaints when a refresh lands: the rows are
+   * read straight out of the service, and nothing else about the overlay's props moves.
+   */
+  const accountMeters = useMemo(
+    () =>
+      (row: AccountRow): readonly Span[] => {
+        const account = accountOf(row)
+        if (account === undefined) return []
 
-      return accountMeterSpans({
-        usage: usage.snapshotFor({ accountId: account.id }),
-        warn: settings.usageWarn,
-        now: Date.now(),
-      })
-    },
-    [settings.usageWarn, usage],
+        return accountMeterSpans({
+          usage: usage.snapshotFor({ accountId: account.id }),
+          warn: settings.usageWarn,
+          now: Date.now(),
+        })
+      },
+    [settings.usageWarn, usage, usageVersion],
   )
 
   /**
@@ -1010,27 +1021,61 @@ function Workspace(props: {
 
   const registry = useKeyRegistry()
 
-  const overlays: readonly OverlayPresence[] = [
-    covering(exitGuard.state !== null, exitGuard.handleKey),
-    covering(conversation.approval.state !== null, conversation.approval.handleKey),
-    covering(rewind.state !== null, rewind.handleKey),
-    covering(switcher.state !== null, switcher.handleKey),
-    covering(shells.state !== null, shells.handleKey),
-    covering(services.state !== null, services.handleKey),
-    covering(accounts.state !== null, accounts.handleKey),
-    covering(threads.state !== null, threads.handleKey),
-    covering(agentsPicker.state !== null, agentsPicker.handleKey),
-    { ...covering(settings.state !== null, settings.handleKey), porous: true },
-    { ...covering(footerStrip.state !== null, footerStrip.handleKey), coversTranscript: false },
-    { open: conversation.compacting !== null, coversComposer: true, coversTranscript: true },
-    { open: overlay, coversComposer: true, coversTranscript: false },
-  ]
+  const { approval } = conversation
+  const compacting = conversation.compacting !== null
 
-  const handleKey = useOverlayKeys({
-    veil: { shown: panel !== null, dismiss: () => setPanel(null), keys: [HELP_KEY] },
-    owners: keyOwners(overlays),
-    bindings: registry.snapshot,
-  })
+  const overlays = useMemo(
+    (): readonly OverlayPresence[] => [
+      covering(exitGuard.state !== null, exitGuard.handleKey),
+      covering(approval.state !== null, approval.handleKey),
+      covering(rewind.state !== null, rewind.handleKey),
+      covering(switcher.state !== null, switcher.handleKey),
+      covering(shells.state !== null, shells.handleKey),
+      covering(services.state !== null, services.handleKey),
+      covering(accounts.state !== null, accounts.handleKey),
+      covering(threads.state !== null, threads.handleKey),
+      covering(agentsPicker.state !== null, agentsPicker.handleKey),
+      { ...covering(settings.state !== null, settings.handleKey), porous: true },
+      { ...covering(footerStrip.state !== null, footerStrip.handleKey), coversTranscript: false },
+      { open: compacting, coversComposer: true, coversTranscript: true },
+      { open: overlay, coversComposer: true, coversTranscript: false },
+    ],
+    [
+      accounts.handleKey,
+      accounts.state,
+      agentsPicker.handleKey,
+      agentsPicker.state,
+      approval.handleKey,
+      approval.state,
+      compacting,
+      exitGuard.handleKey,
+      exitGuard.state,
+      footerStrip.handleKey,
+      footerStrip.state,
+      overlay,
+      rewind.handleKey,
+      rewind.state,
+      services.handleKey,
+      services.state,
+      settings.handleKey,
+      settings.state,
+      shells.handleKey,
+      shells.state,
+      switcher.handleKey,
+      switcher.state,
+      threads.handleKey,
+      threads.state,
+    ],
+  )
+
+  const owners = useMemo(() => keyOwners(overlays), [overlays])
+  const handleDismissPanel = useCallback(() => setPanel(null), [])
+  const veil = useMemo(
+    () => ({ shown: panel !== null, dismiss: handleDismissPanel, keys: [HELP_KEY] }),
+    [handleDismissPanel, panel],
+  )
+
+  const handleKey = useOverlayKeys({ veil, owners, bindings: registry.snapshot })
 
   const handleKeyWithMenu = useCallback(
     (key: KeyEvent) => {
@@ -1085,6 +1130,20 @@ function Workspace(props: {
       [handleAttachImage, overlaid, tokens],
     ),
   )
+
+  const sidebarModel = useMemo(
+    () =>
+      withSections({
+        model: withContainer({ model: agents.sidebar, container: containerPill }),
+        sections: surfaces.sidebarSections,
+      }),
+    [agents.sidebar, containerPill, surfaces.sidebarSections],
+  )
+
+  const placeholder = composerPlaceholder({
+    addressingChild: agentView.viewing !== null,
+    working: conversation.working,
+  })
 
   return (
     <Screen>
@@ -1161,10 +1220,7 @@ function Workspace(props: {
               draft={draft}
               width={composerWidth}
               tone={tone}
-              placeholder={composerPlaceholder({
-                addressingChild: agentView.viewing !== null,
-                working: conversation.working,
-              })}
+              placeholder={placeholder}
               maxRows={composerRows(height)}
               focused={!overlaid}
               highlights={highlights}
@@ -1189,10 +1245,7 @@ function Workspace(props: {
         {sidebarVisible ? (
           <Sidebar
             width={overlay ? floatingSidebarWidth({ width, sidebarWidth }) : sidebarWidth}
-            model={withSections({
-              model: withContainer({ model: agents.sidebar, container: containerPill }),
-              sections: surfaces.sidebarSections,
-            })}
+            model={sidebarModel}
             root={projectRoot}
             worktree={sidebarWorktree}
             overlay={overlay}

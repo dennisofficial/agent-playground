@@ -93,7 +93,7 @@ export function usePullRequest(args: {
   const askGit = args.probe ?? probeCheckout
   const [checkout, setCheckout] = useState<RepositoryCheckout | null>(null)
 
-  useSyncExternalStore(service.subscribe, service.version)
+  const version = useSyncExternalStore(service.subscribe, service.version)
 
   const probe = useCallback(
     async (owned: () => boolean): Promise<void> => {
@@ -134,12 +134,19 @@ export function usePullRequest(args: {
     }
   }, [probe, working])
 
-  const reading = checkout === null ? null : service.snapshot({ key: checkoutKey(checkout) })
-  const entries = pullRequestEntries({
-    linked,
-    read: (key) => service.snapshot({ key }),
-    current: checkout === null || reading === null ? null : { checkout, reading },
-  })
+  /**
+   * Keyed on the service's version rather than on what it hands back: the readings are read out of
+   * the service at build time, so the version is the only thing that says they moved. A fresh list
+   * per render would rebuild the footer pill and the sidebar section on every commit of the app.
+   */
+  const entries = useMemo(() => {
+    const reading = checkout === null ? null : service.snapshot({ key: checkoutKey(checkout) })
+    return pullRequestEntries({
+      linked,
+      read: (key) => service.snapshot({ key }),
+      current: checkout === null || reading === null ? null : { checkout, reading },
+    })
+  }, [checkout, linked, service, version])
 
   const anyRunning = entries.some((entry) => {
     const pullRequest = foundPullRequest(entry)
