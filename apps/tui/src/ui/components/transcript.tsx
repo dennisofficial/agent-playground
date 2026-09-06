@@ -4,6 +4,7 @@ import type { ScrollBoxRenderable } from '@opentui/core'
 
 import { EEntryKind, type PendingRow, type TranscriptModel } from '../../store'
 import { NOTHING_IN_BACKGROUND, type BackgroundWork } from '../background-wait'
+import { useAppearance } from '../hooks/use-appearance'
 import { useEntryWindow } from '../hooks/use-entry-window'
 import { useTranscriptFollow } from '../hooks/use-transcript-follow'
 import { useHiddenVerticalScrollbar } from '../hide-scrollbar'
@@ -44,7 +45,7 @@ const FAILURE_WITHOUT_A_REASON = 'The model reported no reason.'
 
 const NOTHING_PENDING: readonly PendingRow[] = Object.freeze([])
 
-export function Transcript(props: {
+function DerivedTranscript(props: {
   model: TranscriptModel
   width: number
   now: number
@@ -61,6 +62,7 @@ export function Transcript(props: {
   opened?: ReadonlySet<string>
   onToggle?: (key: string) => void
 }): React.ReactNode {
+  useAppearance()
   const { model } = props
   const turn = props.turn ?? IDLE_TURN
   const anchorKey = props.anchorKey ?? null
@@ -212,3 +214,5 @@ export function Transcript(props: {
     </box>
   )
 }
+
+export const Transcript = React.memo(DerivedTranscript)

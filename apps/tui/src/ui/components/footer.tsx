@@ -14,6 +14,7 @@ import {
 } from '../footer-layout'
 import type { FooterStripState } from '../footer-strip'
 import { HINT_SEPARATOR } from '../hint-layout'
+import { useAppearance } from '../hooks/use-appearance'
 import { meterTone } from '../meter-tone'
 import { theme } from '../theme'
 import type { FooterMeter } from '../usage-meters'
@@ -49,7 +50,7 @@ function factSpans(args: { instruments: FooterInstruments }): Span[][] {
   ]
 }
 
-export function Footer(props: {
+function DerivedFooter(props: {
   width: number
   model: string
   effort?: FooterEffort | null
@@ -59,6 +60,7 @@ export function Footer(props: {
   layout?: FooterLayout
   onActivateItem?: (item: FooterItem) => void
 }): React.ReactNode {
+  useAppearance()
   const layout =
     props.layout ??
     footerLayout({
@@ -99,3 +101,5 @@ export function Footer(props: {
     </box>
   )
 }
+
+export const Footer = React.memo(DerivedFooter)

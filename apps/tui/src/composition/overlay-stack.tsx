@@ -15,6 +15,7 @@ import { Shells } from '../ui/components/shells'
 import { Switcher } from '../ui/components/switcher'
 import { Threads } from '../ui/components/threads'
 import { AgentsPicker } from '../ui/components/agents-picker'
+import { useAppearance } from '../ui/hooks/use-appearance'
 import { isServiceAlive } from '../ui/services-model'
 import { isShellRunning } from '../ui/shells-model'
 import { isSubagentRunning } from '../store/subagent-row'
@@ -30,7 +31,7 @@ import type { ShellsControl } from './use-shells'
 import { EModelScope, type SwitcherControl } from './use-switcher'
 import type { ThreadsControl } from './use-threads'
 
-export function OverlayStack(props: {
+function DerivedOverlayStack(props: {
   width: number
   contentWidth: number
   cwd: string
@@ -53,6 +54,7 @@ export function OverlayStack(props: {
   const { switcher, shells, agents, agentsPicker, settings, accounts, threads, rewind, exitGuard } =
     props
   const { approval } = props
+  useAppearance()
   const sidebarWidth = Math.min(settings.sidebarWidth, props.width)
 
   return (
@@ -182,3 +184,5 @@ export function OverlayStack(props: {
     </>
   )
 }
+
+export const OverlayStack = React.memo(DerivedOverlayStack)

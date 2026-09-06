@@ -3,15 +3,17 @@ import { homedir } from 'node:os'
 import React from 'react'
 
 import { HEADER_GUTTER, headerBarModel, headerLocation, type DiffStat } from '../header-bar'
+import { useAppearance } from '../hooks/use-appearance'
 import { theme } from '../theme'
 import { Spans } from './spans'
 
-export function HeaderBar(props: {
+function DerivedHeaderBar(props: {
   width: number
   projectDirectory: string
   repoRoot: string
   diff: DiffStat | null
 }): React.ReactNode {
+  useAppearance()
   const model = headerBarModel({
     location: headerLocation({
       projectDirectory: props.projectDirectory,
@@ -42,3 +44,5 @@ export function HeaderBar(props: {
     </box>
   )
 }
+
+export const HeaderBar = React.memo(DerivedHeaderBar)
