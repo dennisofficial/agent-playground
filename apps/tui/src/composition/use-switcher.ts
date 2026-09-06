@@ -53,9 +53,7 @@ export function useSwitcher(args: {
   catalogue: ModelCatalogue
   active: ModelRef
   effort: EEffort
-  /** Where the highlight starts when the picker is set on a setting rather than the thread. */
   fallback: { ref: ModelRef; effort: EEffort }
-  /** The model a Model-kind setting already holds, so its picker opens on it. */
   settingRef: (id: string) => ModelRef | undefined
   favourites: readonly string[]
   onPick: (args: { choice: SwitcherChoice; target: SwitcherTarget }) => void
@@ -210,8 +208,8 @@ export function useSwitcher(args: {
       }
 
       if (key.name === 'left' || key.name === 'right') {
-        key.preventDefault()
         if (current.target.scope === EModelScope.Setting && !current.target.withEffort) return
+        key.preventDefault()
         const delta = key.name === 'left' ? -1 : 1
         put({ ...current, state: adjustEffort({ state: current.state, delta, rows: laid }) })
         return

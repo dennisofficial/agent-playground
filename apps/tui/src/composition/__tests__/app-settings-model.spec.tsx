@@ -149,4 +149,25 @@ describe('the model-kind settings rows', () => {
       await teardown(setup)
     }
   }, 60_000)
+
+  it('lets the search caret move with left and right, since no effort rides along', async () => {
+    const app = appWith()
+    const setup = await opened(app)
+
+    try {
+      await openSettingsWith(setup)
+      await downTo({ setup, needle: 'Quick-call model' })
+      await enter(setup)
+
+      await setup.mockInput.typeText('sonnet')
+      await landed(setup)
+      await arrow(setup, 'left')
+      await setup.mockInput.typeText('x')
+      await landed(setup)
+
+      expect(setup.captureCharFrame()).toContain('sonnext')
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
 })
