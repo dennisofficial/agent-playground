@@ -28,6 +28,8 @@ export type LocalCommand = CommandSpec & {
   echo: ECommandEcho
   /** True when running it strands whatever else was queued: it swaps the thread out or the process. */
   dropsQueue?: boolean
+  /** True when running it exits the process, so messages waiting in memory never arrive. */
+  losesWaiting?: boolean
   run: (args: { argumentText: string }) => CommandEffect | Promise<CommandEffect>
 }
 

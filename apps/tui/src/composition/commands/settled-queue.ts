@@ -3,6 +3,7 @@ import type { CommandEffect } from './local-command'
 export type QueuedSettled = {
   name: string
   dropsQueue: boolean
+  losesWaiting: boolean
   run: () => CommandEffect | Promise<CommandEffect>
 }
 

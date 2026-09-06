@@ -56,6 +56,7 @@ export async function dispatchSubmission(args: {
         entry: {
           name: command.name,
           dropsQueue: command.dropsQueue === true,
+          losesWaiting: command.losesWaiting === true,
           run: () => command.run({ argumentText: invoked.argumentText }),
         },
       }

@@ -657,7 +657,7 @@ function Workspace(props: {
           compacting: conversation.compacting !== null,
           approvalOpen: conversation.approval.state !== null,
           exitGuardOpen: exitGuard.state !== null,
-          queuedMessages: props.app.pending.getSnapshot().length,
+          queuedMessages: props.app.pending.waitingCount(),
           runningTasks: shells.running + agents.running + services.running,
           draftEmpty: (draft.editor.current?.plainText ?? draft.value).length === 0,
         }),

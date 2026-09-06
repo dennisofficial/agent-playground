@@ -152,7 +152,7 @@ export function useConversation(args: {
     [opened],
   )
 
-  const pending = app.pending
+  const pending = useMemo(() => app.pending.forThread({ threadId }), [app.pending, threadId])
 
   const settledQueue = useMemo(() => createSettledQueue(), [])
 
@@ -172,7 +172,9 @@ export function useConversation(args: {
       if (item.dropsQueue) {
         const dropped = droppedNotice({
           command: item.name,
-          messages: pending.getSnapshot().filter((message) => !message.taken).length,
+          messages: item.losesWaiting
+            ? pending.getSnapshot().filter((message) => !message.taken).length
+            : 0,
           commands: queuedCommands.slice(index + 1).map((one) => one.name),
         })
         if (dropped !== null) {
@@ -380,7 +382,6 @@ export function useConversation(args: {
    */
   const adopt = useCallback(
     (next: OpenedConversation) => {
-      pending.clear()
       settledQueue.clear()
       clearNotice({ key: NOTICE_KEY_QUEUED_COMMANDS })
       turnDriver.settle()
@@ -391,7 +392,7 @@ export function useConversation(args: {
       setName(next.name)
       setOpened(next)
     },
-    [pending, setEvents, setName, settledQueue, turnDriver],
+    [setEvents, setName, settledQueue, turnDriver],
   )
 
   const { handleNewConversation, handleOpenThread } = useThreadSwap({
