@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 
 import {
   toThreadId,
+  type FileSystemPort,
   type ProcessHandle,
   type ProcessPort,
   type SpawnCommand,
@@ -45,8 +46,27 @@ class FakeProcesses implements ProcessPort {
   }
 }
 
-const searchWith = (processes: FakeProcesses): Promise<ToolOutcome> =>
-  new GrepTool(processes).invoke({
+const fakeFiles = (entries: readonly string[]): FileSystemPort => ({
+  stat: async () => {
+    throw new Error('ENOENT')
+  },
+  readLink: async () => null,
+  readFile: async () => {
+    throw new Error('ENOENT')
+  },
+  readBytes: async () => {
+    throw new Error('ENOENT')
+  },
+  writeFile: async () => undefined,
+  removeFile: async () => undefined,
+  mkdir: async () => undefined,
+  rename: async () => undefined,
+  readDirectory: async () => [],
+  glob: async () => entries,
+})
+
+const searchWith = (processes: FakeProcesses, files?: FileSystemPort): Promise<ToolOutcome> =>
+  new GrepTool(processes, files ?? fakeFiles([])).invoke({
     input: { pattern: 'needle' },
     signal: new AbortController().signal,
     idempotencyKey: 'grep-process-port',
@@ -65,12 +85,33 @@ describe('GrepTool over a ProcessPort', () => {
   })
 
   it('falls back to POSIX grep when the port has no ripgrep', async () => {
-    const processes = new FakeProcesses(null)
+    const processes = new FakeProcesses(null, '', 0)
 
-    const outcome = await searchWith(processes)
+    const outcome = await searchWith(processes, fakeFiles(['/work/a.ts']))
 
     expect(outcome.ok).toBe(true)
     expect(processes.spawned[0]?.cmd[0]).toBe('grep')
+    expect(processes.spawned[0]?.cmd).toContain('/work/a.ts')
+  })
+
+  it('spawns no grep at all when the fallback finds nothing to search', async () => {
+    const processes = new FakeProcesses(null)
+
+    const outcome = await searchWith(processes, fakeFiles([]))
+
+    expect(outcome.ok).toBe(true)
+    expect(processes.spawned).toHaveLength(0)
+  })
+
+  it('searches in batches rather than past the argument limit', async () => {
+    const processes = new FakeProcesses(null, '', 0)
+    const entries = Array.from({ length: 130 }, (_, index) => `/work/file-${index}.ts`)
+
+    const outcome = await searchWith(processes, fakeFiles(entries))
+
+    expect(outcome.ok).toBe(true)
+    expect(processes.spawned).toHaveLength(2)
+    expect(processes.spawned[0]?.cmd.filter((part) => part.startsWith('/work/'))).toHaveLength(128)
   })
 
   it('reads the matches the spawned search printed', async () => {
