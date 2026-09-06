@@ -100,19 +100,19 @@ export function Row(props: {
 export function Streaming(props: { call: ToolCall; inner: number }): React.ReactNode {
   const shown = detailTail(props.call)
   const reserved = useHighWater({ rows: shown.length, live: true })
+  const rows = Array.from({ length: reserved }, (_unused, index) => shown[index])
 
   return (
-    <>
-      {Array.from({ length: reserved }, (_unused, index) => shown[index]).map((line, index) => (
-        <text key={index} wrapMode="none" width={props.inner} flexShrink={0}>
-          <span fg={index === shown.length - 1 ? theme.hint : theme.rule}>
-            {line === undefined
-              ? ' '
-              : `${HANG}${tailOfPath({ path: line, cells: Math.max(8, props.inner - HANG.length) })}`}
-          </span>
-        </text>
+    <text wrapMode="none" width={props.inner} flexShrink={0}>
+      {rows.map((line, index) => (
+        <span key={index} fg={index === shown.length - 1 ? theme.hint : theme.rule}>
+          {(line === undefined
+            ? ' '
+            : `${HANG}${tailOfPath({ path: line, cells: Math.max(8, props.inner - HANG.length) })}`) +
+            (index === rows.length - 1 ? '' : '\n')}
+        </span>
       ))}
-    </>
+    </text>
   )
 }
 
