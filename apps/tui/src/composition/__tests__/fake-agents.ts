@@ -161,6 +161,12 @@ export function fakeAgentRegistry(): FakeAgents {
 
     list: ({ threadId }) => owned.get(threadId) ?? NOTHING_LISTED,
 
+    removeChildren: async ({ threadId, agentIds }) => {
+      const cut = new Set(agentIds)
+      settle(children.filter((one) => !(one.spawnedBy === threadId && cut.has(one.agentId))))
+      announce(ended.filter((one) => !(one.spawnedBy === threadId && cut.has(one.agentId))))
+    },
+
     recordLostAgents: async () => ({ settled: NOTHING_LISTED, unlogged: [] }),
 
     listEverywhere: () => children,

@@ -1,14 +1,26 @@
-import { eventsOfType, type Event, type ThreadId } from '@dltech/atlas-core'
+import {
+  eventsOfType,
+  type Event,
+  type EventDraft,
+  type SaidImage,
+  type ThreadId,
+} from '@dltech/atlas-core'
 import { sanitizedTitle } from '@dltech/atlas-harness'
 import { useCallback, useRef, useState, type RefObject } from 'react'
 
 import type { AtlasApp } from './compose'
+import { namingTextOf } from './naming-text'
 import { ERenamed, sessionDigest, type Renaming } from './session-rename'
 
 export type SessionName = {
   name: string | null
   setName: (name: string | null) => void
-  nameSession: (args: { said: string; opened: Promise<void> }) => void
+  nameSession: (args: {
+    said: string
+    opened: Promise<void>
+    images?: readonly SaidImage[] | undefined
+    context?: readonly EventDraft[] | undefined
+  }) => void
   renameSession: (argumentText: string) => Promise<Renaming>
 }
 
@@ -33,13 +45,23 @@ export function useSessionName(args: {
   const asked = useRef<ThreadId | null>(null)
 
   const nameSession = useCallback(
-    ({ said, opened }: { said: string; opened: Promise<void> }) => {
+    ({
+      said,
+      opened,
+      images,
+      context,
+    }: {
+      said: string
+      opened: Promise<void>
+      images?: readonly SaidImage[] | undefined
+      context?: readonly EventDraft[] | undefined
+    }) => {
       if (name !== null || asked.current === threadId) return
 
       asked.current = threadId
       const opening = eventsOfType({ events, type: 'user-said' }).at(0)?.text ?? said
 
-      void Promise.all([app.titler({ text: opening }), opened])
+      void Promise.all([app.titler({ text: namingTextOf({ said: opening, context }), images }), opened])
         .then(([named]) => {
           if (named === null) return
           setName(named)

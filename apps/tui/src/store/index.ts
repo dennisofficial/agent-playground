@@ -28,6 +28,7 @@ export {
   type PendingQueue,
   type PendingSaid,
 } from './pending-queue'
+export { createPendingQueues, type PendingQueues } from './pending-queues'
 export { EPendingKind, pendingRows, type PendingRow } from './pending-rows'
 export {
   shellAwaitingInputLine,

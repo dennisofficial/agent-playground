@@ -207,6 +207,7 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
       group: ECommandGroup.Session,
       timing: ECommandTiming.Settled,
       echo: ECommandEcho.Silent,
+      dropsQueue: true,
       run: ({ argumentText }) => {
         handlers.onOpenThreads(argumentText.trim())
         return RAN
@@ -245,6 +246,7 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
       group: ECommandGroup.Session,
       timing: ECommandTiming.Settled,
       echo: ECommandEcho.Silent,
+      dropsQueue: true,
       run: () => {
         handlers.onNewConversation()
         return RAN
@@ -259,6 +261,8 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
             group: ECommandGroup.Session,
             timing: ECommandTiming.Settled,
             echo: ECommandEcho.Silent,
+            dropsQueue: true,
+            losesWaiting: true,
             run: () => {
               handlers.onRestart?.()
               return RAN

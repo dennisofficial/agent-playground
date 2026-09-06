@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 
-import { chmod, mkdtemp, rm, writeFile as nodeWriteFile } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, symlink, writeFile as nodeWriteFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -134,5 +134,73 @@ describe('LocalFileSystemPort', () => {
     const found = await port.glob({ pattern: '*', cwd: root })
 
     expect(found).toEqual([join(root, 'notes.txt')])
+  })
+
+  it('reaches above the cwd when the pattern ascends', async () => {
+    await port.mkdir({ path: join(root, 'sub') })
+    await port.writeFile({ path: join(root, 'root.txt'), content: 'x' })
+
+    const found = await port.glob({ pattern: '../*.txt', cwd: join(root, 'sub') })
+
+    expect(found).toEqual([join(root, 'root.txt')])
+  })
+
+  it('finds files through a symlinked directory', async () => {
+    await port.mkdir({ path: join(root, 'real', 'sub') })
+    await port.writeFile({ path: join(root, 'real', 'a.txt'), content: 'a' })
+    await port.writeFile({ path: join(root, 'real', 'sub', 'b.txt'), content: 'b' })
+    await symlink(join(root, 'real'), join(root, 'linked'))
+
+    const found = await port.glob({ pattern: '**/*.txt', cwd: root })
+
+    expect(found).toEqual(
+      expect.arrayContaining([join(root, 'real', 'a.txt'), join(root, 'real', 'sub', 'b.txt')]),
+    )
+    expect(found.some((path) => path.includes('linked'))).toBe(false)
+  })
+
+  it('reports a symlink to a file as a match at the link path', async () => {
+    await port.mkdir({ path: join(root, 'elsewhere') })
+    await port.writeFile({ path: join(root, 'elsewhere', 'real.txt'), content: 'x' })
+    await symlink(join(root, 'elsewhere', 'real.txt'), join(root, 'alias.txt'))
+
+    const found = await port.glob({ pattern: '*.txt', cwd: root })
+
+    expect(found).toEqual([join(root, 'alias.txt')])
+  })
+
+  it('terminates on a symlink cycle instead of recursing forever', async () => {
+    await port.mkdir({ path: join(root, 'loop') })
+    await port.writeFile({ path: join(root, 'loop', 'x.txt'), content: 'x' })
+    await symlink(join(root, 'loop'), join(root, 'loop', 'self'))
+
+    const found = await port.glob({ pattern: '**/*.txt', cwd: root })
+
+    expect(found).toEqual([join(root, 'loop', 'x.txt')])
+  })
+
+  it('skips dangling links rather than failing the scan', async () => {
+    await port.writeFile({ path: join(root, 'present.txt'), content: 'x' })
+    await symlink(join(root, 'absent.txt'), join(root, 'dangling.txt'))
+
+    const found = await port.glob({ pattern: '**/*.txt', cwd: root })
+
+    expect(found).toEqual([join(root, 'present.txt')])
+  })
+
+  it('skips hidden entries unless dot asks for them', async () => {
+    await port.mkdir({ path: join(root, '.hidden') })
+    await port.writeFile({ path: join(root, '.hidden', 'secret.txt'), content: 'x' })
+    await port.writeFile({ path: join(root, '.dotfile.txt'), content: 'x' })
+    await port.writeFile({ path: join(root, 'plain.txt'), content: 'x' })
+
+    expect(await port.glob({ pattern: '**/*.txt', cwd: root })).toEqual([join(root, 'plain.txt')])
+    expect(await port.glob({ pattern: '**/*.txt', cwd: root, dot: true })).toEqual(
+      expect.arrayContaining([
+        join(root, 'plain.txt'),
+        join(root, '.dotfile.txt'),
+        join(root, '.hidden', 'secret.txt'),
+      ]),
+    )
   })
 })

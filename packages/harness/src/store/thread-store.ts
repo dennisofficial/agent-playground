@@ -19,6 +19,7 @@ import { createThreadWithEvents, type OpenThreadArgs } from './create-with-event
 import { toEventRow } from './event-row'
 import { forkThread } from './fork'
 import { retryOnWriteConflict } from './retry'
+import { dropRewoundChildren } from './rewound-children'
 import { threadPullRequests, threadWorktree, type ThreadWorktree } from './thread-places'
 
 export type SupervisedAgent = { spawnedBy: ThreadId; type: string }
@@ -74,7 +75,11 @@ export abstract class ThreadStorePort {
     workspace: string
     repo: string | null
   }): Promise<void>
-  abstract rewind(args: { threadId: ThreadId; toSeq: number }): Promise<void>
+  abstract rewind(args: {
+    threadId: ThreadId
+    toSeq: number
+    cutAgents?: readonly ThreadId[] | undefined
+  }): Promise<void>
   abstract compact(args: {
     threadId: ThreadId
     anchor: ECompactionAnchor
@@ -89,6 +94,7 @@ export abstract class ThreadStorePort {
     fromSeq: number
     throughSeq: number
     summary: string
+    cutAgents?: readonly ThreadId[] | undefined
   }): Promise<number>
 
   abstract fork(args: {
@@ -245,10 +251,19 @@ export class PrismaThreadStore implements ThreadStorePort {
     await this.prisma.thread.update({ where: { id: threadId }, data: { workspace, repo } })
   }
 
-  async rewind({ threadId, toSeq }: { threadId: ThreadId; toSeq: number }): Promise<void> {
+  async rewind({
+    threadId,
+    toSeq,
+    cutAgents = [],
+  }: {
+    threadId: ThreadId
+    toSeq: number
+    cutAgents?: readonly ThreadId[] | undefined
+  }): Promise<void> {
     const at = this.clock.now()
     await this.prisma.$transaction(async (tx) => {
       await tx.event.deleteMany({ where: { threadId, seq: { gt: toSeq } } })
+      await dropRewoundChildren({ tx, agentIds: cutAgents })
       await tx.thread.update({ where: { id: threadId }, data: { head: toSeq, updatedAt: at } })
     })
   }
@@ -260,7 +275,7 @@ export class PrismaThreadStore implements ThreadStorePort {
     throughSeq: number
     summary: string
   }): Promise<number> {
-    return this.mark({ ...args, discardRows: false })
+    return this.mark({ ...args, cutAgents: [], discardRows: false })
   }
 
   async summarise(args: {
@@ -269,8 +284,9 @@ export class PrismaThreadStore implements ThreadStorePort {
     fromSeq: number
     throughSeq: number
     summary: string
+    cutAgents?: readonly ThreadId[] | undefined
   }): Promise<number> {
-    return this.mark({ ...args, discardRows: true })
+    return this.mark({ ...args, cutAgents: args.cutAgents ?? [], discardRows: true })
   }
 
   /**
@@ -285,6 +301,7 @@ export class PrismaThreadStore implements ThreadStorePort {
     throughSeq,
     summary,
     discardRows,
+    cutAgents,
   }: {
     threadId: ThreadId
     anchor: ECompactionAnchor
@@ -292,6 +309,7 @@ export class PrismaThreadStore implements ThreadStorePort {
     throughSeq: number
     summary: string
     discardRows: boolean
+    cutAgents: readonly ThreadId[]
   }): Promise<number> {
     const at = this.clock.now()
 
@@ -305,7 +323,10 @@ export class PrismaThreadStore implements ThreadStorePort {
         await tx.event.findMany({ where: covered, select: { seq: true }, orderBy: { seq: 'asc' } })
       ).map((row) => row.seq)
       const replaced = vacated.length
-      if (discardRows) await tx.event.deleteMany({ where: covered })
+      if (discardRows) {
+        await tx.event.deleteMany({ where: covered })
+        await dropRewoundChildren({ tx, agentIds: cutAgents })
+      }
 
       const standIn = discardRows ? standInSeq({ anchor, vacated }) : undefined
       const seq = standIn ?? (await reserveOne({ tx, threadId, at }))
