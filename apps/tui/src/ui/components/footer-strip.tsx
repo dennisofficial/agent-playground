@@ -1,7 +1,6 @@
 import React from 'react'
 
 import { footerItemCells, pressOf, type FooterItem } from '../footer-item'
-import { HINT_SEPARATOR } from '../hint-layout'
 import { useClickRegion } from '../hooks/use-click-region'
 import { theme } from '../theme'
 import { Spans } from './spans'
@@ -90,37 +89,29 @@ function FooterPill(
   )
 }
 
-const Lead = (): React.ReactNode => (
-  <text flexShrink={0}>
-    <span fg={theme.rule}>{HINT_SEPARATOR}</span>
-  </text>
-)
-
 /**
- * The dot and the gaps sit outside the pressable box on purpose: a click between two chips belongs
- * to neither of them. The gap is a margin for the same reason a space used to be a text of its own.
+ * The gaps sit outside the pressable box on purpose: a click between two chips belongs to neither
+ * of them. The gap is a margin for the same reason a space used to be a text of its own.
  */
 export function FooterStrip(
   props: {
     items: readonly FooterItem[]
-    lead: boolean
     selectedId: string | null
   } & FooterStripHandlers,
 ): React.ReactNode {
-  const { items, lead, selectedId, onActivate } = props
+  const { items, selectedId, onActivate } = props
 
   return (
     <>
-      {items.flatMap((item, index) => [
-        ...(index === 0 && lead ? [<Lead key={`${item.id}-lead`} />] : []),
+      {items.map((item, index) => (
         <FooterPill
           key={item.id}
           item={item}
           selected={item.id === selectedId}
           marginLeft={index === 0 ? 0 : 1}
           {...(onActivate === undefined ? {} : { onActivate })}
-        />,
-      ])}
+        />
+      ))}
     </>
   )
 }

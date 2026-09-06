@@ -23,7 +23,11 @@ import {
   composerTone,
   EComposerTone,
 } from '../components/composer'
-import { composerNoticeCells } from '../components/composer-title'
+import {
+  composerFoot,
+  composerNoticeCells,
+  type ComposerFoot,
+} from '../components/composer-title'
 import { FRAME_INSET } from '../components/frame'
 import { PANEL_INSET, PANEL_PAD } from '../components/panel'
 import { ComposerHints, type Hint } from '../components/composer-hints'
@@ -47,6 +51,8 @@ const LONG_DRAFT = 'wrap '.repeat(60)
 
 const TITLE = 'Refresh-token rotation'
 
+const FOOT: ComposerFoot = { model: 'haiku-4-5', effort: 'medium' }
+
 function Draft(props: {
   text?: string
   tone?: EComposerTone
@@ -54,6 +60,7 @@ function Draft(props: {
   title?: string
   width?: number
   accent?: string
+  foot?: ComposerFoot
 }): React.ReactNode {
   const draft = useDraft(props.text ?? '')
   return (
@@ -65,6 +72,7 @@ function Draft(props: {
       {...(props.maxRows === undefined ? {} : { maxRows: props.maxRows })}
       {...(props.title === undefined ? {} : { title: props.title })}
       {...(props.accent === undefined ? {} : { accent: props.accent })}
+      {...(props.foot === undefined ? {} : { foot: props.foot })}
     />
   )
 }
@@ -298,6 +306,99 @@ describe('composerNoticeCells', () => {
     })
 
     expect(bordered).toBe(slab - 1)
+  })
+})
+
+describe('composerFoot', () => {
+  it('keeps the model and the effort whole when the row has the room', () => {
+    expect(composerFoot({ foot: FOOT, width: WIDTH })).toEqual(FOOT)
+  })
+
+  it('sheds the effort word before touching the model', () => {
+    expect(composerFoot({ foot: FOOT, width: 20 })).toEqual({
+      model: FOOT.model,
+      effort: null,
+    })
+  })
+
+  it('truncates the model only once it stands alone', () => {
+    const fitted = composerFoot({ foot: FOOT, width: 16 })
+    expect(fitted?.effort).toBeNull()
+    expect(fitted?.model).toEndWith('…')
+    expect(fitted?.model.length ?? 0).toBeLessThan(FOOT.model.length)
+  })
+
+  it('leaves the rule bare rather than clipping the name to nothing', () => {
+    expect(composerFoot({ foot: FOOT, width: 15 })).toBeNull()
+  })
+
+  it('gives the corner its column back on a bordered edge', () => {
+    const slab = composerFoot({ foot: FOOT, width: 20 })
+    const bordered = composerFoot({ foot: FOOT, width: 20, edge: EComposerEdge.Bordered })
+    expect(bordered?.model.length ?? 0).toBeLessThanOrEqual(slab?.model.length ?? 0)
+  })
+})
+
+describe('the composer foot', () => {
+  it('sets the model and the effort into the tail band', async () => {
+    const frame = await frameOf(<Draft foot={FOOT} />, WIDTH)
+    const tail = frame.split('\n').find((row) => row.startsWith(RAIL_TAIL))
+    expect(tail).toContain(`${PANEL_BOTTOM_EDGE} haiku-4-5 * medium ${PANEL_BOTTOM_EDGE}`)
+  })
+
+  it('sets the foot into the bottom rule on a bordered edge', async () => {
+    applyComposerEdge(EComposerEdge.Bordered)
+    const rows = (await frameOf(<Draft foot={FOOT} />, WIDTH)).split('\n')
+    const tail = rows.find((row) => row.startsWith(FRAME_BOTTOM_LEFT))
+    expect(tail).toContain(`${FRAME_HORIZONTAL} haiku-4-5 * medium ${FRAME_HORIZONTAL}`)
+    expect(tail).toEndWith(`${FRAME_HORIZONTAL}${FRAME_BOTTOM_RIGHT}`)
+  })
+
+  it('sets the foot into the bottom rule on a claude edge too', async () => {
+    applyComposerEdge(EComposerEdge.Claude)
+    const rows = (await frameOf(<Draft foot={FOOT} />, WIDTH)).split('\n')
+    const tail = rows.findLast((row) => row.startsWith(FRAME_HORIZONTAL))
+    expect(tail).toContain(`${FRAME_HORIZONTAL} haiku-4-5 * medium ${FRAME_HORIZONTAL}`)
+  })
+
+  it('inks the foot like the title: the accent on the slab band', async () => {
+    const { rows, spans } = await spansOf(<Draft foot={FOOT} />)
+    const tail = rows.findIndex((row) => row.includes(FOOT.model))
+    const cell = rows[tail]?.indexOf(FOOT.model) ?? -1
+    const foot = spanAt(spans, tail, cell)
+
+    expect(cell).toBeGreaterThan(0)
+    expect(foot?.fg.equals(parseColor(theme.accent))).toBe(true)
+    expect(foot?.bg.equals(parseColor(theme.panelBg))).toBe(true)
+  })
+
+  it('inks the slab title in the accent to match', async () => {
+    const { rows, spans } = await spansOf(<Draft title={TITLE} />)
+    const head = rows.findIndex((row) => row.includes(TITLE))
+    const cell = rows[head]?.indexOf(TITLE) ?? -1
+
+    expect(cell).toBeGreaterThan(0)
+    expect(spanAt(spans, head, cell)?.fg.equals(parseColor(theme.accent))).toBe(true)
+  })
+
+  it('inks the foot like the title: an accent slab on a bordered edge', async () => {
+    applyComposerEdge(EComposerEdge.Bordered)
+    const { rows, spans } = await spansOf(
+      <Draft foot={FOOT} accent={theme.court.external} />,
+    )
+    const tail = rows.findIndex((row) => row.includes(FOOT.model))
+    const cell = rows[tail]?.indexOf(FOOT.model) ?? -1
+    const foot = spanAt(spans, tail, cell)
+
+    expect(cell).toBeGreaterThan(0)
+    expect(foot?.bg.equals(parseColor(theme.court.external))).toBe(true)
+    expect(foot?.fg.equals(parseColor(theme.caretFg))).toBe(true)
+  })
+
+  it('leaves the tail bare when no foot was given', async () => {
+    const frame = await frameOf(<Draft />, WIDTH)
+    const tail = frame.split('\n').find((row) => row.startsWith(RAIL_TAIL))
+    expect(tail).toBe(`${RAIL_TAIL}${PANEL_BOTTOM_EDGE.repeat(WIDTH - 1)}`)
   })
 })
 

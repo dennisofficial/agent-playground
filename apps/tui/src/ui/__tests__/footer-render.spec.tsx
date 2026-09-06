@@ -1,14 +1,12 @@
 import { describe, expect, it } from 'bun:test'
 import React from 'react'
 
-import { EEffort, EMeterBand } from '@dltech/atlas-core'
+import { EMeterBand } from '@dltech/atlas-core'
 
 import { Footer } from '../components/footer'
 import { FOOTER_GUTTER } from '../footer-layout'
 import { cellsOf } from '../hint-layout'
 import { frameOf } from './transcript-fixture'
-
-const MODEL = 'haiku-4-5'
 
 const WIDTHS = [24, 40, 60, 80, 120, 200] as const
 
@@ -25,8 +23,6 @@ const footer = (props: {
 }): React.ReactNode => (
   <Footer
     width={props.width}
-    model={MODEL}
-    effort={EEffort.Medium}
     {...(props.percent === undefined
       ? {}
       : {
@@ -53,17 +49,16 @@ describe('the footer', () => {
     }
   })
 
-  it('keeps what is answering on the left and what it is spending on the right', async () => {
+  it('keeps the row to what it is spending — the model lives on the composer foot', async () => {
     const frame = await frameOf(footer({ width: 140, percent: 62, tokensUsed: 124_000 }), 140)
     const rows = rowsOf(frame)
     expect(rows).toHaveLength(1)
     const row = rows[0] ?? ''
-    expect(row.trimStart()).toStartWith(`${MODEL} med`)
     expect(row).toEndWith('124.0k 62%')
-    expect(row).toContain('   ')
+    expect(row.trim()).toBe('124.0k 62%')
   })
 
-  it('pushes the read-out to the far edge rather than trailing the model', async () => {
+  it('pushes the read-out to the far edge rather than trailing the pills', async () => {
     const width = 140
     const frame = await frameOf(footer({ width, percent: 62, tokensUsed: 124_000 }), width)
     const row = rowsOf(frame)[0] ?? ''
@@ -98,10 +93,10 @@ describe('the footer', () => {
     expect(frame).toContain('context 86% — /compact to compact')
   })
 
-  it('keeps to one row with no meter at all when there is nothing to report', async () => {
-    const frame = await frameOf(<Footer width={100} model={MODEL} />, 100)
+  it('draws nothing at all when there is nothing to report', async () => {
+    const frame = await frameOf(<Footer width={100} />, 100)
     const rows = rowsOf(frame)
-    expect(rows).toHaveLength(1)
+    expect(rows).toHaveLength(0)
     expect(frame).not.toContain('█')
     expect(frame).not.toContain('%')
   })

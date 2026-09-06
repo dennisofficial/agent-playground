@@ -44,7 +44,8 @@ const OPEN_CHARS = { ...BLANK_BORDER, horizontal: FRAME_HORIZONTAL }
  * only thing it draws.
  *
  * `EFrameRule.Open` keeps the two rules and drops the sides, which leaves the body free to start at
- * the margin behind a `lead` of its own.
+ * the margin behind a `lead` of its own. A `foot` is set into the bottom rule the way the slabs sit
+ * on the top one.
  *
  * The rules are stacked as their own rows rather than set on one bordered box, because a bordered
  * box puts its content below the top rule and the slabs have to sit *on* it.
@@ -57,6 +58,7 @@ export function Frame(props: {
   label?: ReactNode
   badge?: ReactNode
   title?: ReactNode
+  foot?: ReactNode
   children: ReactNode
 }): React.ReactNode {
   const open = props.rule === EFrameRule.Open
@@ -108,6 +110,11 @@ export function Frame(props: {
           {props.badge}
           {props.badge === undefined || props.title === undefined ? null : <box width={1} />}
           {props.title}
+        </box>
+      )}
+      {props.foot === undefined ? null : (
+        <box position="absolute" bottom={0} left={FRAME_PAD} zIndex={5}>
+          {props.foot}
         </box>
       )}
     </box>
