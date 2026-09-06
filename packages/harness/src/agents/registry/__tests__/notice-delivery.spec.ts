@@ -46,6 +46,7 @@ async function open(): Promise<Opened> {
       clock,
       agentTypes: [EXPLORE],
       runners: runners.source,
+      launchDirectory: '/launch',
     }),
     parent: (await harness.threads.create({})).id,
     other: (await harness.threads.create({})).id,

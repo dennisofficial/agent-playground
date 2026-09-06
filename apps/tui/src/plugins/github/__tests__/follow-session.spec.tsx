@@ -205,7 +205,7 @@ describe('the github section following the session, through the real wiring', ()
 
       await act(async () => {
         for (const hook of chain.afterTool) {
-          await hook.run({ call: callNamed('enter_worktree'), result: entered(worktree), signal: NEVER_ABORTED })
+          await hook.run({ call: callNamed('enter_worktree'), result: entered(worktree), projectDirectory: '/repo', signal: NEVER_ABORTED })
         }
       })
       await flush()
@@ -213,7 +213,7 @@ describe('the github section following the session, through the real wiring', ()
 
       await act(async () => {
         for (const hook of chain.afterTool) {
-          await hook.run({ call: callNamed('exit_worktree'), result: exited(worktree), signal: NEVER_ABORTED })
+          await hook.run({ call: callNamed('exit_worktree'), result: exited(worktree), projectDirectory: '/repo', signal: NEVER_ABORTED })
         }
       })
       await flush()

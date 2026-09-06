@@ -33,7 +33,10 @@ export type ChildRunnerDeps = {
    * anything — which is the delegate's-work-is-counted-never-quoted rule holding at the transport.
    */
   channel: DeltaChannel
-  assemblyFor: (args: { agentType: AgentType }) => AssemblyPipeline
+  assemblyFor: (args: {
+    agentType: AgentType
+    projectDirectory?: string | undefined
+  }) => AssemblyPipeline
   drainNotices: (args: { threadId: ThreadId }) => Promise<readonly EventDraft[]>
   modelFor?: ((args: { agentType: AgentType }) => ModelPort) | undefined
 }
@@ -77,6 +80,7 @@ export type ChildRunnerSource = (args: ChildRunnerRequest) => TurnRunner
 export type ChildRunnerRequest = {
   agentType: AgentType
   threadId: ThreadId
+  projectDirectory: string | undefined
   observe: (drafts: readonly EventDraft[]) => void
   observeContext: (args: { tokens: number; window: number }) => void
   steering: () => readonly SteerMessage[]
@@ -104,6 +108,7 @@ export function buildChildRunner({
   deps,
   agentType,
   threadId,
+  projectDirectory,
   observe,
   observeContext,
   steering,
@@ -115,6 +120,7 @@ export function buildChildRunner({
     channel: deps.channel,
     deps: {
       ...turn,
+      launchDirectory: projectDirectory ?? turn.launchDirectory,
       log: observingLog({ log: turn.log, threadId, observe }),
       onContext: observeContext,
       model: deps.modelFor === undefined ? turn.model : deps.modelFor({ agentType }),
@@ -124,7 +130,7 @@ export function buildChildRunner({
         hooks: deps.hooks,
         approvals: EApprovalRouting.None,
       }),
-      assembly: deps.assemblyFor({ agentType }),
+      assembly: deps.assemblyFor({ agentType, projectDirectory }),
       drainPending: async (args) => [...steerDrafts(steering()), ...(await deps.drainNotices(args))],
     },
   })

@@ -27,7 +27,7 @@ const call: ToolCall = {
 const succeeded = (output: unknown): ToolOutcome => ({ ok: true, output, modelText: 'done' })
 
 const draftsFor = async (result: ToolOutcome): Promise<readonly EventDraft[]> =>
-  (await new TrackWorktreeHook().run({ call, result, signal: NEVER_ABORTED })).drafts ?? []
+  (await new TrackWorktreeHook().run({ call, result, projectDirectory: '/project', signal: NEVER_ABORTED })).drafts ?? []
 
 describe('what the hook records about worktrees', () => {
   it('records nothing when the tool moved no worktree', async () => {

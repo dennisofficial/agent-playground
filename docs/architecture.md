@@ -336,6 +336,15 @@ because the plumbing's existence otherwise reads as enforcement. What it buys is
 which finds a one-line fix can simply be told to make it, instead of reporting a fix somebody else
 has to apply.
 
+**A child works in the directory the parent was in when it spawned.** The worktree tools are denied
+to children, so a child's own log never holds a `worktree-entered`, and folding it with the process
+launch directory would anchor a child to a checkout the session has since left — its prompt, its
+relative path resolution and the outside-project nudge would all name the wrong directory. The
+supervisor therefore snapshots `projectDirectoryOf` over the *parent's* log at spawn and hands it
+down as the child's `launchDirectory`, so the fold every consumer already runs lands on the session's
+real directory. The snapshot does not follow a parent that moves worktrees mid-child: children are
+briefed against the directory at spawn and are short-lived.
+
 **What the model has seen of a file is per thread, and delegation is what forced it.**
 `ToolCall` carries a required `threadId` and `FileReadStatePort` keys its views on
 `{ threadId, path }`, so a child reading a file no longer vouches for its parent's write. Sharing
@@ -992,6 +1001,14 @@ Neither directory walls the filesystem off. There was a containment guard that r
 path outside the project directory, and it was deleted rather than kept: `bash` declares no path
 fields, so it never applied there, and an agent that can `cat` a file it may not `edit` is being told
 which tool to use, not being made safe.
+
+What stands in the wall's place is a nudge. `OutsideProjectHook` watches successful `write`/`edit`
+calls, and when the target lands outside the project directory — and outside the temp roots and the
+dot-paths straight under home, where memory, skills and one-off config writes legitimately live — it
+returns `additionalContext` naming the path it wrote and the session's actual directory, and pointing
+at `enter_worktree`. The decision is pure (`core/policy/outside-project`), so the exemption list is
+tested rather than remembered, and the delivery rides the `context-loaded` seam, so a repeated slip
+to the same path dedupes instead of stacking.
 
 **Two stores sit outside all three timelines, and neither is ever read back to rebuild state.**
 

@@ -44,6 +44,7 @@ export type BeforeTool = (args: {
 export type AfterTool = (args: {
   call: ToolCall
   result: ToolOutcome
+  projectDirectory: string
   signal: AbortSignal
 }) => Promise<HookOutcome>
 

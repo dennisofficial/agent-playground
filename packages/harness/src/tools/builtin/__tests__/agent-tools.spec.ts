@@ -64,6 +64,7 @@ async function open(): Promise<Opened> {
     clock: harness.clock,
     agentTypes: TYPES,
     runners: runners.source,
+    launchDirectory: '/launch',
   })
   const source = (): AgentSupervisor => supervisor
 

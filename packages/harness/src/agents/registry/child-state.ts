@@ -29,6 +29,7 @@ export type ChildState = {
   abort: AbortController
   pending: SteerMessage[]
   context: ChildContext | undefined
+  projectDirectory: string | undefined
 }
 
 export type SteerMessage = { text: string; images?: readonly SaidImage[] | undefined }
@@ -62,6 +63,7 @@ export function recoveredChild({
     abort: new AbortController(),
     pending: [],
     context: undefined,
+    projectDirectory: undefined,
   }
 }
 

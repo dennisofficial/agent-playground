@@ -82,6 +82,7 @@ const toldAfter = async (args: {
   await hook.run({
     call: callOf({ input: args.input, ...(args.name === undefined ? {} : { name: args.name }) }),
     result: args.result ?? SUCCEEDED,
+    projectDirectory: '/repo',
     signal: NEVER_ABORTED,
   })
 
@@ -123,6 +124,7 @@ describe('the hook that hears a push', () => {
     const outcome = await hook.run({
       call: callOf({ input: { command: 'git push' } }),
       result: SUCCEEDED,
+      projectDirectory: '/repo',
       signal: NEVER_ABORTED,
     })
 
@@ -241,7 +243,7 @@ describe('the wiring the composition root uses', () => {
 
     const call = callOf({ input: { command: 'git push' } })
     for (const hook of chain.afterTool)
-      await hook.run({ call, result: SUCCEEDED, signal: NEVER_ABORTED })
+      await hook.run({ call, result: SUCCEEDED, projectDirectory: '/repo', signal: NEVER_ABORTED })
     await chain.afterShell({ threadId, shell: endedShell({ command: 'git push', exitCode: 0 }) })
 
     expect(expected()).toBe(2)

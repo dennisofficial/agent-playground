@@ -140,6 +140,7 @@ export async function openSupervisor({
       clock: harness.clock,
       agentTypes,
       runners: runners.source,
+      launchDirectory: '/launch',
     }),
     parent: (await harness.threads.create({})).id,
     close: async () => {

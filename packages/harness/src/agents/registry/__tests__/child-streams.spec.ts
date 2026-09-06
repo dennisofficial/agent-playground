@@ -59,6 +59,7 @@ async function childTurnWatched(): Promise<{
   const runner = buildChildRunner({
     agentType: agentTypeNamed({ name: 'explore' }),
     threadId,
+    projectDirectory: undefined,
     observe: () => undefined,
     observeContext: () => undefined,
     steering: () => [],

@@ -84,6 +84,7 @@ describe('the harness container graph', () => {
       'plan',
       'recordFileState',
       'track-worktree',
+      'outside-project',
       'invalidateFacts',
     ])
     expect(await hooks.onChunk({ chunk: delta })).toBe(delta)

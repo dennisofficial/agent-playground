@@ -52,7 +52,7 @@ describe('hook types', () => {
       drafts: [{ type: 'context-loaded', slot: 'claude-md', key: candidate.name, content: '# rules' }],
     })
 
-    expect(await loadNeighbouringContext({ call, result: { ok: true, output: 'written', modelText: 'written' }, signal: NEVER_ABORTED })).toEqual({
+    expect(await loadNeighbouringContext({ call, result: { ok: true, output: 'written', modelText: 'written' }, projectDirectory: '/project', signal: NEVER_ABORTED })).toEqual({
       drafts: [{ type: 'context-loaded', slot: 'claude-md', key: 'write_file', content: '# rules' }],
     })
   })
@@ -60,7 +60,7 @@ describe('hook types', () => {
   it('let an after-tool hook hand the model text without naming an event at all', async () => {
     const remindAboutTests: AfterTool = async () => ({ additionalContext: 'run bun test' })
 
-    expect(await remindAboutTests({ call, result: { ok: true, output: 'written', modelText: 'written' }, signal: NEVER_ABORTED })).toEqual({
+    expect(await remindAboutTests({ call, result: { ok: true, output: 'written', modelText: 'written' }, projectDirectory: '/project', signal: NEVER_ABORTED })).toEqual({
       additionalContext: 'run bun test',
     })
   })

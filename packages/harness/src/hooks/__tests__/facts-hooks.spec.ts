@@ -50,7 +50,7 @@ describe('the hooks that keep the workspace facts fresh', () => {
     const facts = new SpyFacts()
     const hook = new InvalidateFactsHook(facts)
 
-    await hook.run({ call: callWith({ effect: EToolEffect.Read }), result: OK, signal: NEVER_ABORTED })
+    await hook.run({ call: callWith({ effect: EToolEffect.Read }), result: OK, projectDirectory: '/repo', signal: NEVER_ABORTED })
 
     expect(facts.invalidations).toBe(0)
   })
@@ -59,8 +59,8 @@ describe('the hooks that keep the workspace facts fresh', () => {
     const facts = new SpyFacts()
     const hook = new InvalidateFactsHook(facts)
 
-    await hook.run({ call: callWith({ effect: EToolEffect.Write }), result: OK, signal: NEVER_ABORTED })
-    await hook.run({ call: callWith({ effect: EToolEffect.Destructive }), result: OK, signal: NEVER_ABORTED })
+    await hook.run({ call: callWith({ effect: EToolEffect.Write }), result: OK, projectDirectory: '/repo', signal: NEVER_ABORTED })
+    await hook.run({ call: callWith({ effect: EToolEffect.Destructive }), result: OK, projectDirectory: '/repo', signal: NEVER_ABORTED })
 
     expect(facts.invalidations).toBe(2)
   })
@@ -71,7 +71,7 @@ describe('the hooks that keep the workspace facts fresh', () => {
 
     await hook.run({
       call: callWith({ effect: EToolEffect.Destructive }),
-      result: { ok: false, reason: 'interrupted' }, signal: NEVER_ABORTED })
+      result: { ok: false, reason: 'interrupted' }, projectDirectory: '/repo', signal: NEVER_ABORTED })
 
     expect(facts.invalidations).toBe(1)
   })

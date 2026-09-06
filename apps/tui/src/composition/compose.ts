@@ -728,7 +728,7 @@ export async function composeAtlas(args: {
       channel,
       drainNotices,
       modelFor,
-      assemblyFor: ({ agentType }) =>
+      assemblyFor: ({ agentType, projectDirectory: working }) =>
         defaultPipeline({
           prompt: ({ projectDirectory }) =>
             subAgentPrompt({
@@ -740,7 +740,7 @@ export async function composeAtlas(args: {
               ),
               projectDirectory,
             }),
-          launchDirectory: workspace.workspace,
+          launchDirectory: working ?? workspace.workspace,
           repoRoot: workspace.repo ?? undefined,
           runningShells,
           runningServices,

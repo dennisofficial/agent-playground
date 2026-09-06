@@ -307,6 +307,7 @@ describe('ReclaimWorktreeSandboxHook', () => {
     await hook.run({
       call: bashCall('exit_worktree'),
       result: exited(EWorktreeExit.Remove),
+      projectDirectory: '/repo',
       signal: new AbortController().signal,
     })
 
@@ -322,6 +323,7 @@ describe('ReclaimWorktreeSandboxHook', () => {
     await hook.run({
       call: bashCall('exit_worktree'),
       result: exited(EWorktreeExit.Keep),
+      projectDirectory: '/repo',
       signal: new AbortController().signal,
     })
 
@@ -338,11 +340,13 @@ describe('ReclaimWorktreeSandboxHook', () => {
     await hook.run({
       call: bashCall('exit_worktree'),
       result: { ok: false, reason: 'refused' },
+      projectDirectory: '/repo',
       signal,
     })
     await hook.run({
       call: bashCall('bash'),
       result: { ok: true, output: { command: 'ls' }, modelText: '' },
+      projectDirectory: '/repo',
       signal,
     })
 

@@ -357,7 +357,7 @@ type BeforeTurn    = (args: { threadId: string }) => Promise<HookOutcome>
 type BeforeStep    = (args: { assembled: Assembled; trace: AssemblyTrace }) => Promise<Assembled>  // persists
 type BeforeRequest = (p: ProviderPrompt) => Promise<ProviderPrompt>          // transient, per-provider
 type BeforeTool    = (args: { call: ToolCall }) => Promise<BeforeToolOutcome>
-type AfterTool     = (args: { call: ToolCall; result: ToolOutcome; signal: AbortSignal }) => Promise<HookOutcome>
+type AfterTool     = (args: { call: ToolCall; result: ToolOutcome; projectDirectory: string; signal: AbortSignal }) => Promise<HookOutcome>
 type AfterShell    = (args: { threadId: string; shell: EndedShell }) => Promise<HookOutcome>  // fired by the shell registry
 type OnChunk       = (c: Chunk) => Promise<Chunk | null>
 type AfterTurn     = (args: { threadId: string }) => Promise<HookOutcome>

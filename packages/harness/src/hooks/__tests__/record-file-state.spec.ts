@@ -173,7 +173,7 @@ const recordFor = async ({
 }) => {
   const outcome = await createRecordFileStateHook({ seen, tools }).run({
     call: callTo({ name, input, threadId }),
-    result, signal: NEVER_ABORTED })
+    result, projectDirectory: '/project', signal: NEVER_ABORTED })
 
   return { outcome, seen }
 }
