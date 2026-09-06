@@ -10,19 +10,16 @@
  * arguments; the output joins when the command has run.
  */
 
-import { StyledText } from '@opentui/core'
-import React from 'react'
+import React, { useMemo } from 'react'
 
 import type { ToolCall } from '../../../store'
 import { detailOf, inputOf, str } from '../../../store/tools'
 import { stripAnsi } from '../../ansi'
-import { fitDiffChunks } from '../../markdown/highlight-rows'
 import { tailOfPath } from '../../paths'
 import { theme } from '../../theme'
-import { chunksFor } from '../diff/chunk-styling'
 import { Panel, PANEL_INSET, PANEL_PAD } from '../panel'
 import { MoreToggle, NOT_EXPANDABLE, shownOf, type Expander } from './more-toggle'
-import { useHighlighted } from './tool-code-lines'
+import { useHighlighted, useStyledRows } from './tool-code-lines'
 
 const CHROME = PANEL_INSET + PANEL_PAD
 
@@ -31,29 +28,18 @@ const MAX_ROWS = 12
 const PROMPT = '$ '
 
 function CommandRows(props: { command: string; columns: number }): React.ReactNode {
-  const lines = props.command.replace(/\n$/, '').split('\n')
+  const lines = useMemo(() => props.command.replace(/\n$/, '').split('\n'), [props.command])
   const chunks = useHighlighted({ lines, filetype: 'bash' })
+  const styled = useStyledRows({ texts: lines, chunks, columns: props.columns })
 
   return (
     <>
-      {lines.map((line, index) => (
+      {styled.map((content, index) => (
         <box key={index} flexDirection="row" height={1} flexShrink={0}>
           <text wrapMode="none" flexShrink={0} fg={theme.ok}>
             {index === 0 ? PROMPT : ' '.repeat(PROMPT.length)}
           </text>
-          <text
-            wrapMode="none"
-            flexShrink={0}
-            fg={theme.body}
-            content={
-              new StyledText([
-                ...fitDiffChunks({
-                  chunks: chunksFor({ text: line, chunks: chunks[index] ?? null }),
-                  columns: props.columns,
-                }),
-              ])
-            }
-          />
+          <text wrapMode="none" flexShrink={0} fg={theme.body} content={content} />
         </box>
       ))}
     </>
