@@ -360,6 +360,7 @@ describe("rewinding a fork", () => {
     const result = await rewindThread({
       log: store.log,
       threads: store.threads,
+      agents: store.agents,
       threadId: child.id,
       toSeq: 2,
     });
@@ -390,6 +391,7 @@ describe("rewinding a fork", () => {
     await rewindThread({
       log: store.log,
       threads: store.threads,
+      agents: store.agents,
       threadId: child.id,
       toSeq: 3,
     });

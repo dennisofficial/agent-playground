@@ -151,16 +151,6 @@ describe('the queue a message waits in until the loop takes it', () => {
     expect(createPendingQueue().takeBackLast()).toBeNull()
   })
 
-  it('drops everything when the conversation is replaced', () => {
-    const queue = createPendingQueue()
-    queue.enqueue({ text: 'meant for the old thread' })
-
-    queue.clear()
-
-    expect(textsOf(queue)).toEqual([])
-    expect(queue.drain()).toEqual([])
-  })
-
   it('tells its listeners on every change and stops when they leave', () => {
     const queue = createPendingQueue()
     let told = 0
@@ -195,7 +185,6 @@ describe('the queue a message waits in until the loop takes it', () => {
     queue.drain()
     queue.drain()
     queue.settleTaken({ events: log([{ type: 'user-said', text: 'nothing of ours' }]) })
-    queue.clear()
 
     expect(told).toBe(0)
   })

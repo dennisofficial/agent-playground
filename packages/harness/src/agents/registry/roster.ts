@@ -22,6 +22,11 @@ export class AgentRoster {
     this.settle()
   }
 
+  remove(agentId: ThreadId): void {
+    if (!this.children.delete(agentId)) return
+    this.settle()
+  }
+
   changed(): void {
     this.settle()
   }

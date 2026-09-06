@@ -37,6 +37,7 @@ import {
   toThreadId,
   type ThreadId,
   type EventDraft,
+  type SaidImage,
   type SecretsPort,
   type WorkspaceIdentity,
 } from '@dltech/atlas-core'
@@ -131,7 +132,7 @@ import {
   type SettingsService,
 } from '@dltech/atlas-harness'
 
-import { createPendingQueue, type PendingQueue } from '../store'
+import { createPendingQueues, type PendingQueues } from '../store'
 import type { ActiveConversation } from './resume-hint'
 import { compactTurn, ECompaction, type Summariser } from './compact-turn'
 import { SUMMARISER_MODEL_ID, TITLER_MODEL_ID, TLDR_MODEL_ID, type AtlasConfig } from './config'
@@ -161,7 +162,11 @@ import { bindSkillRegistry, liveSkillRegistry } from './skills-binding'
 import { userSaidDraft } from './user-said'
 import { createWarpReporter, WarpThreadOpenHook } from './warp-reporter'
 
-export type SessionTitler = (args: { text: string; signal?: AbortSignal }) => Promise<string | null>
+export type SessionTitler = (args: {
+  text: string
+  images?: readonly SaidImage[] | undefined
+  signal?: AbortSignal | undefined
+}) => Promise<string | null>
 
 export type { SandboxControl } from './sandbox-binding'
 
@@ -260,7 +265,7 @@ export type AtlasApp = {
   threads: ThreadStorePort
   ledger: TurnLedgerPort
   ids: IdPort
-  pending: PendingQueue
+  pending: PendingQueues
   shells: ShellRegistryPort
   agents: AgentRegistryPort
   services: ServiceRegistryPort
@@ -584,7 +589,7 @@ export async function composeAtlas(args: {
   const services = container.resolve(portToken(ServiceRegistryPort))
 
   const channel = createDeltaChannel()
-  const pending = createPendingQueue()
+  const pending = createPendingQueues()
 
   let activeThread: ActiveConversation | null = null
 
@@ -610,6 +615,7 @@ export async function composeAtlas(args: {
     const compaction = await compactTurn({
       log,
       threads,
+      agents,
       threadId,
       summarise,
     })
@@ -687,7 +693,7 @@ export async function composeAtlas(args: {
     hooks: container.resolve(HookChainToken),
     drainPending: async (args) => [
       ...(await drainNotices(args)),
-      ...pending.drain().map(userSaidDraft),
+      ...pending.forThread({ threadId: args.threadId }).drain().map(userSaidDraft),
     ],
     spend: { ledger, clock: container.resolve(portToken(ClockPort)) },
     compact: compactBeforeOverflow,
@@ -756,7 +762,7 @@ export async function composeAtlas(args: {
       activeThread = active
     },
     activeThread: () => activeThread,
-    titler: ({ text, signal }) => titleFor({ model: titlerModel, text, signal }),
+    titler: ({ text, images, signal }) => titleFor({ model: titlerModel, text, images, signal }),
     summarise,
     settings,
     secrets: container.resolve(SecretsStoreToken),

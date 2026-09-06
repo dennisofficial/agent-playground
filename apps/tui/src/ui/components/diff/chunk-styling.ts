@@ -48,12 +48,16 @@ export function emphasiseChunks(args: {
   return out
 }
 
-const emphasisCache = new Map<string, RGBA>()
+const colourCache = new Map<string, RGBA>()
 
-export function emphasisBg(colour: string): RGBA {
-  const cached = emphasisCache.get(colour)
+export function cachedColour(colour: string): RGBA {
+  const cached = colourCache.get(colour)
   if (cached) return cached
   const parsed = parseColor(colour)
-  emphasisCache.set(colour, parsed)
+  colourCache.set(colour, parsed)
   return parsed
+}
+
+export function emphasisBg(colour: string): RGBA {
+  return cachedColour(colour)
 }

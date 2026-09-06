@@ -1,5 +1,5 @@
 import { toThreadId } from '@dltech/atlas-core'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
@@ -51,5 +51,16 @@ describe('GlobTool', () => {
     const outcome = await scan({ path: join(root, 'sub'), pattern: '../../*.txt' })
 
     expect(outcome).toMatchObject({ ok: true, output: { paths: [outside] } })
+  })
+
+  it('finds files through a symlinked directory inside the project', async () => {
+    await symlink(join(root, 'sub'), join(root, 'linked-sub'))
+
+    const outcome = await scan({ pattern: '**/*.txt' })
+
+    expect(outcome).toMatchObject({
+      ok: true,
+      output: { paths: expect.arrayContaining([join(root, 'sub', 'deep.txt')]) },
+    })
   })
 })

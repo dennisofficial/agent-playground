@@ -72,6 +72,7 @@ const mark = (args: {
   compactThread({
     log: fixture.log,
     threads: fixture.threads,
+    agents: fixture.agents,
     threadId: args.threadId,
     anchor: args.anchor ?? ECompactionAnchor.Prefix,
     seq: args.seq,
@@ -101,6 +102,7 @@ const rewoundTo = (args: { threadId: ThreadId; toSeq: number }) =>
   rewindThread({
     log: fixture.log,
     threads: fixture.threads,
+    agents: fixture.agents,
     threadId: args.threadId,
     toSeq: args.toSeq,
   })
@@ -269,6 +271,7 @@ describe('what neither operation will do', () => {
     await compactThread({
       log: fixture.log,
       threads: fixture.threads,
+      agents: fixture.agents,
       threadId,
       anchor: ECompactionAnchor.Prefix,
       seq: 2,

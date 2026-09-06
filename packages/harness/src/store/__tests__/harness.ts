@@ -6,15 +6,66 @@ import type { ThreadId, ClockPort, EventId, IdPort, RunId } from '@dltech/atlas-
 import { toThreadId, toCallId, toEventId, toRunId } from '@dltech/atlas-core'
 
 import type { PrismaClient } from '../../../prisma/generated/client'
+import { AgentRegistryPort } from '../../agents/registry/port'
 import { openAtlasDatabase, type AtlasDatabase } from '../database'
 import { PrismaThreadStore } from '../thread-store'
 import { PrismaEventLog } from '../event-log'
+
+export class UnstaffedAgents extends AgentRegistryPort {
+  types() {
+    return []
+  }
+  spawn() {
+    return Promise.resolve({ ok: false as const, reason: 'no agent registry in this fixture' })
+  }
+  say() {
+    return Promise.resolve({ ok: false as const, reason: 'no agent registry in this fixture' })
+  }
+  resume() {
+    return Promise.resolve({ ok: false as const, reason: 'no agent registry in this fixture' })
+  }
+  stop() {
+    return { ok: false as const, reason: 'no agent registry in this fixture' }
+  }
+  list() {
+    return []
+  }
+  removeChildren() {
+    return Promise.resolve()
+  }
+  recordLostAgents() {
+    return Promise.resolve({ settled: [], unlogged: [] })
+  }
+  listEverywhere() {
+    return []
+  }
+  drainNotifications() {
+    return []
+  }
+  pendingNotices() {
+    return []
+  }
+  threadsAwaitingNotice() {
+    return []
+  }
+  onNotice() {
+    return () => undefined
+  }
+  onChange() {
+    return () => undefined
+  }
+  forgetNotices() {}
+  closeAll() {
+    return Promise.resolve()
+  }
+}
 
 export type StoreFixture = {
   databaseUrl: string
   prisma: PrismaClient
   log: PrismaEventLog
   threads: PrismaThreadStore
+  agents: AgentRegistryPort
   clock: SteppingClock
   reopen: () => Promise<StoreFixture>
   close: () => Promise<void>
@@ -84,6 +135,7 @@ async function attach({
     clock,
     log: new PrismaEventLog(database.prisma, clock, ids),
     threads: new PrismaThreadStore(database.prisma, clock, ids),
+    agents: new UnstaffedAgents(),
     reopen: async () => {
       await database.close()
       return attach({ databaseUrl, discard, idPrefix: `${idPrefix}b` })

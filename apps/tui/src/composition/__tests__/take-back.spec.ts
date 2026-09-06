@@ -11,6 +11,7 @@ import { toShellId } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
 import { retractTrailingSaid } from '../take-back'
+import { fakeAgentRegistry } from './fake-agents'
 import { fakeThreadStore, fakeEventLog } from './fake-backend'
 
 const THREAD = toThreadId('take-back')
@@ -34,7 +35,7 @@ const stamped = (drafts: readonly EventDraft[]): Event[] =>
 
 const backedBy = (drafts: readonly EventDraft[]) => {
   const log = fakeEventLog(stamped(drafts))
-  return { log, threads: fakeThreadStore({ log, existing: [THREAD] }) }
+  return { log, threads: fakeThreadStore({ log, existing: [THREAD] }), agents: fakeAgentRegistry() }
 }
 
 const SHELL_ENDED: EventDraft = {
@@ -51,7 +52,7 @@ const SHELL_ENDED: EventDraft = {
 
 describe('taking back a message the loop already drained', () => {
   it('retracts it while it is still the last thing said, leaving the notices drained with it', async () => {
-    const { log, threads } = backedBy([
+    const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'start' },
       SHELL_ENDED,
       { type: 'user-said', text: 'check the tests too' },
@@ -60,6 +61,7 @@ describe('taking back a message the loop already drained', () => {
     const retracted = await retractTrailingSaid({
       log,
       threads,
+      agents,
       threadId: THREAD,
       text: 'check the tests too',
     })
@@ -72,20 +74,20 @@ describe('taking back a message the loop already drained', () => {
   })
 
   it('retracts only the last of a taken batch, one press at a time', async () => {
-    const { log, threads } = backedBy([
+    const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'first' },
       { type: 'user-said', text: 'second' },
     ])
 
-    expect(await retractTrailingSaid({ log, threads, threadId: THREAD, text: 'second' })).toBe(true)
+    expect(await retractTrailingSaid({ log, threads, agents, threadId: THREAD, text: 'second' })).toBe(true)
     expect((await log.read({ threadId: THREAD })).map((event) => event.type)).toEqual(['user-said'])
 
-    expect(await retractTrailingSaid({ log, threads, threadId: THREAD, text: 'first' })).toBe(true)
+    expect(await retractTrailingSaid({ log, threads, agents, threadId: THREAD, text: 'first' })).toBe(true)
     expect(await log.read({ threadId: THREAD })).toEqual([])
   })
 
   it('refuses once anything followed it — the agent has it now — and touches nothing', async () => {
-    const { log, threads } = backedBy([
+    const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'check the tests too' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'on it' }] },
     ])
@@ -93,6 +95,7 @@ describe('taking back a message the loop already drained', () => {
     const retracted = await retractTrailingSaid({
       log,
       threads,
+      agents,
       threadId: THREAD,
       text: 'check the tests too',
     })
@@ -102,11 +105,12 @@ describe('taking back a message the loop already drained', () => {
   })
 
   it('refuses when the tail is a notice rather than the message', async () => {
-    const { log, threads } = backedBy([{ type: 'user-said', text: 'check the tests too' }, SHELL_ENDED])
+    const { log, threads, agents } = backedBy([{ type: 'user-said', text: 'check the tests too' }, SHELL_ENDED])
 
     const retracted = await retractTrailingSaid({
       log,
       threads,
+      agents,
       threadId: THREAD,
       text: 'check the tests too',
     })

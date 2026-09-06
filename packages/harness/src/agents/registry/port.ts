@@ -26,6 +26,10 @@ export abstract class AgentRegistryPort {
   abstract resume(args: { agentId: ThreadId; threadId: ThreadId }): Promise<AgentOutcome>
   abstract stop(args: { agentId: ThreadId; threadId: ThreadId; by: EKilledBy }): AgentOutcome
   abstract list(args: { threadId: ThreadId }): readonly AgentSnapshot[]
+  abstract removeChildren(args: {
+    threadId: ThreadId
+    agentIds: readonly ThreadId[]
+  }): Promise<void>
   abstract recordLostAgents(args: { threadId: ThreadId }): Promise<RecoveredAgents>
   abstract listEverywhere(): readonly AgentSnapshot[]
   abstract drainNotifications(args: { threadId: ThreadId }): readonly EventDraft[]

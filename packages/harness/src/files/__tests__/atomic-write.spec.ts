@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, readlink, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'bun:test'
@@ -68,6 +68,72 @@ describe('writeFileAtomically', () => {
 
     expect(await readFile(join(occupied, 'inside.txt'), 'utf8')).toBe('still here\n')
     expect(await readdir(directory)).toEqual(['occupied'])
+  })
+
+  it('writes through a symlink to its target and keeps the link intact', async () => {
+    const directory = join(root, 'linked')
+    await mkdir(directory, { recursive: true })
+    const target = join(directory, 'real.txt')
+    const link = join(directory, 'link.txt')
+    await writeFile(target, 'old\n')
+    await symlink(target, link)
+
+    await writeFileAtomically({ path: link, content: 'new\n' })
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
+    expect(await readlink(link)).toBe(target)
+    expect(await readFile(target, 'utf8')).toBe('new\n')
+  })
+
+  it('follows a chain of symlinks to the real file', async () => {
+    const directory = join(root, 'chain')
+    await mkdir(directory, { recursive: true })
+    const target = join(directory, 'real.txt')
+    await writeFile(target, 'old\n')
+    await symlink(target, join(directory, 'hop-1.txt'))
+    await symlink(join(directory, 'hop-1.txt'), join(directory, 'hop-2.txt'))
+
+    await writeFileAtomically({ path: join(directory, 'hop-2.txt'), content: 'new\n' })
+
+    expect((await lstat(join(directory, 'hop-1.txt'))).isSymbolicLink()).toBe(true)
+    expect((await lstat(join(directory, 'hop-2.txt'))).isSymbolicLink()).toBe(true)
+    expect(await readFile(target, 'utf8')).toBe('new\n')
+  })
+
+  it('resolves a relative link target against the link directory', async () => {
+    const directory = join(root, 'relative')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'real.txt'), 'old\n')
+    await symlink('real.txt', join(directory, 'link.txt'))
+
+    await writeFileAtomically({ path: join(directory, 'link.txt'), content: 'new\n' })
+
+    expect((await lstat(join(directory, 'link.txt'))).isSymbolicLink()).toBe(true)
+    expect(await readFile(join(directory, 'real.txt'), 'utf8')).toBe('new\n')
+  })
+
+  it('creates the file a dangling link points at instead of replacing the link', async () => {
+    const directory = join(root, 'dangling')
+    await mkdir(directory, { recursive: true })
+    const target = join(directory, 'not-yet.txt')
+    const link = join(directory, 'link.txt')
+    await symlink(target, link)
+
+    await writeFileAtomically({ path: link, content: 'made\n' })
+
+    expect((await lstat(link)).isSymbolicLink()).toBe(true)
+    expect(await readFile(target, 'utf8')).toBe('made\n')
+  })
+
+  it('refuses a link that loops back on itself', async () => {
+    const directory = join(root, 'loop')
+    await mkdir(directory, { recursive: true })
+    await symlink(join(directory, 'b.txt'), join(directory, 'a.txt'))
+    await symlink(join(directory, 'a.txt'), join(directory, 'b.txt'))
+
+    await expect(
+      writeFileAtomically({ path: join(directory, 'a.txt'), content: 'nope\n' }),
+    ).rejects.toThrow(/too many levels of symbolic links/)
   })
 
   it('never exposes a partially written file, because the name only ever moves in whole', async () => {
