@@ -17,13 +17,34 @@ export const systemMountDestinations = (config: SandboxConfig): ReadonlySet<stri
       config.worktree,
       config.dockerSocket,
       config.sshAuthSock,
+      config.sshKnownHostsPath,
       config.gitconfigPath,
       config.gpgAgentExtraSocket === undefined
         ? undefined
         : `${CONTAINER_GNUPG_HOME}/S.gpg-agent`,
+      config.gpgAgentExtraSocket === undefined || config.gpgPubringPath === undefined
+        ? undefined
+        : `${CONTAINER_GNUPG_HOME}/pubring.kbx`,
       ...(config.atlasHomeSubtrees ?? []),
     ].filter((path): path is string => path !== undefined),
   )
+
+export const publicIdentityMountsDrift = (args: {
+  config: SandboxConfig
+  actual: readonly ContainerMount[]
+}): boolean => {
+  const expected: ContainerMount[] = []
+  const { config } = args
+  if (config.sshKnownHostsPath !== undefined) {
+    expected.push({ source: config.sshKnownHostsPath, destination: config.sshKnownHostsPath, readOnly: true })
+  }
+  if (config.gpgAgentExtraSocket !== undefined && config.gpgPubringPath !== undefined) {
+    expected.push({ source: config.gpgPubringPath, destination: `${CONTAINER_GNUPG_HOME}/pubring.kbx`, readOnly: true })
+  }
+  return expected.some((wanted) => !args.actual.some((mount) =>
+    mount.source === wanted.source && mount.destination === wanted.destination && mount.readOnly,
+  ))
+}
 
 export const mountsDrift = (args: {
   requested: readonly Mount[]
@@ -36,12 +57,13 @@ export const mountsDrift = (args: {
   const present = new Map(
     args.actual
       .filter((mount) => !args.system.has(mount.destination))
-      .map((mount) => [mount.destination, mount.readOnly]),
+      .map((mount) => [mount.destination, mount]),
   )
 
   if (wanted.size !== present.size) return true
   for (const [path, readOnly] of wanted) {
-    if (present.get(path) !== readOnly) return true
+    const mount = present.get(path)
+    if (mount?.source !== path || mount.readOnly !== readOnly) return true
   }
   return false
 }

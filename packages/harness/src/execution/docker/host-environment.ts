@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,26 +12,32 @@ import {
 } from './sandbox'
 import { EImageKind, type ContainerResolution } from '../image/resolve'
 import type { Mount } from '../image/mounts'
+import { mountsWithGitMetadata } from './git-metadata-mounts'
 
 export type HostSandboxEnvironment = {
   uid: number
   gid: number
   home: string
   sshAuthSock?: string | undefined
+  sshKnownHostsPath?: string | undefined
   gpgAgentExtraSocket?: string | undefined
+  gpgPubringPath?: string | undefined
   gitconfigPath?: string | undefined
 }
 
-const gpgAgentExtraSocket = (): string | undefined => {
-  const gpgconf = Bun.which('gpgconf')
+const gpgAgentExtraSocket = (env: Record<string, string | undefined>): string | undefined => {
+  const gpgconf = Bun.which('gpgconf', env.PATH === undefined ? undefined : { PATH: env.PATH })
   if (gpgconf === null) return undefined
 
-  const probed = Bun.spawnSync([gpgconf, '--list-dirs', 'agent-extra-socket'])
+  const probed = Bun.spawnSync([gpgconf, '--list-dirs', 'agent-extra-socket'], { env })
   if (!probed.success) return undefined
 
   const path = new TextDecoder().decode(probed.stdout).trim()
-  return path !== '' && existsSync(path) ? path : undefined
+  return path !== '' && statSync(path, { throwIfNoEntry: false })?.isSocket() ? path : undefined
 }
+
+const existingFilePath = (path: string): string | undefined =>
+  statSync(path, { throwIfNoEntry: false })?.isFile() ? path : undefined
 
 const operatorIds = (): { uid: number; gid: number } => {
   if (process.getuid === undefined || process.getgid === undefined) {
@@ -50,8 +56,11 @@ export function hostSandboxEnvironment(args?: {
   const home = containerHomeMatchingHostPath(env)
 
   const sshAuthSock = env.SSH_AUTH_SOCK
+  const sshKnownHostsPath = join(home, '.ssh', 'known_hosts')
   const gitconfigPath = join(home, '.gitconfig')
+  const gpgPubringPath = join(env.GNUPGHOME || join(home, '.gnupg'), 'pubring.kbx')
   const { uid, gid } = operatorIds()
+  const gpgAgentSocket = gpgAgentExtraSocket(env)
 
   return {
     uid,
@@ -59,7 +68,9 @@ export function hostSandboxEnvironment(args?: {
     home,
     sshAuthSock:
       sshAuthSock !== undefined && existsSync(sshAuthSock) ? sshAuthSock : undefined,
-    gpgAgentExtraSocket: gpgAgentExtraSocket(),
+    sshKnownHostsPath: existingFilePath(sshKnownHostsPath),
+    gpgAgentExtraSocket: gpgAgentSocket,
+    gpgPubringPath: gpgAgentSocket !== undefined ? existingFilePath(gpgPubringPath) : undefined,
     gitconfigPath: existsSync(gitconfigPath) ? gitconfigPath : undefined,
   }
 }
@@ -71,9 +82,6 @@ const imageOf = (resolution: ContainerResolution): string => {
   )
 }
 
-// The atlas home root holds auth.json, the vault key and harness.db, which never enter a
-// container — so the container gets these four fixed subtrees, one bind each, and the root
-// cannot be reached by widening the list.
 export const ATLAS_HOME_MOUNTED_SUBTREES = ['memory', 'skills', 'agents', 'projects'] as const
 
 export function mountedAtlasHomeSubtrees(args: {
@@ -114,11 +122,13 @@ export function sandboxConfigFromHost(args: {
     dockerSocket: process.env.ATLAS_DOCKER_SOCKET ?? DEFAULT_DOCKER_SOCKET,
     labelPrefix: args.labelPrefix,
     sshAuthSock: host.sshAuthSock,
+    sshKnownHostsPath: host.sshKnownHostsPath,
     gpgAgentExtraSocket: host.gpgAgentExtraSocket,
+    gpgPubringPath: host.gpgPubringPath,
     gitconfigPath: host.gitconfigPath,
     setup: args.resolution?.setup,
     start: args.resolution?.start,
-    mounts: args.resolution?.mounts,
+    mounts: mountsWithGitMetadata({ worktree: args.worktree, declared: args.resolution?.mounts ?? [] }),
     atlasHomeSubtrees:
       args.atlasHomeSubtrees ??
       mountedAtlasHomeSubtrees({ worktree: args.worktree, declared: args.resolution?.mounts }),

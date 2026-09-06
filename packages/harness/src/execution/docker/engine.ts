@@ -1,3 +1,4 @@
+import { consumeImagePull } from './image-pull'
 import { parseBoundPorts, type BoundPort, type PortBinding } from './ports'
 
 export class EngineRequestFailed extends Error {
@@ -167,12 +168,28 @@ export class DockerEngine {
     name: string
     body: CreateContainerBody
   }): Promise<{ id: string; warnings: readonly string[] }> {
+    const create = () => this.request({
+      method: 'POST',
+      path: '/containers/create',
+      query: { name: args.name },
+      body: args.body,
+    })
     const body = asRecord(
-      await this.request({
-        method: 'POST',
-        path: '/containers/create',
-        query: { name: args.name },
-        body: args.body,
+      await create().catch(async (error: unknown) => {
+        if (
+          !(error instanceof EngineRequestFailed) ||
+          error.status !== 404 ||
+          error.message !== `No such image: ${args.body.Image}`
+        ) {
+          throw error
+        }
+        const response = await this.raw({
+          method: 'POST',
+          path: '/images/create',
+          query: { fromImage: args.body.Image },
+        })
+        await consumeImagePull({ response, image: args.body.Image })
+        return create()
       }),
     )
     const warnings = Array.isArray(body.Warnings)

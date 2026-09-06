@@ -7,6 +7,7 @@ import {
 
 import { SIGKILL_GRACE_MS } from '../local-process'
 import { demuxExecStream } from './frames'
+import { execEnvFor } from './exec-environment'
 import { EngineRequestFailed, type ContainerDetails, type DockerEngine } from './engine'
 import { blockRefusal, portInBlock } from './ports'
 import {
@@ -50,23 +51,6 @@ const containerStopped = (error: unknown): boolean =>
   error instanceof EngineRequestFailed &&
   error.status === 409 &&
   error.message.includes('is not running')
-
-const execEnvFor = (args: {
-  requested: Record<string, string | undefined>
-  imageEnv: readonly string[]
-}): Record<string, string> => {
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(args.requested)) {
-    if (value !== undefined) env[key] = value
-  }
-
-  const imagePath = args.imageEnv
-    .find((one) => one.startsWith('PATH='))
-    ?.slice('PATH='.length)
-  if (env.PATH !== undefined && imagePath !== undefined) env.PATH = imagePath
-
-  return env
-}
 
 export class DockerProcessPort implements ProcessPort {
   private readonly engine: DockerEngine

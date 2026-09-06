@@ -34,8 +34,13 @@ export type ContainerResolution = {
 
 export type TextFileReader = (path: string) => Promise<string | undefined>
 
-export const DEFAULT_CONTAINER_SETUP =
-  'apt-get update && apt-get install -y --no-install-recommends git ripgrep gnupg ca-certificates && npx -y playwright install-deps chromium'
+export const DEFAULT_CONTAINER_SETUP = [
+  'apt-get update',
+  'apt-get install -y --no-install-recommends git ripgrep gnupg ca-certificates curl unzip openssh-client',
+  "bash -o pipefail -c 'curl -fsSL https://bun.sh/install | BUN_INSTALL=/usr/local bash'",
+  'bun --version',
+  'npx -y playwright install-deps chromium',
+].join(' && ')
 
 export const readTextFile: TextFileReader = async (path) => {
   try {
