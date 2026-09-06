@@ -4,7 +4,8 @@ import React, { act, useState } from 'react'
 
 import type { DiffStat } from '../../header-bar'
 import { ETerminalFocus } from '../../focus-store'
-import { useDiffStat, type DiffStatProbe } from '../use-diff-stat'
+import { useDiffStat } from '../use-diff-stat'
+import type { DiffStatProbe } from '../diff-stat-probe'
 import { settle, teardown } from '../../markdown/__tests__/harness'
 
 const RENDER_MS = 40

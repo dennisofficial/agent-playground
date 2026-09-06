@@ -28,11 +28,15 @@ const shortStatAgainstHead = async (args: {
   run: GitRunner
   directory: string
 }): Promise<DiffStat | null> => {
-  const againstHead = await args.run({ args: ['diff', '--shortstat', 'HEAD'], cwd: args.directory })
-  const result = againstHead.ok
-    ? againstHead
-    : await args.run({ args: ['diff', '--shortstat', EMPTY_TREE], cwd: args.directory })
-  return result.ok ? parseShortStat(result.stdout) : null
+  const { run, directory } = args
+  const againstHead = await run({ args: ['diff', '--shortstat', 'HEAD'], cwd: directory })
+  if (againstHead.ok) return parseShortStat(againstHead.stdout)
+
+  const head = await run({ args: ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd: directory })
+  if (head.ok) return null
+
+  const againstEmpty = await run({ args: ['diff', '--shortstat', EMPTY_TREE], cwd: directory })
+  return againstEmpty.ok ? parseShortStat(againstEmpty.stdout) : null
 }
 
 type LineCount = { mtimeMs: number; size: number; lines: number }

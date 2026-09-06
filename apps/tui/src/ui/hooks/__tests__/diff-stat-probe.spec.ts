@@ -12,6 +12,7 @@ const ok = (stdout: string): GitRun => ({ ok: true, stdout, stderr: '' })
 const failed = (stderr: string): GitRun => ({ ok: false, stdout: '', stderr })
 
 const withoutHead: GitRunner = async ({ args }) => {
+  if (args[0] === 'rev-parse') return failed('fatal: Needed a single revision')
   if (args.includes('HEAD')) return failed('fatal: ambiguous argument HEAD')
   if (args[0] === 'diff') return ok(' 1 file changed, 7 insertions(+)\n')
   return ok('')
@@ -22,6 +23,19 @@ describe('probeDiffStat on a repository without commits', () => {
     const probe = createDiffStatProbe({ run: withoutHead })
 
     expect(await probe({ directory: '/fresh/repo' })).toEqual({ added: 7, removed: 0 })
+  })
+
+  it('stays silent when HEAD exists but the diff fails for another reason', async () => {
+    const probe = createDiffStatProbe({
+      run: async ({ args }) => {
+        if (args[0] === 'rev-parse') return ok('4aebaa53ac9ecaf0ab43cabbd43b8ded3a362ced\n')
+        if (args.includes('HEAD')) return failed('fatal: unable to read tree')
+        if (args[0] === 'diff') return ok(' 100 files changed, 9999 insertions(+)\n')
+        return ok('')
+      },
+    })
+
+    expect(await probe({ directory: '/broken/repo' })).toBeNull()
   })
 })
 
