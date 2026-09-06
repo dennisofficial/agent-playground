@@ -23,12 +23,13 @@ describe('the notice slab', () => {
     expect(frame.trim()).toBe('')
   })
 
-  it('says the thing that happened, marked with its tone', async () => {
+  it('says the thing that happened, unmarked when the words already say it went fine', async () => {
     onTheEdge({ text: 'copied 3 lines' })
     const frame = await frameOf(slab(), WIDTH)
     dismissNotice()
 
-    expect(frame).toContain('✓ copied 3 lines')
+    expect(frame).toContain('copied 3 lines')
+    expect(frame).not.toContain('✓')
   })
 
   it('says only the newest when several stand at once', async () => {

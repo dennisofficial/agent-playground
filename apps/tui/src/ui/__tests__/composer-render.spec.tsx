@@ -358,8 +358,8 @@ describe('the composer notice slab', () => {
     dismissNotice()
 
     const head = frame.split('\n').find((row) => row.startsWith(RAIL_HEAD)) ?? ''
-    expect(head.indexOf('✓ copied 3 lines')).toBeGreaterThan(0)
-    expect(head.indexOf('✓ copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
+    expect(head.indexOf('copied 3 lines')).toBeGreaterThan(0)
+    expect(head.indexOf('copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
   })
 
   it('sets the notice into the top rule on a bordered edge too', async () => {
@@ -369,8 +369,8 @@ describe('the composer notice slab', () => {
     dismissNotice()
 
     const head = frame.split('\n').find((row) => row.startsWith(FRAME_TOP_LEFT)) ?? ''
-    expect(head.indexOf('✓ copied 3 lines')).toBeGreaterThan(0)
-    expect(head.indexOf('✓ copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
+    expect(head.indexOf('copied 3 lines')).toBeGreaterThan(0)
+    expect(head.indexOf('copied 3 lines')).toBeLessThan(head.indexOf(TITLE))
   })
 
   it('keeps the head row to the title alone while the notice is bound for the tray', async () => {
