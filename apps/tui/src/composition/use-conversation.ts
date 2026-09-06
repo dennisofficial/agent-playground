@@ -38,6 +38,7 @@ import { terminalTitleSequence } from './terminal-title'
 import { threadHandle } from './thread-slug'
 import { userSaidDraft } from './user-said'
 import { useCompaction } from './use-compaction'
+import { useDelegatedToolCalls } from '../ui/hooks/use-delegated-tool-calls'
 import { useSessionName } from './use-session-name'
 import { useAgentWake } from './use-agent-wake'
 import { useServiceWake } from './use-service-wake'
@@ -319,6 +320,8 @@ export function useConversation(args: {
     [events, app.tools],
   )
 
+  const delegatedToolCalls = useDelegatedToolCalls({ agents: app.agents, threadId })
+
   const workspace = useMemo((): {
     projectDirectory: string
     activeWorktree: ActiveWorktree | null
@@ -361,7 +364,7 @@ export function useConversation(args: {
     turn,
     now: clockReadableAt({ now, clock: turn }),
     working,
-    mutations,
+    mutations: mutations + delegatedToolCalls,
     contextTokens: used,
     pending: rows,
     handleSend,
