@@ -68,9 +68,13 @@ export type SidebarModel = {
   container?: SidebarContainer;
 };
 
+export type SidebarLimits = { cpus: number; memoryGb: number };
+
 export type SidebarContainer = {
   state: ESandboxState;
   image: string;
+  label: string;
+  limits?: SidebarLimits | undefined;
   ports: readonly BoundPort[];
   reason?: string | undefined;
 };
@@ -251,8 +255,15 @@ export function containerPillOf(args: {
 }): SidebarContainer | null {
   if (args.location === EExecutionLocation.Host) return null;
 
-  const { state, image, reason } = args.container;
-  return { state, image, ports: args.exposed, ...(reason === undefined ? {} : { reason }) };
+  const { state, image, label, limits, reason } = args.container;
+  return {
+    state,
+    image,
+    label,
+    ...(limits === undefined ? {} : { limits }),
+    ports: args.exposed,
+    ...(reason === undefined ? {} : { reason }),
+  };
 }
 
 export function withContainer(args: {

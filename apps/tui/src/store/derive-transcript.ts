@@ -118,7 +118,7 @@ function sandboxNoticeOf(sandbox: SidebarContainer | null): SandboxNoticeEntry[]
     return [
       {
         ...shared,
-        text: `starting the container — ${sandbox.image} can take minutes to pull the first time`,
+        text: `starting the container — ${sandbox.label} can take minutes to pull the first time`,
         failed: false,
       },
     ]

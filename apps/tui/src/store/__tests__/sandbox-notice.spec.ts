@@ -11,6 +11,7 @@ import { fixtureThreadId } from './fixture'
 const STARTING: SidebarContainer = {
   state: ESandboxState.Starting,
   image: 'node:22-slim',
+  label: 'node:22-slim',
   ports: [],
 }
 
@@ -31,6 +32,7 @@ describe('the transient sandbox line in the transcript', () => {
     const failed: SidebarContainer = {
       state: ESandboxState.Failed,
       image: 'node:22-slim',
+      label: 'node:22-slim',
       ports: [],
       reason: 'No such image: atlas-dev-no-such-image:latest',
     }
@@ -44,8 +46,8 @@ describe('the transient sandbox line in the transcript', () => {
 
   it('says nothing while the sandbox is running or stopped', () => {
     const quiet: readonly SidebarContainer[] = [
-      { state: ESandboxState.Running, image: 'node:22-slim', ports: [] },
-      { state: ESandboxState.Stopped, image: 'node:22-slim', ports: [] },
+      { state: ESandboxState.Running, image: 'node:22-slim', label: 'node:22-slim', ports: [] },
+      { state: ESandboxState.Stopped, image: 'node:22-slim', label: 'node:22-slim', ports: [] },
     ]
 
     for (const sandbox of quiet) {
@@ -73,7 +75,7 @@ describe('the transient sandbox line in the transcript', () => {
 
     expect(noticesOf(store.getSnapshot())).toHaveLength(1)
 
-    held = { state: ESandboxState.Running, image: 'node:22-slim', ports: [] }
+    held = { state: ESandboxState.Running, image: 'node:22-slim', label: 'node:22-slim', ports: [] }
     for (const listener of [...listeners]) listener()
 
     expect(noticesOf(store.getSnapshot())).toEqual([])

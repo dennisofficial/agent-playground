@@ -129,7 +129,7 @@ const benchApp = (args: {
     mcp: () => [],
     threadOpened: async () => {},
     sandbox: { noteBash: () => {}, stop: async () => false },
-    containerStatus: createSandboxStatusState({ image: 'unused' }),
+    containerStatus: createSandboxStatusState({ image: 'unused', label: 'unused' }),
     executionLocation: createExecutionLocationState({ initial: EExecutionLocation.Host }),
     executionPinned: false,
     close: async () => {},
