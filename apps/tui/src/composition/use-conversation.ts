@@ -35,7 +35,7 @@ import type { RecoveredAgents, ThreadModel } from '@dltech/atlas-harness'
 import { ECompactScope } from './compact-turn'
 import { useRevokeGrant } from './revoke-grant'
 import type { Renaming } from './session-rename'
-import { retractTrailingSaid } from './take-back'
+import { ETakeBack, takeBackTrailingSaid } from './take-back'
 import { terminalTitleSequence } from './terminal-title'
 import { threadHandle } from './thread-slug'
 import { userSaidDraft } from './user-said'
@@ -158,9 +158,7 @@ export function useConversation(args: {
         const dropped = droppedNotice({
           command: command.name,
           messages: command.losesWaiting
-            ? pending
-                .getSnapshot()
-                .filter((one) => one.kind === 'message' && !one.taken).length
+            ? pending.getSnapshot().filter((one) => one.kind === 'message').length
             : 0,
           commands: queuedCommands.slice(index + 1).map((one) => one.command.name),
         })
@@ -192,15 +190,6 @@ export function useConversation(args: {
     [pending],
   )
 
-  /**
-   * The rows that landed settle the queue the operator typed ahead into — a concern of whoever owns
-   * the composer, which is why the view reports the read rather than knowing what to do about it.
-   */
-  const afterRead = useCallback(
-    (read: readonly Event[]) => pending.settleTaken({ events: read }),
-    [pending],
-  )
-
   const view = useThreadView({
     app,
     threadId,
@@ -211,7 +200,6 @@ export function useConversation(args: {
     initial,
     paceReveal,
     projectEvents,
-    afterRead,
     onUsage: setReported,
   })
 
@@ -325,17 +313,18 @@ export function useConversation(args: {
   const retraction = useRef<Promise<unknown>>(Promise.resolve(true))
 
   const handleTakeBackPending = useCallback((): Promise<PendingSaid | null> | null => {
-    const last = pending.takeBackLast()
-    if (last === null) return null
-    if (!last.taken) return Promise.resolve(last)
+    const queuedBack = pending.takeBackLast()
+    if (queuedBack !== null) return Promise.resolve(queuedBack)
 
     const retracted = retraction.current.then(() =>
-      retractTrailingSaid({ log: app.log, threads: app.threads, agents: app.agents, threadId, text: last.text }),
+      takeBackTrailingSaid({ log: app.log, threads: app.threads, agents: app.agents, threadId }),
     )
     retraction.current = retracted
 
-    return retracted.then((retractedOk) => {
-      if (!retractedOk) {
+    return retracted.then((takeBack) => {
+      if (takeBack.type === ETakeBack.Nothing) return null
+
+      if (takeBack.type === ETakeBack.TooLate) {
         notify({
           key: 'take-back-too-late',
           tone: ENoticeTone.Warn,
@@ -346,9 +335,9 @@ export function useConversation(args: {
       }
 
       refresh()
-      return last
+      return takeBack.said
     })
-  }, [app.log, app.threads, pending, refresh, threadId])
+  }, [app.agents, app.log, app.threads, pending, refresh, threadId])
 
   /**
    * Shell endings are not dropped on the way out: they belong to the thread that started the shell,

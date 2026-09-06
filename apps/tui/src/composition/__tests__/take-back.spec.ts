@@ -10,7 +10,7 @@ import {
 import { toShellId } from '@dltech/atlas-harness'
 import { describe, expect, it } from 'bun:test'
 
-import { retractTrailingSaid } from '../take-back'
+import { ETakeBack, takeBackTrailingSaid } from '../take-back'
 import { fakeAgentRegistry } from './fake-agents'
 import { fakeThreadStore, fakeEventLog } from './fake-backend'
 
@@ -51,71 +51,62 @@ const SHELL_ENDED: EventDraft = {
 }
 
 describe('taking back a message the loop already drained', () => {
-  it('retracts it while it is still the last thing said, leaving the notices drained with it', async () => {
+  it('retracts it while it is still the last thing said, and hands its text back', async () => {
     const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'start' },
       SHELL_ENDED,
       { type: 'user-said', text: 'check the tests too' },
     ])
 
-    const retracted = await retractTrailingSaid({
-      log,
-      threads,
-      agents,
-      threadId: THREAD,
-      text: 'check the tests too',
-    })
+    const taken = await takeBackTrailingSaid({ log, threads, agents, threadId: THREAD })
 
-    expect(retracted).toBe(true)
+    expect(taken).toEqual({
+      type: ETakeBack.Taken,
+      said: { text: 'check the tests too', images: [] },
+    })
     expect((await log.read({ threadId: THREAD })).map((event) => event.type)).toEqual([
       'user-said',
       'background-shell-ended',
     ])
   })
 
-  it('retracts only the last of a taken batch, one press at a time', async () => {
+  it('retracts only the last of a drained batch, one press at a time', async () => {
     const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'first' },
       { type: 'user-said', text: 'second' },
     ])
 
-    expect(await retractTrailingSaid({ log, threads, agents, threadId: THREAD, text: 'second' })).toBe(true)
+    const second = await takeBackTrailingSaid({ log, threads, agents, threadId: THREAD })
+    expect(second.type).toBe(ETakeBack.Taken)
+    expect(second.type === ETakeBack.Taken && second.said.text).toBe('second')
     expect((await log.read({ threadId: THREAD })).map((event) => event.type)).toEqual(['user-said'])
 
-    expect(await retractTrailingSaid({ log, threads, agents, threadId: THREAD, text: 'first' })).toBe(true)
+    const first = await takeBackTrailingSaid({ log, threads, agents, threadId: THREAD })
+    expect(first.type === ETakeBack.Taken && first.said.text).toBe('first')
     expect(await log.read({ threadId: THREAD })).toEqual([])
   })
 
-  it('refuses once anything followed it — the agent has it now — and touches nothing', async () => {
+  it('finds nothing once the agent has answered — the edit is a follow-up now', async () => {
     const { log, threads, agents } = backedBy([
       { type: 'user-said', text: 'check the tests too' },
       { type: 'assistant-said', parts: [{ type: 'text', text: 'on it' }] },
     ])
 
-    const retracted = await retractTrailingSaid({
-      log,
-      threads,
-      agents,
-      threadId: THREAD,
-      text: 'check the tests too',
-    })
+    const taken = await takeBackTrailingSaid({ log, threads, agents, threadId: THREAD })
 
-    expect(retracted).toBe(false)
+    expect(taken.type).toBe(ETakeBack.Nothing)
     expect((await log.read({ threadId: THREAD })).length).toBe(2)
   })
 
-  it('refuses when the tail is a notice rather than the message', async () => {
-    const { log, threads, agents } = backedBy([{ type: 'user-said', text: 'check the tests too' }, SHELL_ENDED])
+  it('finds nothing when the tail is a notice rather than the message', async () => {
+    const { log, threads, agents } = backedBy([
+      { type: 'user-said', text: 'check the tests too' },
+      SHELL_ENDED,
+    ])
 
-    const retracted = await retractTrailingSaid({
-      log,
-      threads,
-      agents,
-      threadId: THREAD,
-      text: 'check the tests too',
-    })
+    const taken = await takeBackTrailingSaid({ log, threads, agents, threadId: THREAD })
 
-    expect(retracted).toBe(false)
+    expect(taken.type).toBe(ETakeBack.Nothing)
     expect((await log.read({ threadId: THREAD })).length).toBe(2)
   })
 })
