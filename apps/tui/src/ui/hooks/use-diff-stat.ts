@@ -33,6 +33,7 @@ export function useDiffStat(args: {
   projectDirectory: string
   working: boolean
   focus: ETerminalFocus
+  mutations: number
   probe?: DiffStatProbe
 }): DiffStat | null {
   const askGit = args.probe ?? probeDiffStat
@@ -63,6 +64,20 @@ export function useDiffStat(args: {
     from: args.focus === ETerminalFocus.Blurred,
     to: args.focus === ETerminalFocus.Focused,
   })
+
+  const countedMutations = useRef(args.mutations)
+  useEffect(() => {
+    const grew = args.mutations > countedMutations.current
+    countedMutations.current = args.mutations
+    if (!grew) return
+
+    let owned = true
+    void probe(() => owned)
+
+    return () => {
+      owned = false
+    }
+  }, [probe, args.mutations])
 
   return stat
 }

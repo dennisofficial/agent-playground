@@ -19,6 +19,7 @@ import {
   createSettingsService,
   EMPTY_AGENT_TYPE_CATALOG,
   FileBrowser,
+  InMemoryToolRegistry,
   MemorySecretsStore,
   MemorySettingsStore,
   PublishingTurnRunner,
@@ -82,6 +83,7 @@ const benchApp = (args: {
   return {
     config: { model: undefined, open: { mode: EOpenMode.New }, cwd: args.root, executionLocation: undefined },
     workspace: { workspace: args.root, repo: null },
+    tools: new InMemoryToolRegistry([]),
     markActiveThread: (next) => {
       active = next
     },

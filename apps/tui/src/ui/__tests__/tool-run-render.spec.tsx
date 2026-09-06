@@ -165,6 +165,44 @@ describe('a run of tool calls in the transcript', () => {
     expect(frame).toContain('const two = 2')
   })
 
+  it('stacks two passes at one file into a single card with a seam between them', async () => {
+    const pass = (marker: string, at: number) =>
+      call({
+        name: 'edit',
+        output: {
+          path: `${CWD}/src/a.ts`,
+          diff: `--- a/src/a.ts\n+++ b/src/a.ts\n@@ -${at},1 +${at},1 @@\n-before\n+${marker}\n`,
+        },
+      })
+    const frame = await frameOf(runOf([pass('newRef', 10), pass('newTarget', 20)]), undefined, TALL)
+
+    expect(frame.split('\n').filter((row) => row.includes('Edited src/a.ts'))).toHaveLength(1)
+    expect(frame).toContain('+2 −2')
+
+    const rows = frame.split('\n')
+    const first = rows.findIndex((row) => row.includes('newRef'))
+    const seam = rows.findIndex((row) => row.includes('⋯'))
+    const second = rows.findIndex((row) => row.includes('newTarget'))
+    expect(first).toBeGreaterThanOrEqual(0)
+    expect(seam).toBeGreaterThan(first)
+    expect(second).toBeGreaterThan(seam)
+  })
+
+  it('keeps passes at different files in their own cards', async () => {
+    const pass = (path: string, marker: string) =>
+      call({
+        name: 'edit',
+        output: {
+          path: `${CWD}/${path}`,
+          diff: `--- a/${path}\n+++ b/${path}\n@@ -1,1 +1,1 @@\n-before\n+${marker}\n`,
+        },
+      })
+    const frame = await frameOf(runOf([pass('src/a.ts', 'newRef'), pass('src/b.ts', 'newTarget')]))
+
+    expect(frame).toContain('Edited src/a.ts')
+    expect(frame).toContain('Edited src/b.ts')
+  })
+
   it('shows a created file in the panel a diff would have taken, without the diff colours', async () => {
     const frame = await frameOf(
       runOf([

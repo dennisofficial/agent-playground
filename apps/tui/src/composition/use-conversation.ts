@@ -3,6 +3,7 @@ import {
   contextTokens,
   ECompactionAnchor,
   projectDirectoryOf,
+  treeMutationsOf,
   type ActiveWorktree,
   type ThreadId,
   type Event,
@@ -65,6 +66,7 @@ export type Conversation = {
   turn: TurnClock
   now: number
   working: boolean
+  mutations: number
   contextTokens: number
   projectDirectory: string
   activeWorktree: ActiveWorktree | null
@@ -312,6 +314,11 @@ export function useConversation(args: {
 
   const used = useMemo(() => contextTokens({ reported, events }), [reported, events])
 
+  const mutations = useMemo(
+    () => treeMutationsOf({ events, effects: (name) => app.tools.find(name)?.effect }),
+    [events, app.tools],
+  )
+
   const workspace = useMemo((): {
     projectDirectory: string
     activeWorktree: ActiveWorktree | null
@@ -354,6 +361,7 @@ export function useConversation(args: {
     turn,
     now: clockReadableAt({ now, clock: turn }),
     working,
+    mutations,
     contextTokens: used,
     pending: rows,
     handleSend,

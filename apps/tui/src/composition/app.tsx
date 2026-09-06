@@ -488,6 +488,7 @@ function Workspace(props: {
     projectDirectory: conversation.projectDirectory,
     working: conversation.working,
     focus: useTerminalFocus(),
+    mutations: conversation.mutations,
   })
   const docked = wide && !welcome
   const contentWidth = contentWidthOf({ width, sidebarWidth, docked })

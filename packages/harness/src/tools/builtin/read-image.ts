@@ -3,17 +3,12 @@ import {
   imageSize,
   MAX_INLINE_BYTES,
   planDelivery,
-  planRegion,
-  regionSaving,
   type FileSystemPort,
-  type ImageRegion,
   type ImageSize,
   type ModelPart,
   type SupportedImageMediaType,
   type ToolOutcome,
 } from '@dltech/atlas-core'
-
-import { croppedImage, isCropped } from '../../images/crop'
 
 export type ImageReadOutput = {
   path: string
@@ -98,60 +93,12 @@ const inlined = (args: {
   }
 }
 
-function croppedRead(args: {
-  path: string
-  region: ImageRegion
-  size: ImageSize
-  bytes: Uint8Array
-  mediaType: SupportedImageMediaType
-}): ToolOutcome {
-  const plan = planRegion({ size: args.size, region: args.region })
-  if (!plan.ok) return { ok: false, reason: `${args.path}: ${plan.reason}.` }
-
-  const crop = croppedImage({ bytes: args.bytes, mediaType: args.mediaType, region: plan.region })
-  if (!isCropped(crop)) {
-    return { ok: false, reason: `${args.path} could not be cropped: ${crop.reason}.` }
-  }
-
-  const saving = regionSaving({ size: args.size, region: crop.size })
-  const trimmed = plan.clamped ? ', trimmed to fit the image' : ''
-  const summary =
-    `${args.path} cropped to ${crop.size.width}×${crop.size.height} at ` +
-    `(${plan.region.x}, ${plan.region.y})${trimmed} — ${saving.cropped} visual tokens ` +
-    `against ${saving.whole} for the whole ${args.size.width}×${args.size.height} image.`
-
-  return {
-    ok: true,
-    output: {
-      path: args.path,
-      mediaType: crop.mediaType,
-      byteLength: crop.bytes.byteLength,
-      width: crop.size.width,
-      height: crop.size.height,
-      inlined: true,
-    } satisfies ImageReadOutput,
-    modelText: summary,
-    modelParts: [
-      { type: 'text', text: summary },
-      {
-        type: 'image',
-        data: Buffer.from(crop.bytes).toString('base64'),
-        mediaType: crop.mediaType,
-        source: args.path,
-        width: crop.size.width,
-        height: crop.size.height,
-      },
-    ],
-  }
-}
-
 export async function readImage(args: {
   path: string
   mediaType: SupportedImageMediaType
   byteLength: number
   head: Uint8Array
   files: FileSystemPort
-  region?: ImageRegion | undefined
 }): Promise<ToolOutcome> {
   const { path, mediaType, byteLength } = args
 
@@ -159,13 +106,6 @@ export async function readImage(args: {
     byteLength <= MAX_INLINE_BYTES ? await args.files.readBytes({ path }) : args.head
 
   const size = imageSize({ bytes: readable, mediaType })
-
-  if (args.region !== undefined) {
-    if (size === null) {
-      return { ok: false, reason: `${path} could not be measured, so a region cannot be cut from it.` }
-    }
-    return croppedRead({ path, region: args.region, size, bytes: readable, mediaType })
-  }
 
   const plan = planDelivery({ byteLength, width: size?.width, height: size?.height })
 

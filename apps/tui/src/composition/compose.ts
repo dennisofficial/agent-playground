@@ -247,6 +247,7 @@ async function claimOpenedWorktree(args: {
 export type AtlasApp = {
   config: AtlasConfig
   workspace: WorkspaceIdentity
+  tools: ToolRegistry
   markActiveThread: (active: ActiveConversation) => void
   activeThread: () => ActiveConversation | null
   titler: SessionTitler
@@ -750,6 +751,7 @@ export async function composeAtlas(args: {
   return {
     config,
     workspace,
+    tools: container.resolve(portToken(ToolRegistry)),
     markActiveThread: (active) => {
       activeThread = active
     },

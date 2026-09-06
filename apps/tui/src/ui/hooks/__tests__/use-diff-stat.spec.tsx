@@ -15,6 +15,7 @@ type Probe = {
   setDirectory: ((directory: string) => void) | null
   setWorking: ((working: boolean) => void) | null
   setFocused: ((focus: ETerminalFocus) => void) | null
+  setMutations: ((mutations: number) => void) | null
 }
 
 function Watcher(props: {
@@ -25,14 +26,17 @@ function Watcher(props: {
   const [directory, setDirectory] = useState(props.directory)
   const [working, setWorking] = useState(false)
   const [focus, setFocused] = useState(ETerminalFocus.Unknown)
+  const [mutations, setMutations] = useState(0)
 
   props.probe.setDirectory = setDirectory
   props.probe.setWorking = setWorking
   props.probe.setFocused = setFocused
+  props.probe.setMutations = setMutations
   props.probe.stat = useDiffStat({
     projectDirectory: directory,
     working,
     focus,
+    mutations,
     probe: props.askGit,
   })
 
@@ -44,7 +48,13 @@ async function mounted(args: { askGit: DiffStatProbe; directory?: string }): Pro
   flush: () => Promise<void>
   done: () => Promise<void>
 }> {
-  const probe: Probe = { stat: undefined, setDirectory: null, setWorking: null, setFocused: null }
+  const probe: Probe = {
+    stat: undefined,
+    setDirectory: null,
+    setWorking: null,
+    setFocused: null,
+    setMutations: null,
+  }
 
   const setup = await testRender(
     <Watcher probe={probe} askGit={args.askGit} directory={args.directory ?? '/work/atlas'} />,
@@ -138,6 +148,23 @@ describe('what makes useDiffStat ask git again', () => {
       act(() => probe.setFocused?.(ETerminalFocus.Focused))
       await flush()
       expect(askGit.calls).toEqual(['/work/atlas', '/work/atlas'])
+    } finally {
+      await done()
+    }
+  })
+
+  it('re-probes as the mutation count grows mid-turn', async () => {
+    const askGit = countingProbe({ added: 3, removed: 1 })
+    const { probe, flush, done } = await mounted({ askGit })
+
+    try {
+      act(() => probe.setMutations?.(1))
+      await flush()
+      expect(askGit.calls).toHaveLength(2)
+
+      act(() => probe.setMutations?.(2))
+      await flush()
+      expect(askGit.calls).toHaveLength(3)
     } finally {
       await done()
     }
