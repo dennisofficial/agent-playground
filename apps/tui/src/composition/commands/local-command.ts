@@ -26,6 +26,8 @@ export type LocalCommand = CommandSpec & {
   kind: ECommandKind.Local
   timing: ECommandTiming
   echo: ECommandEcho
+  /** True when running it strands whatever else was queued: it swaps the thread out or the process. */
+  dropsQueue?: boolean
   run: (args: { argumentText: string }) => CommandEffect | Promise<CommandEffect>
 }
 

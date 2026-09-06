@@ -8,18 +8,21 @@ import {
 
 import { mentionedFileDrafts, type FileLoader } from '../mentioned-files'
 import { ECommandEffect, ECommandTiming, type LocalCommand } from './local-command'
+import type { QueuedSettled } from './settled-queue'
 
 export type LoadedSkill = { spec: CommandSpec; body: string }
 
 export enum EDispatch {
   Ran = 'ran',
   Refused = 'refused',
+  Queued = 'queued',
   Send = 'send',
 }
 
 export type Dispatch =
   | { type: EDispatch.Ran; notice?: string | undefined }
   | { type: EDispatch.Refused; reason: string }
+  | { type: EDispatch.Queued; entry: QueuedSettled }
   | { type: EDispatch.Send; text: string; drafts: readonly EventDraft[] }
 
 export function commandSpecs(args: {
@@ -28,14 +31,6 @@ export function commandSpecs(args: {
 }): readonly CommandSpec[] {
   return [...args.commands, ...args.skills.map((skill) => skill.spec)]
 }
-
-/**
- * True of every settled command, which is the point: `/compact` rewrites the history, `/new` and
- * `/resume` swap the thread out from under it. Naming the shared consequence keeps one message
- * honest for all three.
- */
-export const MID_TURN = (name: string): string =>
-  `/${name} would change what this turn is reading, so it has to wait for the turn to finish`
 
 export async function dispatchSubmission(args: {
   text: string
@@ -56,7 +51,14 @@ export async function dispatchSubmission(args: {
     if (command === undefined) return { type: EDispatch.Send, text: args.text, drafts: [] }
 
     if (args.working === true && command.timing === ECommandTiming.Settled) {
-      return { type: EDispatch.Refused, reason: MID_TURN(command.name) }
+      return {
+        type: EDispatch.Queued,
+        entry: {
+          name: command.name,
+          dropsQueue: command.dropsQueue === true,
+          run: () => command.run({ argumentText: invoked.argumentText }),
+        },
+      }
     }
 
     const effect = await command.run({ argumentText: invoked.argumentText })
