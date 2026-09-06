@@ -153,10 +153,11 @@ throwaway probe that produced the numbers is `apps/tui/scripts/proto-shimmer.tsx
   `.atlas/worktrees/<slug>` from `origin/main` on a `dennis/<slug>` branch, do the work there,
   then ship it as a PR: push, `gh pr create`, and merge with plain `gh pr merge --squash` — no
   review gate, and never `--delete-branch`, which fails on the local `main` checkout after the
-  merge has already landed. Remove the worktree and delete the local branch afterwards. The
-  read-only main checkout is load-bearing, not hygiene: `atlas-dev` runs from the main tree and
-  flags every running terminal as stale the moment the tree moves, so direct edits in the main
-  checkout turn that notice into noise.
+  merge has already landed. Remove the worktree and delete the local branch afterwards, then
+  `git pull --ff-only` in the main checkout: `atlas-dev` runs from the main tree, and until main
+  is pulled every running terminal is a release behind what was just shipped. The read-only main
+  checkout is load-bearing, not hygiene: `atlas-dev` flags every running terminal as stale the
+  moment the tree moves, so direct edits in the main checkout turn that notice into noise.
 - Never force-push, never `--no-verify`.
 - **Never use `git stash`** unless explicitly asked.
 - Conventional commits: `<type>(<scope>): <description>` — imperative, lowercase.
