@@ -8,34 +8,28 @@ type NoticeKind = EPendingKind.BackgroundShell | EPendingKind.Agent | EPendingKi
 
 type PendingRun =
   | { kind: EPendingKind.Operator; id: string; said: readonly string[] }
-  | { kind: EPendingKind.Command; id: string; text: string }
   | { kind: NoticeKind; id: string; text: string; failed: boolean }
 
 /**
- * Consecutive queued messages share one panel, the way the transcript gives one panel to
- * consecutive things the operator said — four one-word messages must not stack four panels high.
+ * Consecutive queued submissions share one panel, the way the transcript gives one panel to
+ * consecutive things the operator said — a queued command is one of those, so it reads the same.
  */
 export function pendingRuns(rows: readonly PendingRow[]): readonly PendingRun[] {
   const runs: PendingRun[] = []
 
   for (const row of rows) {
-    if (row.kind === EPendingKind.Command) {
-      runs.push({ kind: row.kind, id: row.id, text: row.text })
+    if (row.kind === EPendingKind.Operator || row.kind === EPendingKind.Command) {
+      const open = runs.at(-1)
+      if (open?.kind === EPendingKind.Operator) {
+        open.said = [...open.said, row.text]
+        continue
+      }
+
+      runs.push({ kind: EPendingKind.Operator, id: row.id, said: [row.text] })
       continue
     }
 
-    if (row.kind !== EPendingKind.Operator) {
-      runs.push({ kind: row.kind, id: row.id, text: row.text, failed: row.failed })
-      continue
-    }
-
-    const open = runs.at(-1)
-    if (open?.kind === EPendingKind.Operator) {
-      open.said = [...open.said, row.text]
-      continue
-    }
-
-    runs.push({ kind: row.kind, id: row.id, said: [row.text] })
+    runs.push({ kind: row.kind, id: row.id, text: row.text, failed: row.failed })
   }
 
   return runs
@@ -53,25 +47,8 @@ export function PendingBlock(props: {
         if (run.kind === EPendingKind.Operator) {
           return <UserBlock key={run.id} said={run.said} width={props.width} takeBack />
         }
-        if (run.kind === EPendingKind.Command) {
-          return <QueuedCommandRow key={run.id} text={run.text} width={props.width} />
-        }
         return <WaitingNoticeRow key={run.id} text={run.text} failed={run.failed} width={props.width} />
       })}
-    </box>
-  )
-}
-
-function QueuedCommandRow(props: { text: string; width: number }): React.ReactNode {
-  const inner = Math.max(1, props.width - TRANSCRIPT_INSET)
-
-  return (
-    <box flexDirection="column" marginBottom={1} flexShrink={0}>
-      <text wrapMode="none" width={inner} flexShrink={0}>
-        <span fg={theme.accent}>{`${glyph.block} `}</span>
-        <span fg={theme.body}>{props.text}</span>
-        <span fg={theme.meta}>{' — runs when the turn finishes'}</span>
-      </text>
     </box>
   )
 }
