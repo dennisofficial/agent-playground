@@ -16,19 +16,19 @@ const PROJECT = '/Users/dennis/Developer/atlas/.atlas/worktrees/highlight-loop'
 
 const hook = new OutsideProjectHook()
 
-const callOf = (args: { name: string; input: unknown }): ToolCall => ({
+const callOf = (args: { name: string; input: unknown; effect?: EToolEffect | undefined }): ToolCall => ({
   callId: toCallId('call-1'),
   name: args.name,
   input: args.input,
-  effect: EToolEffect.Write,
+  effect: args.effect ?? EToolEffect.Write,
   threadId: toThreadId('thread-1'),
 })
 
 const OK: ToolOutcome = { ok: true, output: {}, modelText: 'ok' }
 
-const run = (args: { name?: string; input?: unknown; result?: ToolOutcome }) =>
+const run = (args: { name?: string; input?: unknown; result?: ToolOutcome; effect?: EToolEffect }) =>
   hook.run({
-    call: callOf({ name: args.name ?? 'write', input: args.input ?? {} }),
+    call: callOf({ name: args.name ?? 'write', input: args.input ?? {}, effect: args.effect }),
     result: args.result ?? OK,
     projectDirectory: PROJECT,
     signal: NEVER_ABORTED,
@@ -63,14 +63,28 @@ describe('OutsideProjectHook', () => {
     }
   })
 
-  it('nudges on edits too, not only writes', async () => {
-    const outcome = await run({ name: 'edit', input: { path: '/Users/dennis/Developer/comp-v3/x.ts' } })
+  it('nudges on edit and multi_edit too, not only write', async () => {
+    for (const name of ['edit', 'multi_edit']) {
+      const outcome = await run({ name, input: { path: '/Users/dennis/Developer/comp-v3/x.ts' } })
 
-    expect(outcome.additionalContext).toContain('/Users/dennis/Developer/comp-v3/x.ts')
+      expect(outcome.additionalContext).toContain('/Users/dennis/Developer/comp-v3/x.ts')
+    }
   })
 
-  it('ignores tools that do not mutate files', async () => {
-    const outcome = await run({ name: 'read', input: { path: '/Users/dennis/Developer/comp-v3/x.ts' } })
+  it('ignores effects that do not write, even when the call names a path', async () => {
+    for (const effect of [EToolEffect.Read, EToolEffect.Destructive]) {
+      const outcome = await run({
+        name: 'read',
+        input: { path: '/Users/dennis/Developer/comp-v3/x.ts' },
+        effect,
+      })
+
+      expect(outcome).toEqual({})
+    }
+  })
+
+  it('ignores a write-effect call whose input carries no path, like agent_spawn', async () => {
+    const outcome = await run({ name: 'agent_spawn', input: { brief: 'look around' } })
 
     expect(outcome).toEqual({})
   })

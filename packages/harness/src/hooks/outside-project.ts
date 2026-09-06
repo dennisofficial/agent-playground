@@ -1,12 +1,11 @@
 import {
   AfterToolHook,
   EStage,
+  EToolEffect,
   outsideProjectNotice,
   type AfterTool,
   type HookOrder,
 } from '@dltech/atlas-core'
-
-const FILE_MUTATING_TOOLS: ReadonlySet<string> = new Set(['write', 'edit'])
 
 const declaredPath = (input: unknown): string | undefined => {
   if (typeof input !== 'object' || input === null || !('path' in input)) return undefined
@@ -20,7 +19,7 @@ export class OutsideProjectHook extends AfterToolHook {
 
   readonly run: AfterTool = async ({ call, result, projectDirectory }) => {
     if (!result.ok) return {}
-    if (!FILE_MUTATING_TOOLS.has(call.name)) return {}
+    if (call.effect !== EToolEffect.Write) return {}
 
     const path = declaredPath(call.input)
     if (path === undefined) return {}

@@ -1002,13 +1002,15 @@ path outside the project directory, and it was deleted rather than kept: `bash` 
 fields, so it never applied there, and an agent that can `cat` a file it may not `edit` is being told
 which tool to use, not being made safe.
 
-What stands in the wall's place is a nudge. `OutsideProjectHook` watches successful `write`/`edit`
-calls, and when the target lands outside the project directory — and outside the temp roots and the
-dot-paths straight under home, where memory, skills and one-off config writes legitimately live — it
-returns `additionalContext` naming the path it wrote and the session's actual directory, and pointing
-at `enter_worktree`. The decision is pure (`core/policy/outside-project`), so the exemption list is
-tested rather than remembered, and the delivery rides the `context-loaded` seam, so a repeated slip
-to the same path dedupes instead of stacking.
+What stands in the wall's place is a nudge. `OutsideProjectHook` watches successful calls with
+`EToolEffect.Write` — `write`, `edit`, `multi_edit`, and any future file tool, since the gate is the
+effect and a `path` in the input rather than a name list — and when the target lands outside the
+project directory, and outside the temp roots and the dot-paths straight under home (where memory,
+skills and one-off config writes legitimately live), it returns `additionalContext` naming the path
+it wrote and the session's actual directory, and pointing at `enter_worktree`. The decision is pure
+(`core/policy/outside-project`), so the exemption list is tested rather than remembered, and the
+delivery rides the `context-loaded` seam, so a repeated slip to the same path dedupes instead of
+stacking.
 
 **Two stores sit outside all three timelines, and neither is ever read back to rebuild state.**
 
