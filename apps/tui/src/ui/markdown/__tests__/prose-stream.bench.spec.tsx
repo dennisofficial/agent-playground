@@ -83,14 +83,18 @@ describe.skipIf(!benching)('streaming prose bench', () => {
     const setup = await testRender(<Streamed />, { width: 80, height: 40 })
     try {
       await setup.flush()
-      const started = performance.now()
+      let reacting = 0
+      let flushing = 0
       for (const cut of chunked(REPLY, CHUNK)) {
+        const pushed = performance.now()
         await act(async () => void push?.(cut))
+        reacting += performance.now() - pushed
+        const flushed = performance.now()
         await setup.flush()
+        flushing += performance.now() - flushed
       }
-      const total = performance.now() - started
       console.log(
-        `[bench] MarkdownView end to end: ${total.toFixed(0)} ms over ${chunked(REPLY, CHUNK).length} chunks`,
+        `[bench] MarkdownView over ${chunked(REPLY, CHUNK).length} chunks: react render+commit ${reacting.toFixed(0)} ms, test renderer flush ${flushing.toFixed(0)} ms`,
       )
     } finally {
       await teardown(setup)
