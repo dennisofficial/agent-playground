@@ -16,6 +16,10 @@ const bundledAssetLoaders: Record<string, () => Promise<FileImportModule>> = {
     import('./assets/bash/highlights.scm' as string, { with: { type: 'file' } }),
   'assets/bash/tree-sitter-bash.wasm': () =>
     import('./assets/bash/tree-sitter-bash.wasm' as string, { with: { type: 'file' } }),
+  'assets/dockerfile/highlights.scm': () =>
+    import('./assets/dockerfile/highlights.scm' as string, { with: { type: 'file' } }),
+  'assets/dockerfile/tree-sitter-dockerfile.wasm': () =>
+    import('./assets/dockerfile/tree-sitter-dockerfile.wasm' as string, { with: { type: 'file' } }),
   'assets/json/highlights.scm': () =>
     import('./assets/json/highlights.scm' as string, { with: { type: 'file' } }),
   'assets/json/tree-sitter-json.wasm': () =>
@@ -108,6 +112,14 @@ const defaultParserDescriptors: readonly DefaultParserDescriptor[] = [
       highlights: ['assets/bash/highlights.scm'],
     },
     wasm: 'assets/bash/tree-sitter-bash.wasm',
+  },
+  {
+    filetype: 'dockerfile',
+    aliases: ['docker'],
+    queries: {
+      highlights: ['assets/dockerfile/highlights.scm'],
+    },
+    wasm: 'assets/dockerfile/tree-sitter-dockerfile.wasm',
   },
   {
     filetype: 'json',

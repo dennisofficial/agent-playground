@@ -21,6 +21,11 @@ const SAMPLES: Record<string, { source: string; expect: string[] }> = {
     source: '#!/usr/bin/env bash\nset -euo pipefail\nfor f in *.txt; do\n  echo "$f"\ndone\n',
     expect: ['comment', 'keyword', 'string'],
   },
+  dockerfile: {
+    source:
+      '# syntax=docker/dockerfile:1\nFROM node:22-alpine AS base\nWORKDIR /app\nENV NODE_ENV=production\nCOPY package.json ./\nRUN npm ci && npm run build\nEXPOSE 3000\nCMD ["node", "dist/main.js"]\n',
+    expect: ['comment', 'keyword', 'string', 'operator'],
+  },
   json: {
     source: '{\n  "name": "atlas",\n  "count": 3,\n  "ok": true\n}\n',
     expect: ['string.special.key', 'string', 'number'],

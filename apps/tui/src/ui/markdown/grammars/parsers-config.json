@@ -36,6 +36,19 @@
       }
     },
     {
+      "filetype": "dockerfile",
+      "aliases": [
+        "docker"
+      ],
+      "$comment": "Built locally rather than downloaded — no dockerfile wasm is published: npm's tree-sitter-dockerfile is a 0.0.1-security placeholder and the grammar ships no release artefacts. The build script is apps/tui/scripts/build-dockerfile-grammar.ts; it needs Docker and only runs when the wasm is missing, which for a normal checkout is never. The query is pinned to the same grammar tag the wasm was built from, per the same-version rule above.",
+      "wasm": "src/ui/markdown/grammars/vendor/tree-sitter-dockerfile.wasm",
+      "queries": {
+        "highlights": [
+          "https://cdn.jsdelivr.net/gh/camdencheek/tree-sitter-dockerfile@v0.2.0/queries/highlights.scm"
+        ]
+      }
+    },
+    {
       "filetype": "json",
       "wasm": "https://cdn.jsdelivr.net/npm/tree-sitter-json@0.24.8/tree-sitter-json.wasm",
       "queries": {
