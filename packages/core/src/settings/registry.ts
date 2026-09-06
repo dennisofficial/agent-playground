@@ -34,6 +34,7 @@ export enum ESettingId {
   ComposerEdge = 'appearance.composerEdge',
   ClassifierMode = 'classifier.mode',
   NoticeSeconds = 'notifications.seconds',
+  NoticePosition = 'notifications.position',
   WebSearchBackend = 'web.searchBackend',
   WebSearchKey = 'web.searchKey',
   ModelId = 'model.id',
@@ -353,6 +354,21 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
     maximum: 10,
     step: 1,
     unit: ' s',
+  },
+  {
+    id: ESettingId.NoticePosition,
+    page: ESettingPage.General,
+    group: 'Notifications',
+    label: 'Where notices land',
+    description:
+      'Where a notification goes when Atlas has something to say — a copy confirmed, a boot warning. Tray floats it on a row of its own above the composer, where up to three can stack at once. Composer sets only the newest into the composer\u2019s top edge, at the left end of the line the session title sits on — the spot notices had before the tray existed — so a notice never costs a row.',
+    environmentVariable: 'ATLAS_NOTICE_POSITION',
+    kind: ESettingKind.Choice,
+    fallback: 'tray',
+    options: [
+      { value: 'tray', label: 'tray', detail: 'shipped' },
+      { value: 'composer', label: 'composer edge', detail: 'newest only' },
+    ],
   },
   {
     id: ESettingId.AutoRestart,

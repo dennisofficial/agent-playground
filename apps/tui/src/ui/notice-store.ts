@@ -18,6 +18,16 @@ export const NOTICE_KEY_CLASSIFIER_OFFLINE = 'classifier-offline'
 
 export const NOTICE_KEY_LOST_AGENTS = 'lost-agents'
 
+export enum ENoticePosition {
+  Tray = 'tray',
+  Composer = 'composer',
+}
+
+export const SHIPPED_NOTICE_POSITION = ENoticePosition.Tray
+
+export const noticePositionOf = (value: string): ENoticePosition =>
+  value === ENoticePosition.Composer ? ENoticePosition.Composer : ENoticePosition.Tray
+
 const listeners = new Set<() => void>()
 
 let notices: readonly Notice[] = []

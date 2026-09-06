@@ -7,8 +7,9 @@ import { mentionStyleId, mentionSyntaxStyle } from '../mention-style'
 import { useAppearance } from '../hooks/use-appearance'
 import type { DraftControls } from '../hooks/use-draft'
 import { glyph, theme } from '../theme'
-import { composerTitle } from './composer-title'
+import { composerNoticeCells, composerTitle } from './composer-title'
 import { EFrameRule, Frame, FRAME_INSET, FRAME_PAD } from './frame'
+import { NoticeSlab } from './notice-slab'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
 
 const DEFAULT_MAX_ROWS = 8
@@ -81,6 +82,7 @@ function DerivedComposer(props: {
   focused?: boolean
   title?: string
   accent?: string
+  notices?: boolean
   highlights?: readonly HighlightSpan[]
   onCursorMoved?: (() => void) | undefined
 }): React.ReactNode {
@@ -206,6 +208,13 @@ function DerivedComposer(props: {
       ? null
       : composerTitle({ title: props.title, width: props.width, badge, edge })
 
+  const label =
+    props.notices === true
+      ? (bg: string): React.ReactNode => (
+          <NoticeSlab bg={bg} cells={composerNoticeCells({ width: props.width, badge, title, edge })} />
+        )
+      : null
+
   const draft = (
     <textarea
       ref={editor}
@@ -240,6 +249,7 @@ function DerivedComposer(props: {
               ),
             }
           : {})}
+        {...(label === null ? {} : { label: label(theme.appBg) })}
         {...(badge === null
           ? {}
           : { badge: <text fg={theme.hint} bg={theme.appBg}>{` ${badge} `}</text> })}
@@ -259,6 +269,7 @@ function DerivedComposer(props: {
       width={props.width}
       rail={rail}
       fill={theme.panelBg}
+      {...(label === null ? {} : { label: label(theme.panelBg) })}
       {...(badge === null
         ? {}
         : { badge: <text fg={theme.hint} bg={theme.panelBg}>{` ${badge} `}</text> })}

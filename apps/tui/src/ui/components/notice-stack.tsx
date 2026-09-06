@@ -8,13 +8,13 @@ export const NOTICE_MIN_CELLS = 8
 
 const SLAB_PAD = 2
 
-const toneInk = (tone: ENoticeTone): string => {
+export const toneInk = (tone: ENoticeTone): string => {
   if (tone === ENoticeTone.Warn) return theme.warn
   if (tone === ENoticeTone.Info) return theme.hover
   return theme.meta
 }
 
-const toneMark = (tone: ENoticeTone): string => {
+export const toneMark = (tone: ENoticeTone): string => {
   if (tone === ENoticeTone.Warn) return glyph.warning
   if (tone === ENoticeTone.Info) return glyph.marker
   return glyph.passed
