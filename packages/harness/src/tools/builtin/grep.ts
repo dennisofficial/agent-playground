@@ -66,6 +66,7 @@ function ripgrepSearcher(args: SearchArguments & { binary: string }): Searcher {
     name: 'ripgrep',
     command: [
       args.binary,
+      '--with-filename',
       '--hidden',
       '--follow',
       ...VERSION_CONTROL_DIRECTORIES.flatMap((directory) => ['--glob', `!${directory}`]),
