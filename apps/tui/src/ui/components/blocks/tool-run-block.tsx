@@ -31,6 +31,7 @@ import { tailOfPath } from '../../paths'
 import { spinnerFrame, theme, TRANSCRIPT_INSET } from '../../theme'
 import { markPaint, SHIPPED_MARK, type EMark } from '../../tool-marks'
 import { moreKey, sentenceKey } from './tool-run-expansion'
+import { MergedBlock } from './tool-run-merged'
 import { GAP, Row, RunDetail, STREAM_TAIL, Streaming } from './tool-run-rows'
 
 const NARROWEST_BAND = 24
@@ -171,6 +172,7 @@ const AloneBlock = React.memo(function AloneBlock(props: {
  * much as a formula that is right. What it must get correct is the DIRECTION of every change.
  */
 const rowsOf = (segment: Segment, opened: ReadonlySet<string>): number => {
+  if (segment.kind === 'merged') return 2
   if (segment.kind === 'alone') return settled(segment.read.call) ? 2 : 2 + STREAM_TAIL
   if (segment.reads.some((read) => !settled(read.call))) return 2 + STREAM_TAIL
   return 2 + (opened.has(sentenceKey(segment.key)) ? segment.reads.length : 0)
@@ -211,21 +213,37 @@ export function ToolRunBlock(props: {
 
   return (
     <>
-      {segments.map((segment, index) =>
-        segment.kind === 'sentence' ? (
-          <SentenceBlock
-            key={segment.key}
-            reads={segment.reads}
-            inner={inner}
-            cwd={props.cwd}
-            now={isLive(segment) ? now : SETTLED_CLOCK}
-            mark={mark}
-            opensCluster={index === 0 && props.continues !== true}
-            blockKey={sentenceKey(segment.key)}
-            opened={opened}
-            onToggle={onToggle}
-          />
-        ) : (
+      {segments.map((segment, index) => {
+        if (segment.kind === 'sentence') {
+          return (
+            <SentenceBlock
+              key={segment.key}
+              reads={segment.reads}
+              inner={inner}
+              cwd={props.cwd}
+              now={isLive(segment) ? now : SETTLED_CLOCK}
+              mark={mark}
+              opensCluster={index === 0 && props.continues !== true}
+              blockKey={sentenceKey(segment.key)}
+              opened={opened}
+              onToggle={onToggle}
+            />
+          )
+        }
+        if (segment.kind === 'merged') {
+          return (
+            <MergedBlock
+              key={segment.key}
+              reads={segment.reads}
+              inner={inner}
+              cwd={props.cwd}
+              mark={mark}
+              opensCluster={index === 0 && props.continues !== true}
+              onToggle={onToggle}
+            />
+          )
+        }
+        return (
           <AloneBlock
             key={segment.key}
             read={segment.read}
@@ -238,8 +256,8 @@ export function ToolRunBlock(props: {
             opened={opened}
             onToggle={onToggle}
           />
-        ),
-      )}
+        )
+      })}
       {Array.from({ length: Math.max(0, reserved - rows) }, (_unused, index) => (
         <text key={`hold${index}`}> </text>
       ))}

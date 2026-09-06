@@ -34,7 +34,7 @@ import { ToolImage } from './tool-image'
 import { ToolTerminal } from './tool-terminal'
 import { ToolPage, ToolResults } from './tool-web'
 
-const DIFF_CONTEXT = 2
+export const DIFF_CONTEXT = 2
 
 const MAX_ROWS = 12
 
@@ -212,7 +212,7 @@ function Tests(props: { call: ToolCall; inner: number; expand: Expander }): Reac
   )
 }
 
-const DIFF_INSET = 2
+export const DIFF_INSET = 2
 
 function Diff(props: { call: ToolCall; inner: number; cwd: string }): React.ReactNode {
   const file = useMemo(() => {

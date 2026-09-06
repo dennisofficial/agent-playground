@@ -41,6 +41,8 @@ export function InlineDiff(props: {
   width: number
   files?: DiffFileCount | null
   emphasis?: DiffEmphasis
+  /** What the copy button puts on the clipboard, when the file's own hunks are not the patch. */
+  patch?: string
 }): React.ReactNode {
   const [pointerInside, setPointerInside] = useState(false)
 
@@ -53,7 +55,10 @@ export function InlineDiff(props: {
       }),
     [content, props.file],
   )
-  const patch = useMemo(() => patchText({ file: props.file }), [props.file])
+  const patch = useMemo(
+    () => props.patch ?? patchText({ file: props.file }),
+    [props.file, props.patch],
+  )
   const filetype = useMemo(() => filetypeOf({ path: props.file.path }), [props.file.path])
 
   return (
