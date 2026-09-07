@@ -179,7 +179,11 @@ describe('the sandbox line in the transcript', () => {
       await setup.flush()
       expect(setup.captureCharFrame()).toContain('starting the container')
 
-      app.containerStatus.mark({ state: ESandboxState.Running, ports: [] })
+      app.containerStatus.mark({
+        state: ESandboxState.Running,
+        name: 'atlas-dev-0123456789ab',
+        ports: [],
+      })
       await setup.flush()
       await settle(250)
       await setup.flush()
@@ -286,6 +290,7 @@ describe('the container pill in the sidebar', () => {
 
       app.containerStatus.mark({
         state: ESandboxState.Running,
+        name: 'atlas-dev-0123456789ab',
         ports: [{ containerPort: 3000, hostPort: 20_123 }],
       })
       await setup.flush()
@@ -294,6 +299,7 @@ describe('the container pill in the sidebar', () => {
 
       const running = setup.captureCharFrame()
       expect(running).toContain('running')
+      expect(running).toContain('atlas-dev-0123456789ab')
       expect(running).not.toContain('3000→20123')
 
       app.shells.place(shellExposing({ containerPort: 3000, hostPort: 20_123 }))

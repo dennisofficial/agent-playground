@@ -20,6 +20,7 @@ const running: SidebarContainer = {
   state: ESandboxState.Running,
   image: "node:22-slim",
   label: "node:22-slim",
+  name: "atlas-dev-0123456789ab",
   limits: { cpus: 4, memoryGb: 8 },
   ports: [
     { containerPort: 3000, hostPort: 20_123 },
@@ -98,6 +99,7 @@ describe("the container pill", () => {
       state: ESandboxState.Running,
       image: "node:22-slim",
       label: "node:22-slim",
+      name: "atlas-dev-0123456789ab",
       limits: { cpus: 4, memoryGb: 8 },
       ports: [],
     });

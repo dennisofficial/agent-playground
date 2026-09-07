@@ -17,7 +17,7 @@ const merged = (args: {
     case ESandboxState.Starting:
       return { ...held, state: status.state }
     case ESandboxState.Running:
-      return { ...held, state: status.state, ports: status.ports }
+      return { ...held, state: status.state, name: status.name, ports: status.ports }
     case ESandboxState.Stopped:
       return { ...held, state: status.state }
     case ESandboxState.Failed:

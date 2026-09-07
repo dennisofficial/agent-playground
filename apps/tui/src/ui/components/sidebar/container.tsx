@@ -42,6 +42,14 @@ export function ContainerSection(props: {
         mark={markFor(container.state)}
         value={[{ text: container.label, fg: theme.hint }]}
       />
+      {container.name === undefined ? null : (
+        <Row
+          label="name"
+          labelFg={theme.meta}
+          cells={cells}
+          value={[{ text: container.name, fg: theme.hint }]}
+        />
+      )}
       {container.limits === undefined ? null : (
         <Row
           label="limits"

@@ -74,6 +74,7 @@ export type SidebarContainer = {
   state: ESandboxState;
   image: string;
   label: string;
+  name?: string | undefined;
   limits?: SidebarLimits | undefined;
   ports: readonly BoundPort[];
   reason?: string | undefined;
@@ -255,11 +256,12 @@ export function containerPillOf(args: {
 }): SidebarContainer | null {
   if (args.location === EExecutionLocation.Host) return null;
 
-  const { state, image, label, limits, reason } = args.container;
+  const { state, image, label, name, limits, reason } = args.container;
   return {
     state,
     image,
     label,
+    ...(name === undefined ? {} : { name }),
     ...(limits === undefined ? {} : { limits }),
     ports: args.exposed,
     ...(reason === undefined ? {} : { reason }),

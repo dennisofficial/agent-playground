@@ -170,7 +170,7 @@ export class DockerProcessPort implements ProcessPort {
       const { sandbox, details } = await this.ensureRunning()
       this.collected.push(...sandbox.warnings)
       this.imageEnv = details.config.env
-      this.onStatus?.({ state: ESandboxState.Running, ports: details.ports })
+      this.onStatus?.({ state: ESandboxState.Running, name: sandbox.name, ports: details.ports })
       return sandbox
     } catch (error) {
       this.sandboxPromise = undefined

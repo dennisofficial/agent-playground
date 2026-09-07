@@ -6,7 +6,7 @@ import { join } from 'node:path'
 
 import { DockerProcessPort } from '../docker-process'
 import { DockerEngine } from '../engine'
-import { worktreeLabel, type SandboxConfig } from '../sandbox'
+import { sandboxNameFor, worktreeLabel, type SandboxConfig } from '../sandbox'
 import { dockerUnavailableReason } from './live-docker'
 import { ESandboxState, type SandboxStatus } from '../status'
 
@@ -59,6 +59,7 @@ describeDocker('DockerProcessPort sandbox status', () => {
     expect(seen.map((one) => one.state)).toEqual([ESandboxState.Starting, ESandboxState.Running])
     const running = seen[1]
     if (running?.state !== ESandboxState.Running) throw new Error('unreachable')
+    expect(running.name).toBe(sandboxNameFor({ prefix: PREFIX, worktree }))
     expect(running.ports.length).toBeGreaterThan(0)
     expect(running.ports[0]?.hostPort).toBeGreaterThan(0)
   }, 60_000)
