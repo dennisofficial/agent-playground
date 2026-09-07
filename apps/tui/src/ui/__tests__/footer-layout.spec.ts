@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EMeterBand } from '@dltech/atlas-core'
+import { EEffort, EMeterBand } from '@dltech/atlas-core'
 
 import { CONTEXT_WARN_PERCENT } from '../context-bar'
 import { EFooterItemReach, footerItemCells, type FooterItem } from '../footer-item'
@@ -13,6 +13,8 @@ import {
   type FooterLayout,
 } from '../footer-layout'
 
+const MODEL = 'haiku-4-5'
+
 const METERS = [
   { label: '5h', band: EMeterBand.Normal, text: '34%' },
   { label: 'wk', band: EMeterBand.Normal, text: '61%' },
@@ -21,6 +23,8 @@ const METERS = [
 const at = (width: number): FooterLayout =>
   footerLayout({
     width,
+    model: MODEL,
+    effort: EEffort.Medium,
     context: { percent: 62, tokensUsed: 124_000, meters: METERS },
   })
 
@@ -43,17 +47,34 @@ const hasWeekly = (layout: FooterLayout): boolean => meterLabels(layout).include
 
 const hasSession = (layout: FooterLayout): boolean => meterLabels(layout).includes('5h')
 
+const hasEffort = (layout: FooterLayout): boolean => layout.instruments.effort !== null
+
+const hasModel = (layout: FooterLayout): boolean => layout.instruments.model !== null
+
 describe('footerLayout at ease', () => {
-  it('shows the read-out in full when the terminal is wide', () => {
+  it('shows model, effort and the read-out when the terminal is wide', () => {
     expect(at(200).instruments).toEqual({
+      model: MODEL,
+      effort: 'med',
       items: [],
       context: { full: true, text: '124.0k 62%', meters: METERS },
     })
   })
 
+  it('names the effort without spelling out the word', () => {
+    expect(footerLayout({ width: 200, model: MODEL, effort: EEffort.Low }).instruments.effort).toBe(
+      'low',
+    )
+    expect(
+      footerLayout({ width: 200, model: MODEL, effort: EEffort.High }).instruments.effort,
+    ).toBe('high')
+  })
+
   it('spells out the consequence once the window is under pressure', () => {
     const layout = footerLayout({
       width: 200,
+      model: MODEL,
+      effort: EEffort.Medium,
       context: { percent: 86 },
     })
     expect(layout.instruments.context).toEqual({
@@ -64,13 +85,14 @@ describe('footerLayout at ease', () => {
   })
 
   it('shows no read-out at all when there is no context to report', () => {
-    const layout = footerLayout({ width: 200 })
+    const layout = footerLayout({ width: 200, model: MODEL })
     expect(layout.instruments.context).toBeNull()
-    expect(layout.instruments.items).toEqual([])
+    expect(layout.instruments.effort).toBeNull()
+    expect(layout.instruments.model).toBe(MODEL)
   })
 
-  it('says nothing about what is answering — the composer foot names the model', () => {
-    expect(Object.keys(at(200).instruments).sort()).toEqual(['context', 'items'])
+  it('says nothing about where you are — the sidebar names the directory', () => {
+    expect(Object.keys(at(200).instruments).sort()).toEqual(['context', 'effort', 'items', 'model'])
   })
 })
 
@@ -82,6 +104,7 @@ describe('footerLayout meters', () => {
   it('carries no meters when it was given none', () => {
     const layout = footerLayout({
       width: 200,
+      model: MODEL,
       context: { percent: 62, tokensUsed: 124_000 },
     })
     expect(layout.instruments.context).toEqual({
@@ -94,6 +117,8 @@ describe('footerLayout meters', () => {
   it('still reports the windows when the context window is the thing under pressure', () => {
     const warned = footerLayout({
       width: 200,
+      model: MODEL,
+      effort: EEffort.Medium,
       context: { percent: 86, meters: METERS },
     })
     expect(warned.instruments.context?.text).toBe('context 86% — /compact to compact')
@@ -102,11 +127,13 @@ describe('footerLayout meters', () => {
 })
 
 describe('footerLayout under pressure', () => {
-  it('drops in order: weekly, session, then the tail', () => {
+  it('drops in order: weekly, session, the tail, effort, then the model', () => {
     const order = [
       widthWhereLost(hasWeekly),
       widthWhereLost(hasSession),
       widthWhereLost(hasTail),
+      widthWhereLost(hasEffort),
+      widthWhereLost(hasModel),
     ]
     expect(order).toEqual([...order].sort((left, right) => right - left))
     expect(new Set(order).size).toBe(order.length)
@@ -131,22 +158,31 @@ describe('footerLayout under pressure', () => {
 
   it('goes silent rather than overrunning a terminal too narrow for even a percentage', () => {
     expect(at(4).instruments).toEqual({
+      model: null,
+      effort: null,
       items: [],
       context: null,
     })
     expect(at(4).instrumentCells).toBe(0)
   })
 
-  it('keeps the warning sentence until the row itself runs out', () => {
+  it('keeps the warning sentence after every other instrument has left', () => {
     const warned = (width: number): FooterLayout =>
       footerLayout({
         width,
+        model: MODEL,
+        effort: EEffort.Medium,
         context: { percent: CONTEXT_WARN_PERCENT + 11 },
       })
     const spelled = (layout: FooterLayout): boolean =>
       layout.instruments.context?.text.includes('/compact to compact') === true
     for (let width = 200; width >= 40; width -= 1) {
-      expect(spelled(warned(width))).toBe(true)
+      const layout = warned(width)
+      if (!spelled(layout)) {
+        expect(layout.instruments.model).toBeNull()
+        expect(layout.instruments.effort).toBeNull()
+        break
+      }
     }
   })
 })
@@ -167,6 +203,8 @@ const PILLS: readonly FooterItem[] = [
 const withItems = (width: number): FooterLayout =>
   footerLayout({
     width,
+    model: MODEL,
+    effort: EEffort.Medium,
     items: PILLS,
     context: { percent: 62, tokensUsed: 124_000, meters: METERS },
   })
@@ -184,10 +222,10 @@ describe('footerLayout carrying items', () => {
     expect(itemIds(withItems(200))).toEqual(['pr', 'shells'])
   })
 
-  it('charges the chips their single-cell gaps and nothing more', () => {
+  it('charges the chips their single-cell gaps and the one lead separator', () => {
     const spelled = instrumentCells({ instruments: withItems(200).instruments })
     const bare = instrumentCells({ instruments: at(200).instruments })
-    expect(spelled - bare).toBe(4 + 8 + 1)
+    expect(spelled - bare).toBe(4 + 8 + 1 + 3)
   })
 
   it('sheds the pills before the weekly meter, which is the first instrument to go', () => {
@@ -201,19 +239,23 @@ describe('footerLayout carrying items', () => {
     expect(itemIds(withItems(width))).toEqual(['pr'])
   })
 
-  it('never leaves a pill beside a read-out that has already started degrading', () => {
+  it('never leaves a pill as the only thing on the row', () => {
     for (const width of WIDTHS) {
       const layout = withItems(width)
       if (layout.instruments.items.length === 0) continue
 
+      expect(layout.instruments.model).not.toBeNull()
+      expect(layout.instruments.effort).not.toBeNull()
       expect(layout.instruments.context?.full).toBe(true)
       expect(meterLabels(layout)).toEqual(['5h', 'wk'])
     }
   })
 
-  it('carries the pills alone when no read-out was given at all', () => {
-    const spare = footerLayout({ width: 200, items: PILLS })
+  it('promises only the model beside a pill — the rest ride along if they were given at all', () => {
+    const spare = footerLayout({ width: 200, model: MODEL, items: PILLS })
     expect(itemIds(spare)).toEqual(['pr', 'shells'])
+    expect(spare.instruments.model).toBe(MODEL)
+    expect(spare.instruments.effort).toBeNull()
     expect(spare.instruments.context).toBeNull()
   })
 
@@ -227,8 +269,7 @@ describe('footerLayout carrying items', () => {
     for (const width of WIDTHS) {
       const layout = withItems(width)
       const kept =
-        layout.instruments.items.reduce((total, pill) => total + footerItemCells(pill), 0) +
-        Math.max(0, layout.instruments.items.length - 1)
+        layout.instruments.items.reduce((total, pill) => total + footerItemCells(pill) + 1, 0) + 2
       expect(layout.instrumentCells - instrumentCells({ instruments: at(width).instruments })).toBe(
         layout.instruments.items.length === 0 ? 0 : kept,
       )
@@ -237,6 +278,8 @@ describe('footerLayout carrying items', () => {
 
   it('still goes silent on a terminal too narrow for anything', () => {
     expect(withItems(4).instruments).toEqual({
+      model: null,
+      effort: null,
       items: [],
       context: null,
     })
@@ -250,9 +293,11 @@ describe('a context window nothing measured', () => {
     expect(forms.some((form) => form.text.includes('0%'))).toBe(false)
   })
 
-  it('keeps the slot spelled on a cramped row, the way a warning does', () => {
+  it('outranks the model and the effort, the way a warning does', () => {
     const laid = footerLayout({
       width: 40,
+      model: MODEL,
+      effort: EEffort.Medium,
       context: { percent: 0, measured: false, meters: [] },
     })
     expect(laid.instruments.context?.text).toContain(UNMEASURED_CONTEXT)
@@ -261,6 +306,7 @@ describe('a context window nothing measured', () => {
   it('keeps a form narrow enough to survive a cramped row', () => {
     const laid = footerLayout({
       width: FOOTER_GUTTER * 2 + UNMEASURED_CONTEXT.length,
+      model: MODEL,
       context: { percent: 0, measured: false, meters: [] },
     })
     expect(laid.instruments.context?.text).toBe(UNMEASURED_CONTEXT)
