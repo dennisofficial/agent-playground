@@ -3,7 +3,7 @@ import { describe, expect, it } from 'bun:test'
 import { EEffort, EMeterBand } from '@dltech/atlas-core'
 
 import { CONTEXT_WARN_PERCENT } from '../context-bar'
-import { EFooterItemReach, footerItemCells, type FooterItem } from '../footer-item'
+import { EFooterItemReach, type FooterItem } from '../footer-item'
 import {
   FOOTER_GUTTER,
   footerLayout,
@@ -58,6 +58,7 @@ describe('footerLayout at ease', () => {
       effort: 'med',
       items: [],
       context: { full: true, text: '124.0k 62%', meters: METERS },
+      rows: 1,
     })
   })
 
@@ -92,7 +93,13 @@ describe('footerLayout at ease', () => {
   })
 
   it('says nothing about where you are — the sidebar names the directory', () => {
-    expect(Object.keys(at(200).instruments).sort()).toEqual(['context', 'effort', 'items', 'model'])
+    expect(Object.keys(at(200).instruments).sort()).toEqual([
+      'context',
+      'effort',
+      'items',
+      'model',
+      'rows',
+    ])
   })
 })
 
@@ -162,6 +169,7 @@ describe('footerLayout under pressure', () => {
       effort: null,
       items: [],
       context: null,
+      rows: 1,
     })
     expect(at(4).instrumentCells).toBe(0)
   })
@@ -212,11 +220,6 @@ const withItems = (width: number): FooterLayout =>
 const itemIds = (layout: FooterLayout): readonly string[] =>
   layout.instruments.items.map((item) => item.id)
 
-const lostWithItems = (present: (layout: FooterLayout) => boolean): number => {
-  for (let width = 200; width >= 20; width -= 1) if (!present(withItems(width))) return width
-  return 0
-}
-
 describe('footerLayout carrying items', () => {
   it('shows every pill when the terminal has the room', () => {
     expect(itemIds(withItems(200))).toEqual(['pr', 'shells'])
@@ -228,26 +231,54 @@ describe('footerLayout carrying items', () => {
     expect(spelled - bare).toBe(4 + 8 + 1 + 3)
   })
 
-  it('sheds the pills before the weekly meter, which is the first instrument to go', () => {
-    expect(lostWithItems((layout) => layout.instruments.items.length > 0)).toBeGreaterThan(
-      lostWithItems(hasWeekly),
-    )
+  it('keeps everything on one row while the row fits it all', () => {
+    expect(withItems(55).instruments.rows).toBe(1)
+    expect(itemIds(withItems(55))).toEqual(['pr', 'shells'])
   })
 
-  it('sheds from the tail, so the first pill outlives the second', () => {
-    const width = lostWithItems((layout) => layout.instruments.items.length === PILLS.length)
-    expect(itemIds(withItems(width))).toEqual(['pr'])
+  it('wraps the pills beneath the facts and the read-out the moment one row runs out', () => {
+    const wrapped = withItems(54)
+    expect(wrapped.instruments.rows).toBe(2)
+    expect(itemIds(wrapped)).toEqual(['pr', 'shells'])
+    expect(meterLabels(wrapped)).toEqual(['5h', 'wk'])
   })
 
-  it('never leaves a pill as the only thing on the row', () => {
+  it('sheds the weekly meter on the head row before the session one, pills untouched', () => {
+    const squeezed = withItems(32)
+    expect(squeezed.instruments.rows).toBe(2)
+    expect(itemIds(squeezed)).toEqual(['pr', 'shells'])
+    expect(meterLabels(squeezed)).toEqual(['5h'])
+  })
+
+  it('keeps every pill until the head row itself runs out of room', () => {
+    const narrowest = withItems(18)
+    expect(narrowest.instruments.rows).toBe(2)
+    expect(itemIds(narrowest)).toEqual(['pr', 'shells'])
+    expect(narrowest.instruments.context?.text).toBe('62%')
+    expect(itemIds(withItems(17))).toEqual([])
+  })
+
+  it('sheds from the tail of the pill row only when that row alone is too wide', () => {
+    const many: readonly FooterItem[] = [
+      ...PILLS,
+      { id: 'agents', spans: [{ text: 'agents 12' }], reach: EFooterItemReach.Keyboard },
+      { id: 'services', spans: [{ text: 'services 3' }], reach: EFooterItemReach.Keyboard },
+    ]
+    const laid = (width: number): FooterLayout =>
+      footerLayout({ width, model: MODEL, effort: EEffort.Medium, items: many })
+
+    expect(itemIds(laid(36))).toEqual(['pr', 'shells', 'agents', 'services'])
+    expect(itemIds(laid(30))).toEqual(['pr', 'shells', 'agents'])
+  })
+
+  it('always spells the model beside a pill, on whichever row the pill lands', () => {
     for (const width of WIDTHS) {
       const layout = withItems(width)
       if (layout.instruments.items.length === 0) continue
 
       expect(layout.instruments.model).not.toBeNull()
       expect(layout.instruments.effort).not.toBeNull()
-      expect(layout.instruments.context?.full).toBe(true)
-      expect(meterLabels(layout)).toEqual(['5h', 'wk'])
+      expect(layout.instruments.context).not.toBeNull()
     }
   })
 
@@ -265,14 +296,17 @@ describe('footerLayout carrying items', () => {
     }
   })
 
-  it('spends its cells on the pills it kept and charges nothing for the ones it shed', () => {
+  it('spends its cells on the wider of the two rows once wrapped', () => {
     for (const width of WIDTHS) {
       const layout = withItems(width)
-      const kept =
-        layout.instruments.items.reduce((total, pill) => total + footerItemCells(pill) + 1, 0) + 2
-      expect(layout.instrumentCells - instrumentCells({ instruments: at(width).instruments })).toBe(
-        layout.instruments.items.length === 0 ? 0 : kept,
-      )
+      const { instruments } = layout
+      if (instruments.rows !== 2) continue
+
+      const head = instrumentCells({ instruments: { ...instruments, items: [], rows: 1 } })
+      const tail = instrumentCells({
+        instruments: { ...instruments, model: null, effort: null, context: null, rows: 1 },
+      })
+      expect(layout.instrumentCells).toBe(Math.max(head, tail))
     }
   })
 
@@ -282,6 +316,7 @@ describe('footerLayout carrying items', () => {
       effort: null,
       items: [],
       context: null,
+      rows: 1,
     })
   })
 })

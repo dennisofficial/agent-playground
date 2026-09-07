@@ -105,8 +105,22 @@ describe('the pills under the composer', () => {
     expect(cellsOf(row)).toBe(140 - FOOTER_GUTTER)
   })
 
-  it('says nothing at a width the ladder sheds them at', async () => {
+  it('wraps the pills beneath the facts rather than shedding one when the row gets crammed', async () => {
     const frame = await frameOf(footer({ width: 28, items: [PR, SHELLS] }), 28)
+    const rows = frame
+      .split('\n')
+      .map((row) => row.trimEnd())
+      .filter((row) => row.trim().length > 0)
+
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.trimStart()).toStartWith(`${MODEL} med`)
+    expect(rows[0]).toEndWith('124.0k 62%')
+    expect(rows[1]?.trimStart()).toStartWith('#123 2 shells')
+    expect(rows[1]).not.toContain('·')
+  })
+
+  it('says nothing only once even the wrapped head row runs out', async () => {
+    const frame = await frameOf(footer({ width: 17, items: [PR, SHELLS] }), 17)
     expect(frame).not.toContain('#123')
     expect(frame).not.toContain('2 shells')
   })

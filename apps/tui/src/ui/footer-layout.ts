@@ -37,6 +37,7 @@ export type FooterInstruments = {
   effort: string | null
   items: readonly FooterItem[]
   context: FooterReadout | null
+  rows: 1 | 2
 }
 
 export type FooterLayout = {
@@ -103,12 +104,15 @@ export function readoutCells(args: { readout: FooterReadout }): number {
 const CHIP_GAP_CELLS = 1
 
 /**
- * Everything on the row is a single space apart — facts, chips, the read-out and its meters. The
+ * Everything on a row is a single space apart — facts, chips, the read-out and its meters. The
  * one separator dot left is the one between the facts and the chips, marking where the
- * instruments end and the pressable row begins.
+ * instruments end and the pressable row begins; it only exists when they share one.
+ *
+ * On two rows the facts and the read-out take the head and the chips take the tail, so the count
+ * is the wider of the two rather than their sum.
  */
 export function instrumentCells(args: { instruments: FooterInstruments }): number {
-  const { model, effort, items, context } = args.instruments
+  const { model, effort, items, context, rows } = args.instruments
 
   const facts = [
     ...(model === null ? [] : [cellsOf(model)]),
@@ -121,9 +125,11 @@ export function instrumentCells(args: { instruments: FooterInstruments }): numbe
     items.reduce((total, item) => total + footerItemCells(item), 0) +
     Math.max(0, items.length - 1) * CHIP_GAP_CELLS
 
-  const lead = factsCells > 0 && items.length > 0 ? cellsOf(HINT_SEPARATOR) : 0
   const contextCells = context === null ? 0 : readoutCells({ readout: context })
 
+  if (rows === 2) return Math.max(factsCells + contextCells, itemsCells)
+
+  const lead = factsCells > 0 && items.length > 0 ? cellsOf(HINT_SEPARATOR) : 0
   return factsCells + lead + itemsCells + contextCells
 }
 
@@ -134,6 +140,7 @@ const BARE: FooterInstruments = {
   effort: null,
   items: NO_FOOTER_ITEMS,
   context: null,
+  rows: 1,
 }
 
 /**
@@ -154,18 +161,26 @@ function instrumentLadder(args: {
   const items = NO_FOOTER_ITEMS
 
   return [
-    ...kept.map((context) => ({ ...args.facts, items, context })),
-    { model: args.facts.model, effort: null, items, context: narrowest },
-    { model: null, effort: null, items, context: narrowest },
-    ...shortened.map((context) => ({ model: null, effort: null, items, context })),
+    ...kept.map((context) => ({ ...args.facts, items, context, rows: 1 as const })),
+    { model: args.facts.model, effort: null, items, context: narrowest, rows: 1 as const },
+    { model: null, effort: null, items, context: narrowest, rows: 1 as const },
+    ...shortened.map((context) => ({
+      model: null,
+      effort: null,
+      items,
+      context,
+      rows: 1 as const,
+    })),
     BARE,
   ]
 }
 
 /**
- * Items hang off the widest rung alone, so the row sheds every pill before any instrument degrades.
- * The model is therefore always spelled beside a pill and the renderer never has to draw a leading
- * item; the effort and the read-out ride along only when the caller supplied them at all.
+ * One row while everything fits it; the moment it does not, the chips wrap to a row of their own
+ * beneath the facts and the read-out rather than shedding one by one. The read-out degrades down
+ * its forms while the chips all stay, and only a chip row too wide on its own sheds them, from
+ * the tail. The single-row ladder without items is the fallback once there is nothing left to
+ * wrap — the model is always spelled beside a pill, so the renderer never draws a leading one.
  */
 function dropLadder(args: {
   facts: Facts
@@ -176,9 +191,24 @@ function dropLadder(args: {
   const [widest, ...narrower] = rungs
   if (widest === undefined) return [BARE]
 
+  const forms: readonly (FooterReadout | null)[] =
+    args.context === null ? [null] : readouts(args.context)
+
+  const wrapped =
+    args.items.length === 0
+      ? []
+      : [
+          ...forms.map((context) => ({ ...widest, context, items: args.items, rows: 2 as const })),
+          ...itemLadder(args.items)
+            .slice(1)
+            .filter((items) => items.length > 0)
+            .map((items) => ({ ...widest, items, rows: 2 as const })),
+        ]
+
   return [
-    ...itemLadder(args.items).map((items) => ({ ...widest, items })),
-    ...narrower.map((instruments) => ({ ...instruments, items: NO_FOOTER_ITEMS })),
+    { ...widest, items: args.items, rows: 1 as const },
+    ...wrapped,
+    ...narrower,
   ]
 }
 
