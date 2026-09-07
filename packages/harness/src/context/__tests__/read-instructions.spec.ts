@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { EContextSlot, EInstructionFamily } from '@dltech/atlas-core'
 import { beforeEach, describe, expect, it } from 'bun:test'
 
-import { readInstructionFiles } from '../read-instructions'
+import { readInstructionFiles, readNestedInstructionFiles } from '../read-instructions'
 
 let root: string
 
@@ -152,5 +152,70 @@ describe('readInstructionFiles', () => {
     const loaded = await read({ cwd: join(root, 'apps'), characterBudget: 50 })
 
     expect(loaded.map((entry) => entry.content)).toEqual(['b'])
+  })
+})
+
+describe('readNestedInstructionFiles', () => {
+  const readNested = (args: {
+    cwd?: string
+    touchedDirectory: string
+    family?: EInstructionFamily
+    characterBudget?: number
+  }) =>
+    readNestedInstructionFiles({
+      root,
+      cwd: args.cwd ?? root,
+      touchedDirectory: args.touchedDirectory,
+      family: args.family ?? EInstructionFamily.Both,
+      ...(args.characterBudget === undefined ? {} : { characterBudget: args.characterBudget }),
+    })
+
+  it('labels the instruction file above a touched sibling path as nested scope', async () => {
+    write({ at: 'CLAUDE.md', content: 'root' })
+    const path = write({ at: 'packages/core/AGENTS.md', content: 'package rules' })
+
+    const loaded = await readNested({
+      cwd: join(root, 'apps/tui'),
+      touchedDirectory: join(root, 'packages/core/src'),
+    })
+
+    expect(loaded).toEqual([
+      { path, slot: EContextSlot.NestedInstructions, content: 'package rules' },
+    ])
+  })
+
+  it('reads nothing for a touched path the project descent already covers', async () => {
+    write({ at: 'CLAUDE.md', content: 'root' })
+
+    expect(await readNested({ touchedDirectory: root })).toEqual([])
+  })
+
+  it('reads nothing when nothing above the touched path carries instructions', async () => {
+    expect(await readNested({ touchedDirectory: join(root, 'packages/core') })).toEqual([])
+  })
+
+  it('returns shallower nested files before deeper ones, so the deeper one wins', async () => {
+    write({ at: 'packages/AGENTS.md', content: 'packages' })
+    write({ at: 'packages/core/AGENTS.md', content: 'core' })
+
+    const loaded = await readNested({
+      cwd: join(root, 'apps'),
+      touchedDirectory: join(root, 'packages/core/src'),
+    })
+
+    expect(loaded.map((entry) => entry.content)).toEqual(['packages', 'core'])
+  })
+
+  it('spends the character budget across the nested files of one touch', async () => {
+    write({ at: 'packages/AGENTS.md', content: 'a'.repeat(30) })
+    write({ at: 'packages/core/AGENTS.md', content: 'b'.repeat(30) })
+
+    const loaded = await readNested({
+      cwd: join(root, 'apps'),
+      touchedDirectory: join(root, 'packages/core'),
+      characterBudget: 50,
+    })
+
+    expect(loaded.map((entry) => entry.content[0])).toEqual(['a'])
   })
 })

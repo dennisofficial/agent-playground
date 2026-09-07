@@ -30,6 +30,7 @@ import {
   OnThreadOpenHook,
   parseRef,
   PromptFragment,
+  ToolDefinition,
   promptContextFor,
   promptModelOf,
   textValueOf,
@@ -82,6 +83,7 @@ import {
   type HookMishap,
   LoadInstructionsHook,
   LoadMemoryHook,
+  NestedInstructionsHook,
   memoryDirectoriesFor,
   MemoryFragment,
   StampMemoryHook,
@@ -154,7 +156,7 @@ import { ENoticeTone, NOTICE_WARN_MS, notify } from '../ui/notice-store'
 import { tldrFeed } from '../ui/tldr-feed-store'
 import type { ContributedProjection } from '../plugins/projection'
 import type { ContributedSurface } from '../plugins/surface'
-import { instructionPlanOf } from './instruction-plan'
+import { instructionPlanOf, nestedInstructionPlanOf } from './instruction-plan'
 import type { SettingsBinding } from './settings-binding'
 import { teardownSession } from './session-teardown'
 import { bindSandbox, type SandboxControl } from './sandbox-binding'
@@ -415,6 +417,14 @@ export async function composeAtlas(args: {
     useValue: new LoadInstructionsHook({
       source: ({ projectDirectory }) => instructionPlanOf({ settings, projectDirectory }),
     }),
+  })
+
+  container.register(portToken(AfterToolHook), {
+    useFactory: (resolver) =>
+      new NestedInstructionsHook({
+        source: ({ projectDirectory }) => nestedInstructionPlanOf({ settings, projectDirectory }),
+        tools: resolver.resolveAll(portToken(ToolDefinition)),
+      }),
   })
 
   const memoryDirectories = memoryDirectoriesFor({
