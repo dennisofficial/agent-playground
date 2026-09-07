@@ -65,11 +65,11 @@ describe('ensureSandbox with a dockerfile-built image, against a fake engine', (
     }
   })
 
-  it('refuses to reuse a container whose image no longer matches the dockerfile hash', async () => {
+  it('recreates a container whose image no longer matches the dockerfile hash', async () => {
     const context = await mkdtemp(join(tmpdir(), 'atlas-sandbox-dockerfile-'))
     try {
       await writeFile(join(context, 'Dockerfile'), 'FROM scratch\n')
-      const { engine, execs } = fakeEngine({
+      const { engine, removals, creates } = fakeEngine({
         existing: {
           id: 'kept-1',
           state: 'running',
@@ -78,14 +78,17 @@ describe('ensureSandbox with a dockerfile-built image, against a fake engine', (
         },
       })
 
-      await expect(ensureSandbox({
+      const sandbox = await ensureSandbox({
         engine,
         config: {
           ...FAKE_CONFIG,
           dockerfile: { path: join(context, 'Dockerfile'), context: EBuildContext.Directory },
         },
-      })).rejects.toThrow(/new container/)
-      expect(execs).toHaveLength(0)
+      })
+
+      expect(removals).toEqual(['kept-1'])
+      expect(creates).toHaveLength(1)
+      expect(sandbox.created).toBe(true)
     } finally {
       await rm(context, { recursive: true, force: true })
     }

@@ -116,30 +116,34 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
 
     expect(sandbox.created).toBe(false)
     expect(sandbox.id).toBe('kept-1')
-    expect(sandbox.warnings.some((one) => one.includes('new container'))).toBe(true)
+    expect(sandbox.warnings.some((one) => one.includes('next recreate'))).toBe(true)
   })
 
   it.each([
     [],
     [{ source: '/repo/.git', destination: '/repo/.git', readOnly: true }],
     [{ source: '/other/.git', destination: '/repo/.git', readOnly: false }],
-  ])('refuses missing, read-only or substituted Git metadata mounts: %j', async (...mounts) => {
-    const { engine, execs } = fakeEngine({
+  ])('recreates on missing, read-only or substituted Git metadata mounts: %j', async (...mounts) => {
+    const { engine, removals, creates } = fakeEngine({
       existing: { id: 'kept-1', state: 'running', mounts: [...systemMounts, ...mounts] },
     })
-    await expect(ensureSandbox({
+
+    const sandbox = await ensureSandbox({
       engine,
       config: { ...FAKE_CONFIG, mounts: [{ path: '/repo/.git', mode: EMountMode.ReadWrite }] },
-    })).rejects.toThrow(/new container/)
-    expect(execs).toHaveLength(0)
+    })
+
+    expect(removals).toEqual(['kept-1'])
+    expect(creates).toHaveLength(1)
+    expect(sandbox.created).toBe(true)
   })
 
-  it('refuses changed mounts on a running container — recreating it would kill live shells', async () => {
-    const { engine: fake, removals } = fakeEngine({
+  it('recreates a running container whose declared mounts drifted, warning that its shells died', async () => {
+    const { engine: fake, removals, creates } = fakeEngine({
       existing: { id: 'kept-1', state: 'running', mounts: systemMounts },
     })
 
-    const attempt = ensureSandbox({
+    const sandbox = await ensureSandbox({
       engine: fake,
       config: {
         ...FAKE_CONFIG,
@@ -147,12 +151,14 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
       },
     })
 
-    await expect(attempt).rejects.toThrow(/new container/)
-    expect(removals).toHaveLength(0)
+    expect(removals).toEqual(['kept-1'])
+    expect(creates).toHaveLength(1)
+    expect(sandbox.created).toBe(true)
+    expect(sandbox.warnings.some((one) => one.includes('shells'))).toBe(true)
   })
 
-  it('refuses mounts removed since creation the same way, while the container runs', async () => {
-    const { engine: fake, removals } = fakeEngine({
+  it('recreates mounts removed since creation the same way, while the container runs', async () => {
+    const { engine: fake, removals, creates } = fakeEngine({
       existing: {
         id: 'kept-1',
         state: 'running',
@@ -167,13 +173,14 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
       },
     })
 
-    await expect(ensureSandbox({ engine: fake, config: FAKE_CONFIG })).rejects.toThrow(
-      /new container/,
-    )
-    expect(removals).toHaveLength(0)
+    const sandbox = await ensureSandbox({ engine: fake, config: FAKE_CONFIG })
+
+    expect(removals).toEqual(['kept-1'])
+    expect(creates).toHaveLength(1)
+    expect(sandbox.created).toBe(true)
   })
 
-  it('recreates a stopped container whose declared mounts drifted, instead of refusing', async () => {
+  it('recreates a stopped container whose declared mounts drifted, noting nothing live was lost', async () => {
     const { engine: fake, removals, creates } = fakeEngine({
       existing: { id: 'stale-1', state: 'exited', mounts: systemMounts },
     })
@@ -192,8 +199,8 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
     expect(sandbox.warnings.some((one) => one.includes('recreated'))).toBe(true)
   })
 
-  it('refuses reuse of a running container when the configured image no longer matches', async () => {
-    const { engine, execs, removals } = fakeEngine({
+  it('recreates a running container when the configured image no longer matches, warning that its shells died', async () => {
+    const { engine, removals, creates } = fakeEngine({
       existing: {
         id: 'kept-1',
         state: 'running',
@@ -201,9 +208,13 @@ describe('ensureSandbox scripts and drift, against a fake engine', () => {
         mounts: systemMounts,
       },
     })
-    await expect(ensureSandbox({ engine, config: FAKE_CONFIG })).rejects.toThrow(/new container/)
-    expect(execs).toHaveLength(0)
-    expect(removals).toHaveLength(0)
+
+    const sandbox = await ensureSandbox({ engine, config: FAKE_CONFIG })
+
+    expect(removals).toEqual(['kept-1'])
+    expect(creates).toEqual([FAKE_CONFIG.image])
+    expect(sandbox.created).toBe(true)
+    expect(sandbox.warnings.some((one) => one.includes('shells'))).toBe(true)
   })
 
   it('recreates a stopped container whose image drifted', async () => {
