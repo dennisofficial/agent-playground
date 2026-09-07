@@ -61,6 +61,7 @@ export type SandboxConfig = {
   start?: string | undefined
   dockerfile?: DockerfileBuild | undefined
   env?: Record<string, string> | undefined
+  githubToken?: string | undefined
   mounts?: readonly Mount[] | undefined
   atlasHomeSubtrees?: readonly string[] | undefined
 }
@@ -120,6 +121,11 @@ export function sandboxCreateBody(config: SandboxConfig): CreateContainerBody {
     }
     env.push(`GNUPGHOME=${CONTAINER_GNUPG_HOME}`)
   }
+
+  // gh authenticates non-interactively from GH_TOKEN — no credential file is mounted, so the
+  // sandbox gets the operator's github access without the token touching a disk in there.
+  // https://cli.github.com/manual/gh_help_environment
+  if (config.githubToken !== undefined) env.push(`GH_TOKEN=${config.githubToken}`)
 
   const declared = Object.entries(config.env ?? {})
   const computed = env.filter((entry) => !config.env?.[entry.slice(0, entry.indexOf('='))])

@@ -29,6 +29,13 @@ const bindsOf = (config: SandboxConfig): readonly string[] => {
 }
 
 describe('sandboxCreateBody', () => {
+  it('carries the probed github token as GH_TOKEN, and omits it when there is none', () => {
+    expect(sandboxCreateBody({ ...CONFIG, githubToken: 'gho_fixture' }).Env).toContain(
+      'GH_TOKEN=gho_fixture',
+    )
+    expect(sandboxCreateBody(CONFIG).Env?.some((one) => one.startsWith('GH_TOKEN='))).toBe(false)
+  })
+
   it('appends declared env after the computed env, winning any collision', () => {
     const env = sandboxCreateBody({
       ...CONFIG,
