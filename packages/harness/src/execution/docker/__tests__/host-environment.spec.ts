@@ -60,6 +60,20 @@ describe('hostSandboxEnvironment', () => {
     expect(hostSandboxEnvironment({ env }).sshAuthSock).toBeUndefined()
   })
 
+  it('probes the github token through gh, omitting it when gh is missing or unauthenticated', async () => {
+    expect(hostSandboxEnvironment({ env }).githubToken).toBeUndefined()
+
+    await writeFile(join(home, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    expect(hostSandboxEnvironment({ env }).githubToken).toBeUndefined()
+
+    await writeFile(
+      join(home, 'gh'),
+      '#!/bin/sh\n[ "$1 $2" = "auth token" ] || exit 1\nprintf \'%s\\n\' "gho_fixture-token"\n',
+      { mode: 0o755 },
+    )
+    expect(hostSandboxEnvironment({ env }).githubToken).toBe('gho_fixture-token')
+  })
+
   it('mounts a gitconfig only when the operator has one', async () => {
     expect(hostSandboxEnvironment({ env }).gitconfigPath).toBeUndefined()
     const gitconfig = join(home, '.gitconfig')

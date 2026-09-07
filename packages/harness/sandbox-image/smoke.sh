@@ -56,6 +56,7 @@ expect 'curl present' 'curl' run 'curl --version'
 expect 'ripgrep present' 'ripgrep' run 'rg --version'
 expect 'docker cli present' 'Docker version' run 'docker --version'
 expect 'compose plugin present' 'Docker Compose version' run 'docker compose version'
+expect 'gh present' 'gh version' run 'gh --version'
 
 expect 'node resolves via mise shim' '/opt/mise/shims/node' run 'command -v node'
 expect 'python resolves via mise shim' '/opt/mise/shims/python' run 'command -v python'

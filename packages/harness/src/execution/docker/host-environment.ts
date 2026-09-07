@@ -24,6 +24,7 @@ export type HostSandboxEnvironment = {
   gpgAgentExtraSocket?: string | undefined
   gpgPubringPath?: string | undefined
   gitconfigPath?: string | undefined
+  githubToken?: string | undefined
 }
 
 const gpgAgentExtraSocket = (env: Record<string, string | undefined>): string | undefined => {
@@ -39,6 +40,17 @@ const gpgAgentExtraSocket = (env: Record<string, string | undefined>): string | 
 
 const existingFilePath = (path: string): string | undefined =>
   statSync(path, { throwIfNoEntry: false })?.isFile() ? path : undefined
+
+const githubToken = (env: Record<string, string | undefined>): string | undefined => {
+  const gh = Bun.which('gh', env.PATH === undefined ? undefined : { PATH: env.PATH })
+  if (gh === null) return undefined
+
+  const probed = Bun.spawnSync([gh, 'auth', 'token'], { env })
+  if (!probed.success) return undefined
+
+  const token = new TextDecoder().decode(probed.stdout).trim()
+  return token === '' ? undefined : token
+}
 
 const operatorIds = (): { uid: number; gid: number } => {
   if (process.getuid === undefined || process.getgid === undefined) {
@@ -73,6 +85,7 @@ export function hostSandboxEnvironment(args?: {
     gpgAgentExtraSocket: gpgAgentSocket,
     gpgPubringPath: gpgAgentSocket !== undefined ? existingFilePath(gpgPubringPath) : undefined,
     gitconfigPath: existsSync(gitconfigPath) ? gitconfigPath : undefined,
+    githubToken: githubToken(env),
   }
 }
 
@@ -135,6 +148,7 @@ export function sandboxConfigFromHost(args: {
     gpgAgentExtraSocket: host.gpgAgentExtraSocket,
     gpgPubringPath: host.gpgPubringPath,
     gitconfigPath: host.gitconfigPath,
+    githubToken: host.githubToken,
     setup: args.resolution?.setup,
     start: args.resolution?.start,
     env: args.resolution?.env,
