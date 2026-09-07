@@ -1,10 +1,13 @@
 import { describe } from 'bun:test'
 
-import { accessSync, constants } from 'node:fs'
+import { accessSync, constants, existsSync } from 'node:fs'
 
 export const quoted = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 
 export const dockerUnavailableReason = async (socket: string): Promise<string | undefined> => {
+  if (existsSync('/.dockerenv')) {
+    return 'this spec already runs inside a container — it verifies the host↔daemon boundary and only runs on the host'
+  }
   try {
     accessSync(socket, constants.R_OK | constants.W_OK)
     const response = await fetch('http://localhost/_ping', {

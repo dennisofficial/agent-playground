@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 
-import { existsSync } from 'node:fs'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { DockerProcessPort } from '../docker-process'
 import { DockerEngine } from '../engine'
+import { dockerUnavailableReason } from './live-docker'
 import {
   blockRefusal,
   derivedHostPort,
@@ -143,7 +143,7 @@ describe('sandboxCreateBody publishing', () => {
 })
 
 const SOCKET = '/var/run/docker.sock'
-const describeDocker = existsSync(SOCKET) ? describe : describe.skip
+const describeDocker = (await dockerUnavailableReason(SOCKET)) === undefined ? describe : describe.skip
 const engine = new DockerEngine({ socketPath: SOCKET })
 const PREFIX = 'atlas-dev-ports'
 

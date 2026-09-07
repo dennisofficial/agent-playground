@@ -25,6 +25,7 @@ export type ContainerJsonFields = {
   image?: string | undefined
   setup?: string | undefined
   start?: string | undefined
+  env?: Record<string, string> | undefined
 }
 
 export type ParsedContainerJson =
@@ -49,6 +50,7 @@ const containerJsonSchema = z.strictObject({
   image: z.string().min(1).optional(),
   setup: z.string().min(1).optional(),
   start: z.string().min(1).optional(),
+  env: z.record(z.string(), z.string()).optional(),
   mounts: z.array(mountSchema).optional(),
 })
 
@@ -156,8 +158,8 @@ export function parseContainerJson(args: { text: string; file: string }): Parsed
     mounts.push({ path: checked.path, mode: entry.mode ?? EMountMode.ReadOnly })
   }
 
-  const { image, setup, start } = parsed.data
-  return { ok: true, config: { image, setup, start }, mounts, refusals }
+  const { image, setup, start, env } = parsed.data
+  return { ok: true, config: { image, setup, start, env }, mounts, refusals }
 }
 
 const UNSUPPORTED_COMMAND_SHAPE = 'postCreateCommand (only the string form is supported)'

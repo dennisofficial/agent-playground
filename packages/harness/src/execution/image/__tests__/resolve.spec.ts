@@ -139,6 +139,21 @@ describe('resolveContainerConfig precedence', () => {
     ])
   })
 
+  it('carries declared container env into the resolution', async () => {
+    const resolution = await resolveWith({
+      [`${DIR}/.atlas/container.json`]: JSON.stringify({
+        env: { TURBO_CACHE_DIR: '/tmp/turbo-cache' },
+      }),
+    })
+
+    expect(resolution.source).toBe(EConfigSource.ContainerJson)
+    expect(resolution.env).toEqual({ TURBO_CACHE_DIR: '/tmp/turbo-cache' })
+  })
+
+  it('answers empty env for sources that cannot declare one', async () => {
+    expect((await resolveWith({})).env).toEqual({})
+  })
+
   it('drops the default setup once the operator names an image', async () => {
     const resolution = await resolveWith({
       [`${DIR}/.atlas/container.json`]: JSON.stringify({ image: 'repo/toolchain:latest' }),

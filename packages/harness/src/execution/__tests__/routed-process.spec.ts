@@ -1,9 +1,10 @@
 import { afterAll, describe, expect, it } from 'bun:test'
 
-import { existsSync } from 'node:fs'
 import { mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+import { dockerUnavailableReason } from '../docker/__tests__/live-docker'
 
 import {
   EExecutionLocation,
@@ -140,7 +141,7 @@ describe('RoutedProcessPort', () => {
 })
 
 const SOCKET = '/var/run/docker.sock'
-const DOCKER_AVAILABLE = existsSync(SOCKET)
+const DOCKER_AVAILABLE = (await dockerUnavailableReason(SOCKET)) === undefined
 const describeDocker = DOCKER_AVAILABLE ? describe : describe.skip
 
 const engine = new DockerEngine({ socketPath: SOCKET })

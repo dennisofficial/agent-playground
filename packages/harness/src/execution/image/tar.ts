@@ -10,7 +10,7 @@ const FIELD = {
   mtime: { offset: 136, length: 12 },
   checksum: { offset: 148, length: 8 },
   typeflag: { offset: 156, length: 1 },
-  linkname: { offset: 160, length: 100 },
+  linkname: { offset: 157, length: 100 },
   magic: { offset: 257, length: 8 },
   prefix: { offset: 345, length: 155 },
 } as const
