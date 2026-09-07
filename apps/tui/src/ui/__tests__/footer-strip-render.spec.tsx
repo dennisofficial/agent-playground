@@ -4,6 +4,8 @@ import { testRender } from '@opentui/react/test-utils'
 import { act } from 'react'
 import React from 'react'
 
+import { EEffort } from '@dltech/atlas-core'
+
 import { Footer } from '../components/footer'
 import { hoverGround } from '../components/footer-strip'
 import { EFooterItemReach, type FooterItem } from '../footer-item'
@@ -12,6 +14,8 @@ import { cellsOf } from '../hint-layout'
 import { teardown } from '../markdown/__tests__/harness'
 import { theme } from '../theme'
 import { drawn, frameOf, HEIGHT } from './transcript-fixture'
+
+const MODEL = 'haiku-4-5'
 
 const pill = (over: Partial<FooterItem> & { id: string }): FooterItem => ({
   spans: [{ text: over.id }],
@@ -40,6 +44,8 @@ const footer = (props: {
 }): React.ReactNode => (
   <Footer
     width={props.width}
+    model={MODEL}
+    effort={EEffort.Medium}
     items={props.items}
     strip={props.strip ?? null}
     context={{ percent: 62, tokensUsed: 124_000 }}
@@ -87,10 +93,9 @@ const mount = async (
   )
 
 describe('the pills under the composer', () => {
-  it('starts the chips at the gutter now that the model rides the composer foot', async () => {
+  it('spaces the facts apart and marks where the chips begin with the one separator dot', async () => {
     const frame = await frameOf(footer({ width: 140, items: [PR, SHELLS] }), 140)
-    expect(rowOf(frame).trimStart()).toStartWith('#123 2 shells')
-    expect(rowOf(frame)).not.toContain('·')
+    expect(rowOf(frame).trimStart()).toStartWith(`${MODEL} med · #123 2 shells`)
   })
 
   it('leaves the read-out flush against the far edge', async () => {
@@ -101,7 +106,7 @@ describe('the pills under the composer', () => {
   })
 
   it('says nothing at a width the ladder sheds them at', async () => {
-    const frame = await frameOf(footer({ width: 14, items: [PR, SHELLS] }), 14)
+    const frame = await frameOf(footer({ width: 28, items: [PR, SHELLS] }), 28)
     expect(frame).not.toContain('#123')
     expect(frame).not.toContain('2 shells')
   })

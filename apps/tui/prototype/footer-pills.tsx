@@ -15,6 +15,7 @@
 // which leaves stdin un-raw and sizes the renderer to a default rather than the window.
 
 import { createCliRenderer } from '@opentui/core'
+import { EEffort } from '@dltech/atlas-core'
 import { EShellStatus, toShellId, type ShellSnapshot } from '@dltech/atlas-harness'
 import { createRoot, useKeyboard, useTerminalDimensions } from '@opentui/react'
 import React, { useState } from 'react'
@@ -75,6 +76,8 @@ const SETTLED = EChecksState.None
 type GalleryRow = {
   label: string
   items: readonly FooterItem[]
+  model?: string
+  effort?: EEffort
   strip?: FooterStripState
 }
 
@@ -85,6 +88,8 @@ const GALLERY: readonly GalleryRow[] = [
   },
   {
     label: 'open · checks failing — the screenshot, with the readout it sat beside',
+    model: 'kimi-k3-fast',
+    effort: EEffort.High,
     items: [pr({ pr: 349, state: EPullRequestState.Open, checks: EChecksState.Failing })],
   },
   {
@@ -139,6 +144,8 @@ function GalleryRowView(props: { row: GalleryRow; width: number }): React.ReactN
       </box>
       <Footer
         width={props.width}
+        model={props.row.model ?? 'haiku-4-5'}
+        effort={props.row.effort ?? EEffort.Medium}
         items={props.row.items}
         strip={props.row.strip ?? null}
         context={{ percent: 62, tokensUsed: 124_000 }}
@@ -192,6 +199,8 @@ function Live(props: { width: number }): React.ReactNode {
       <box flexGrow={1} />
       <Footer
         width={props.width}
+        model="haiku-4-5"
+        effort={EEffort.Medium}
         items={LIVE_ITEMS}
         strip={strip}
         context={{ percent: 62, tokensUsed: 124_000 }}

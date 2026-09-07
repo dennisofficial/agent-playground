@@ -42,7 +42,6 @@ import { useDraftTokens } from '../ui/hooks/use-draft-tokens'
 import { liveTokens, tokenAtOffset, tokenizablePaste, type LiveToken } from '../ui/composer-tokens'
 import { pasteDirectoryOf } from './paste-directory'
 import { Footer, type FooterContext } from '../ui/components/footer'
-import { EFFORT_WORD } from '../ui/effort-label'
 import { footerLayout } from '../ui/footer-layout'
 import { Screen } from '../ui/components/screen'
 import { HeaderBar } from '../ui/components/header-bar'
@@ -927,21 +926,15 @@ function Workspace(props: {
     () =>
       footerLayout({
         width: chromeWidth,
+        model: card?.label ?? modelLabel(selection.ref.modelId),
+        effort: selection.effort,
         items:
           locationPill === null
             ? surfaces.footerItems
             : [locationPill, ...surfaces.footerItems],
         context: readout,
       }),
-    [chromeWidth, locationPill, readout, surfaces.footerItems],
-  )
-
-  const composerFoot = useMemo(
-    () => ({
-      model: card?.label ?? modelLabel(selection.ref.modelId),
-      effort: EFFORT_WORD[selection.effort],
-    }),
-    [card, selection.effort, selection.ref],
+    [card, chromeWidth, locationPill, readout, selection.effort, selection.ref, surfaces.footerItems],
   )
 
   const footerStrip = useFooterStrip({ items: footerRow.instruments.items, draft })
@@ -1251,12 +1244,12 @@ function Workspace(props: {
                   ? {}
                   : { title: conversation.handle }
                 : { title: `@${agentView.name}`, accent: theme.court.external })}
-              foot={composerFoot}
             />
           </box>
           <box flexGrow={welcome ? 1 : 0} flexShrink={1} />
           <Footer
             width={chromeWidth}
+            model={card?.label ?? modelLabel(selection.ref.modelId)}
             layout={footerRow}
             strip={footerStrip.state}
             onActivateItem={footerStrip.handleActivate}

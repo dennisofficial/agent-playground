@@ -18,7 +18,7 @@ const PILL = '1 shell'
 
 const SHELLS_OVERLAY = 'SHELL LOG'
 
-const TOO_NARROW_FOR_A_PILL = 20
+const TOO_NARROW_FOR_A_PILL = 36
 
 const running = (shellId: string): ShellSnapshot => ({
   command: 'bun run dev',
@@ -60,25 +60,20 @@ type Colour = { equals: (other: unknown) => boolean }
 
 type Spans = { lines: ({ spans: { text: string; bg: Colour }[] } | undefined)[] }
 
-/**
- * The pill row is the last line with anything on it: a status line names the same shell higher up
- * the frame, so matching by content alone would land there instead.
- */
-const lastRow = (setup: Mounted): { index: number; text: string } => {
-  const rows = setup.captureCharFrame().split('\n')
-  const index = rows.reduce((last, row, at) => (row.trim().length > 0 ? at : last), -1)
-  return { index, text: rows[index] ?? '' }
-}
-
-const footerRow = (setup: Mounted): string => lastRow(setup).text
+const footerRow = (setup: Mounted): string =>
+  setup
+    .captureCharFrame()
+    .split('\n')
+    .find((line) => line.includes(PILL) && line.includes('haiku-4-5')) ?? ''
 
 const bandedPill = (setup: Mounted): boolean => {
-  const row = lastRow(setup)
-  if (!row.text.includes(PILL)) return false
+  const rows = setup.captureCharFrame().split('\n')
+  const row = rows.findIndex((line) => line.includes(PILL) && line.includes('haiku-4-5'))
+  if (row < 0) return false
 
-  const cell = row.text.indexOf(PILL)
+  const cell = (rows[row] ?? '').indexOf(PILL)
   let column = 0
-  for (const span of (setup.captureSpans() as unknown as Spans).lines[row.index]?.spans ?? []) {
+  for (const span of (setup.captureSpans() as unknown as Spans).lines[row]?.spans ?? []) {
     const width = [...span.text].length
     if (cell < column + width) return span.bg.equals(parseColor(theme.hover))
     column += width

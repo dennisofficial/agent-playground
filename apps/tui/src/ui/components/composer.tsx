@@ -7,7 +7,7 @@ import { mentionStyleId, mentionSyntaxStyle } from '../mention-style'
 import { useAppearance } from '../hooks/use-appearance'
 import type { DraftControls } from '../hooks/use-draft'
 import { glyph, theme } from '../theme'
-import { composerNoticeCells, composerFoot, composerTitle, type ComposerFoot } from './composer-title'
+import { composerNoticeCells, composerTitle } from './composer-title'
 import { EFrameRule, Frame, FRAME_INSET, FRAME_PAD } from './frame'
 import { NoticeSlab } from './notice-slab'
 import { Panel, PANEL_INSET, PANEL_PAD } from './panel'
@@ -82,7 +82,6 @@ function DerivedComposer(props: {
   focused?: boolean
   title?: string
   accent?: string
-  foot?: ComposerFoot
   highlights?: readonly HighlightSpan[]
   onCursorMoved?: (() => void) | undefined
 }): React.ReactNode {
@@ -208,21 +207,6 @@ function DerivedComposer(props: {
       ? null
       : composerTitle({ title: props.title, width: props.width, badge, edge })
 
-  const foot =
-    props.foot === undefined
-      ? null
-      : composerFoot({ foot: props.foot, width: props.width, edge })
-
-  const footNode = (args: { fg: string; bg: string }): React.ReactNode => (
-    <text fg={args.fg} bg={args.bg}>
-      {` ${foot?.model ?? ''}`}
-      {foot?.effort == null ? '' : ` * ${foot.effort}`}
-      {' '}
-    </text>
-  )
-  const frameFoot = foot === null ? undefined : footNode({ fg: theme.caretFg, bg: rail })
-  const panelFoot = foot === null ? undefined : footNode({ fg: rail, bg: theme.panelBg })
-
   const label = (bg: string): React.ReactNode => (
     <NoticeSlab bg={bg} cells={composerNoticeCells({ width: props.width, badge, title, edge })} />
   )
@@ -270,7 +254,6 @@ function DerivedComposer(props: {
           : {
               title: <text fg={theme.caretFg} bg={rail}>{` ${title} `}</text>,
             })}
-        {...(frameFoot === undefined ? {} : { foot: frameFoot })}
       >
         {draft}
       </Frame>
@@ -288,8 +271,7 @@ function DerivedComposer(props: {
         : { badge: <text fg={theme.hint} bg={theme.panelBg}>{` ${badge} `}</text> })}
       {...(title === null
         ? {}
-        : { title: <text fg={rail} bg={theme.panelBg}>{` ${title} `}</text> })}
-      {...(panelFoot === undefined ? {} : { foot: panelFoot })}
+        : { title: <text fg={theme.body} bg={theme.panelBg}>{` ${title} `}</text> })}
     >
       {draft}
     </Panel>
