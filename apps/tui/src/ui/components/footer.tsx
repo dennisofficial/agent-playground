@@ -78,6 +78,39 @@ function DerivedFooter(props: {
 
   const facts = separated(factSpans({ instruments: layout.instruments }))
 
+  const strip = (
+    <FooterStrip
+      items={layout.instruments.items}
+      lead={layout.instruments.rows === 1 && facts.length > 0}
+      selectedId={props.strip?.itemId ?? null}
+      {...(props.onActivateItem === undefined ? {} : { onActivate: props.onActivateItem })}
+    />
+  )
+
+  if (layout.instruments.rows === 2) {
+    return (
+      <box
+        flexDirection="column"
+        flexShrink={0}
+        paddingLeft={FOOTER_GUTTER}
+        paddingRight={FOOTER_GUTTER}
+      >
+        <box flexDirection="row" flexShrink={0}>
+          <text flexShrink={0}>
+            <Spans spans={facts} />
+          </text>
+          <box flexGrow={1} />
+          <text flexShrink={0}>
+            <Spans spans={context} />
+          </text>
+        </box>
+        <box flexDirection="row" flexShrink={0}>
+          {strip}
+        </box>
+      </box>
+    )
+  }
+
   return (
     <box
       flexDirection="row"
@@ -88,12 +121,7 @@ function DerivedFooter(props: {
       <text flexShrink={0}>
         <Spans spans={facts} />
       </text>
-      <FooterStrip
-        items={layout.instruments.items}
-        lead={facts.length > 0}
-        selectedId={props.strip?.itemId ?? null}
-        {...(props.onActivateItem === undefined ? {} : { onActivate: props.onActivateItem })}
-      />
+      {strip}
       <box flexGrow={1} />
       <text flexShrink={0}>
         <Spans spans={context} />
