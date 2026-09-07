@@ -3,6 +3,7 @@ import {
   atlasDirectory,
   repositoryRootOf,
   type InstructionPlan,
+  type NestedInstructionPlan,
   type SettingsService,
 } from '@dltech/atlas-harness'
 
@@ -30,5 +31,20 @@ export function instructionPlanOf(args: {
       includeProject: enabled(ESettingId.ProjectInstructions),
     },
     reload: enabled(ESettingId.ReloadInstructions),
+  }
+}
+
+export function nestedInstructionPlanOf(args: {
+  settings: SettingsService
+  projectDirectory: string
+}): NestedInstructionPlan {
+  const resolved = args.settings.snapshot().resolution.settings
+  const enabled = (id: ESettingId): boolean => resolved.get(id)?.value !== false
+
+  return {
+    root: repositoryRootOf({ from: args.projectDirectory }),
+    family: familyOf(resolved.get(ESettingId.InstructionFilenames)?.value),
+    reload: enabled(ESettingId.ReloadInstructions),
+    enabled: enabled(ESettingId.ProjectInstructions),
   }
 }

@@ -18,7 +18,6 @@ export enum ESettingId {
   ProjectInstructions = 'context.projectInstructions',
   UserInstructions = 'context.userInstructions',
   InstructionFilenames = 'context.filenames',
-  NestedInstructions = 'context.nestedInstructions',
   ReloadInstructions = 'context.reload',
   AutoCompact = 'context.autoCompact',
   ImageRows = 'transcript.imageRows',
@@ -209,17 +208,6 @@ export const ATLAS_SETTINGS: readonly SettingDefinition[] = [
       { value: 'agents', label: 'AGENTS.md' },
       { value: 'none', label: 'neither', detail: 'ATLAS.md only' },
     ],
-  },
-  {
-    id: ESettingId.NestedInstructions,
-    page: ESettingPage.General,
-    group: 'Project context',
-    label: 'Nested instructions',
-    description:
-      'Pull in the instruction file above a path the moment a tool touches it, rather than only the ones on the way to the working directory. This is what lets a package deep in a monorepo state its own rules without every session paying for them.',
-    environmentVariable: 'ATLAS_NESTED_INSTRUCTIONS',
-    kind: ESettingKind.Toggle,
-    fallback: true,
   },
   {
     id: ESettingId.ReloadInstructions,

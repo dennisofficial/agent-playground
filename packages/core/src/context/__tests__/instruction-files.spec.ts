@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'bun:test'
 
-import { EInstructionFamily, EInstructionOrigin, instructionCandidates } from '../instruction-files'
+import {
+  EInstructionFamily,
+  EInstructionOrigin,
+  instructionCandidates,
+  nestedInstructionCandidates,
+} from '../instruction-files'
 
 const pathsOf = (candidates: readonly { path: string }[]): string[] =>
   candidates.map((candidate) => candidate.path)
@@ -127,6 +132,69 @@ describe('instructionCandidates, project scope', () => {
         includeProject: false,
       }),
     ).toEqual([])
+  })
+})
+
+describe('nestedInstructionCandidates', () => {
+  const nested = (args: {
+    cwd: string
+    touchedDirectory: string
+    family?: EInstructionFamily
+  }): readonly { path: string; origin: EInstructionOrigin }[] =>
+    nestedInstructionCandidates({
+      root: '/repo',
+      cwd: args.cwd,
+      touchedDirectory: args.touchedDirectory,
+      family: args.family ?? EInstructionFamily.Both,
+    })
+
+  it('offers the directories above a touched file that the project descent never visited', () => {
+    expect(
+      pathsOf(nested({ cwd: '/repo/apps/tui', touchedDirectory: '/repo/packages/core/src' })),
+    ).toEqual([
+      ...namesIn('/repo/packages'),
+      ...namesIn('/repo/packages/core'),
+      ...namesIn('/repo/packages/core/src'),
+    ])
+  })
+
+  it('repeats nothing the project descent already covered', () => {
+    expect(nested({ cwd: '/repo/apps/tui', touchedDirectory: '/repo/apps' })).toEqual([])
+    expect(nested({ cwd: '/repo/apps/tui', touchedDirectory: '/repo/apps/tui' })).toEqual([])
+    expect(nested({ cwd: '/repo/apps/tui', touchedDirectory: '/repo' })).toEqual([])
+  })
+
+  it('reaches directories deeper than the working directory', () => {
+    expect(pathsOf(nested({ cwd: '/repo', touchedDirectory: '/repo/src/nested' }))).toEqual([
+      ...namesIn('/repo/src'),
+      ...namesIn('/repo/src/nested'),
+    ])
+  })
+
+  it('stays inside the root when the touched path escapes it', () => {
+    expect(nested({ cwd: '/repo', touchedDirectory: '/etc' })).toEqual([])
+    expect(nested({ cwd: '/repo/apps', touchedDirectory: '/repo-other/pkg' })).toEqual([])
+  })
+
+  it('narrows to the borrowed family the project is read for', () => {
+    expect(
+      pathsOf(
+        nested({ cwd: '/repo', touchedDirectory: '/repo/pkg', family: EInstructionFamily.Agents }),
+      ),
+    ).toEqual([
+      '/repo/pkg/AGENTS.md',
+      '/repo/pkg/ATLAS.md',
+      '/repo/pkg/AGENTS.local.md',
+      '/repo/pkg/ATLAS.local.md',
+    ])
+  })
+
+  it('keeps the local origin so a private sibling still reads as one', () => {
+    const candidates = nested({ cwd: '/repo', touchedDirectory: '/repo/pkg' })
+
+    expect(
+      candidates.find((candidate) => candidate.path === '/repo/pkg/ATLAS.local.md')?.origin,
+    ).toBe(EInstructionOrigin.ProjectLocal)
   })
 })
 

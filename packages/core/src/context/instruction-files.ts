@@ -93,6 +93,25 @@ function projectCandidates(args: {
   ])
 }
 
+export function nestedInstructionCandidates(args: {
+  root: string
+  cwd: string
+  touchedDirectory: string
+  family: EInstructionFamily
+}): readonly InstructionCandidate[] {
+  const covered = new Set(
+    projectCandidates({ root: args.root, cwd: args.cwd, family: args.family }).map(
+      (candidate) => candidate.path,
+    ),
+  )
+
+  return projectCandidates({
+    root: args.root,
+    cwd: args.touchedDirectory,
+    family: args.family,
+  }).filter((candidate) => !covered.has(candidate.path))
+}
+
 export function instructionCandidates(args: {
   root: string
   cwd: string
