@@ -4,24 +4,6 @@ import { EMountMode, type Mount } from '../image/mounts'
 import { CONTAINER_GNUPG_HOME, type SandboxConfig } from './sandbox'
 import type { ContainerDetails, ContainerMount } from './engine'
 
-export class SandboxMountsChanged extends Error {
-  constructor(args: { name: string }) {
-    super(
-      `the declared mounts changed since ${args.name} was created, and Docker cannot add a bind to an existing container — ${args.name} is still running, so recreating it would kill its shells: stop it and the next command creates a new container`,
-    )
-    this.name = 'SandboxMountsChanged'
-  }
-}
-
-export class SandboxImageChanged extends Error {
-  constructor(args: { name: string; image: string }) {
-    super(
-      `the image for ${args.name} changed to ${args.image} since the container was created, and Docker cannot swap an existing container's image — ${args.name} is still running, so recreating it would kill its shells: stop it and the next command creates a new container`,
-    )
-    this.name = 'SandboxImageChanged'
-  }
-}
-
 export const declaredMountsLabel = (prefix: string): string => `${prefix}.mounts`
 
 export const encodeDeclaredMounts = (mounts: readonly Mount[]): string =>
@@ -80,7 +62,7 @@ export const missingIdentityMounts = (args: {
     )
     .map(
       (missing) =>
-        `${missing.source} appeared after this container was created, so the sandbox cannot see it — stop the container and the next command creates a new container that mounts it`,
+        `${missing.source} appeared after this container was created, so the sandbox cannot see it yet — the sandbox picks it up on its next recreate`,
     )
 
 export const mountsDrift = (args: {

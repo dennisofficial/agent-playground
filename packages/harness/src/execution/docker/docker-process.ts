@@ -47,10 +47,10 @@ const bridge = (
     },
   })
 
-const containerStopped = (error: unknown): boolean =>
+const containerGone = (error: unknown): boolean =>
   error instanceof EngineRequestFailed &&
-  error.status === 409 &&
-  error.message.includes('is not running')
+  ((error.status === 409 && error.message.includes('is not running')) ||
+    (error.status === 404 && error.message.includes('No such container')))
 
 export class DockerProcessPort implements ProcessPort {
   private readonly engine: DockerEngine
@@ -202,7 +202,7 @@ export class DockerProcessPort implements ProcessPort {
     try {
       return await this.execIn({ sandbox: await this.ensure(), command: args })
     } catch (error) {
-      if (!containerStopped(error)) throw error
+      if (!containerGone(error)) throw error
 
       this.onStatus?.({ state: ESandboxState.Stopped })
       this.sandboxStopped()

@@ -3,8 +3,6 @@ import { createHash } from 'node:crypto'
 import { mountBind, type Mount } from '../image/mounts'
 import { dockerfileImageReference, ensureBuiltImage, type DockerfileBuild } from '../image/build'
 import {
-  SandboxImageChanged,
-  SandboxMountsChanged,
   declaredMountsDrift,
   declaredMountsLabel,
   encodeDeclaredMounts,
@@ -210,16 +208,14 @@ export async function ensureSandbox(args: {
     const imageChanged = details.config.image !== wanted
 
     if (drifted || imageChanged) {
-      if (details.state.running) {
-        throw drifted
-          ? new SandboxMountsChanged({ name })
-          : new SandboxImageChanged({ name, image: wanted })
-      }
       await args.engine.removeContainer({ id: existing.id })
+      const why = drifted
+        ? 'the declared mounts changed since it was created'
+        : `the image changed to ${wanted} since it was created`
       recreated.push(
-        drifted
-          ? `recreated ${name}: the declared mounts changed since it was created, and it was stopped, so nothing live was lost`
-          : `recreated ${name}: the image changed to ${wanted} since it was created, and it was stopped, so nothing live was lost`,
+        details.state.running
+          ? `recreated ${name}: ${why} — it was running, so its shells were killed; anything long-lived in there needs a restart`
+          : `recreated ${name}: ${why}, and it was stopped, so nothing live was lost`,
       )
     } else {
       if (!details.state.running) await args.engine.startContainer({ id: existing.id })

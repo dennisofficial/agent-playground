@@ -32,6 +32,7 @@ class StubEngine extends DockerEngine {
   startCalls = 0
   createCalls = 0
   execError: Error | null = null
+  listError: Error | null = null
 
   constructor() {
     super({ socketPath: '/atlas-dev-stub.sock' })
@@ -39,6 +40,11 @@ class StubEngine extends DockerEngine {
 
   override async listContainers(): Promise<ContainerSummary[]> {
     this.listCalls += 1
+    if (this.listError !== null) {
+      const error = this.listError
+      this.listError = null
+      throw error
+    }
     if (!this.exists) return []
     return [
       {
@@ -89,7 +95,11 @@ class StubEngine extends DockerEngine {
   private execSeq = 0
 
   override async createExec(): Promise<{ id: string }> {
-    if (this.execError !== null) throw this.execError
+    if (this.execError !== null) {
+      const error = this.execError
+      this.execError = null
+      throw error
+    }
     if (!this.running) {
       throw new EngineRequestFailed({
         status: 409,
@@ -203,10 +213,10 @@ describe('DockerProcessPort recovering a sandbox that stopped behind its back', 
   })
 })
 
-describe('DockerProcessPort after a refused sandbox', () => {
-  it('does not latch a failed ensure: the next spawn re-ensures and recovers once the container is gone', async () => {
+describe('DockerProcessPort after a failed ensure', () => {
+  it('does not latch the failure: the next spawn re-ensures against the daemon', async () => {
     const engine = new StubEngine()
-    engine.image = 'node:19-ancient'
+    engine.listError = new Error('daemon socket vanished mid-call')
     const seen: SandboxStatus[] = []
     const port = new DockerProcessPort({
       engine,
@@ -215,16 +225,45 @@ describe('DockerProcessPort after a refused sandbox', () => {
       onStatus: (status) => seen.push(status),
     })
 
-    await expect(runTrue(port)).rejects.toThrow(/new container/)
+    await expect(runTrue(port)).rejects.toThrow('daemon socket vanished mid-call')
     expect(statesOf(seen)).toEqual([ESandboxState.Starting, ESandboxState.Failed])
 
-    await engine.removeContainer({ id: CONTAINER_ID })
+    expect(await runTrue(port)).toBe(0)
+    expect(statesOf(seen)).toEqual([
+      ESandboxState.Starting,
+      ESandboxState.Failed,
+      ESandboxState.Starting,
+      ESandboxState.Running,
+    ])
+  })
+})
+
+describe('DockerProcessPort when the container vanishes between ensure and exec', () => {
+  it('re-ensures and retries once on a 404, the way it does for a stopped container', async () => {
+    const engine = new StubEngine()
+    const seen: SandboxStatus[] = []
+    const port = new DockerProcessPort({
+      engine,
+      sandbox: config(),
+      dockerCli: null,
+      onStatus: (status) => seen.push(status),
+    })
+
+    expect(await runTrue(port)).toBe(0)
+
+    engine.execError = new EngineRequestFailed({
+      status: 404,
+      message: `No such container: ${CONTAINER_ID}`,
+    })
+    engine.exists = false
+    engine.running = false
 
     expect(await runTrue(port)).toBe(0)
     expect(engine.createCalls).toBe(1)
     expect(statesOf(seen)).toEqual([
       ESandboxState.Starting,
-      ESandboxState.Failed,
+      ESandboxState.Running,
+      ESandboxState.Stopped,
       ESandboxState.Starting,
       ESandboxState.Running,
     ])
