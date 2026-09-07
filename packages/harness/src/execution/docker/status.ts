@@ -9,7 +9,7 @@ export enum ESandboxState {
 
 export type SandboxStatus =
   | { state: ESandboxState.Starting }
-  | { state: ESandboxState.Running; ports: readonly BoundPort[] }
+  | { state: ESandboxState.Running; name: string; ports: readonly BoundPort[] }
   | { state: ESandboxState.Stopped }
   | { state: ESandboxState.Failed; reason: string }
 
