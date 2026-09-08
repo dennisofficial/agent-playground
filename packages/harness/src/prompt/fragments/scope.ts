@@ -38,3 +38,16 @@ export class ConcernThenBuildFragment extends PromptFragment {
     ].join('\n')
   }
 }
+
+export class PaceFragment extends PromptFragment {
+  readonly id = 'scope.pace'
+
+  text(): string {
+    return [
+      'A message that is mostly the developer thinking a design through out loud gets an answer, not an',
+      'implementation: discuss it and stop, even where one sentence in it is phrased as a decision. And a',
+      'question you ask the developer ends your turn — never ask for their call and then ship related work',
+      'before they give it. This gates when work starts, not how started work runs.',
+    ].join('\n')
+  }
+}

@@ -23,6 +23,7 @@ import { DestructiveActionsFragment, GitEtiquetteFragment } from './fragments/sa
 import {
   ConcernThenBuildFragment,
   DeliverWhatWasAskedFragment,
+  PaceFragment,
   RequestLadderFragment,
 } from './fragments/scope'
 import { BackgroundShellsFragment } from './fragments/shells'
@@ -47,6 +48,7 @@ export function registerBuiltinPromptFragments({
     RequestLadderFragment,
     DeliverWhatWasAskedFragment,
     ConcernThenBuildFragment,
+    PaceFragment,
     TodayFragment,
     ProjectDirectoryFragment,
     RelativePathsFragment,

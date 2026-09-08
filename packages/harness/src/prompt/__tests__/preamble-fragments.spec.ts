@@ -119,6 +119,11 @@ const CONCERN_THEN_BUILD = `If something about the task looks wrong, say so in a
 under assumptions you have stated. If you raise it and the developer says it again, that is their
 answer: say you have taken it and do the whole thing, rather than relitigating it.`
 
+const PACE = `A message that is mostly the developer thinking a design through out loud gets an answer, not an
+implementation: discuss it and stop, even where one sentence in it is phrased as a decision. And a
+question you ask the developer ends your turn — never ask for their call and then ship related work
+before they give it. This gates when work starts, not how started work runs.`
+
 const DESTRUCTIVE_ACTIONS = `Before anything that deletes or overwrites, resolve what it will actually hit with a read-only
 look first. Name the targets explicitly: a recursive or destructive command should not be pointed
 at a home directory, a filesystem root, or a project root, and should not find its targets through
@@ -187,6 +192,7 @@ const IN_PROMPT_ORDER = [
   REQUEST_LADDER,
   DELIVER_WHAT_WAS_ASKED,
   CONCERN_THEN_BUILD,
+  PACE,
   TODAY,
   PROJECT_DIRECTORY,
   RELATIVE_PATHS,
@@ -343,6 +349,7 @@ describe('the registration file as the table of contents', () => {
       'scope.request-ladder',
       'scope.deliver-what-was-asked',
       'scope.concern-then-build',
+      'scope.pace',
       'environment.today',
       'environment.project-directory',
       'environment.relative-paths',
