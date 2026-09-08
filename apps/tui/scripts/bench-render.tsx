@@ -136,11 +136,19 @@ const benchApp = (args: {
   }
 }
 
+export type BenchFrameStats = {
+  averageFrameTime: number
+  nativeAverageFrameTime: number
+  averageCellsUpdated: number
+  frameCallbackTime: number
+}
+
 export type BenchRender = {
   framesRendered: () => number
   frameText: () => string
   flush: () => Promise<void>
   root: () => Renderable
+  stats: () => BenchFrameStats
   close: () => Promise<void>
 }
 
@@ -177,9 +185,19 @@ export const mountBenchRender = async (args: {
    */
   globalThis.IS_REACT_ACT_ENVIRONMENT = false
 
+  setup.renderer.setGatherStats(true)
   await setup.flush()
   return {
     framesRendered: () => setup.renderer.getStats().frameCount,
+    stats: () => {
+      const stats = setup.renderer.getStats()
+      return {
+        averageFrameTime: stats.averageFrameTime,
+        nativeAverageFrameTime: stats.nativeAverageFrameTime,
+        averageCellsUpdated: stats.averageCellsUpdated,
+        frameCallbackTime: stats.frameCallbackTime,
+      }
+    },
     frameText: () => setup.captureCharFrame(),
     flush: () => setup.flush(),
     root: () => setup.renderer.root,

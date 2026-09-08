@@ -47,7 +47,11 @@ export const benchModel = (): MockLanguageModelV4 => {
     provider: 'bench',
     modelId: 'bench-kimi-speed',
     doStream: async () => ({
-      stream: simulateReadableStream({ chunks: parts, initialDelayInMs: 0, chunkDelayInMs: 0 }).pipeThrough(
+      stream: simulateReadableStream({
+        chunks: parts,
+        initialDelayInMs: 0,
+        chunkDelayInMs: Number(Bun.env.ATLAS_BENCH_CHUNK_DELAY_MS ?? 0),
+      }).pipeThrough(
         new TransformStream({
           transform: (part, controller) => {
             streamedParts += 1

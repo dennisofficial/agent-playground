@@ -1,4 +1,4 @@
-import { marked, type Tokens } from 'marked'
+import { marked, type Token, type Tokens } from 'marked'
 
 export enum EFenceState {
   Naming = 'naming',
@@ -20,10 +20,14 @@ export type MarkdownSegment =
   | { readonly kind: 'table'; readonly markdown: string }
 
 export function segmentMarkdown(source: string): readonly MarkdownSegment[] {
+  return segmentsFromTokens(marked.lexer(source))
+}
+
+function segmentsFromTokens(tokens: readonly Token[]): readonly MarkdownSegment[] {
   const segments: MarkdownSegment[] = []
   let prose = ''
 
-  for (const token of marked.lexer(source)) {
+  for (const token of tokens) {
     if (token.type === 'table') {
       if (prose) {
         segments.push({ kind: 'prose', text: prose })
@@ -50,7 +54,23 @@ export function segmentMarkdown(source: string): readonly MarkdownSegment[] {
 
 const SETTLED_CACHE_LIMIT = 8
 
-const settledCache = new Map<string, readonly MarkdownSegment[]>()
+const SEALABLE_TYPES: ReadonlySet<string> = new Set([
+  'space',
+  'paragraph',
+  'text',
+  'heading',
+  'hr',
+  'blockquote',
+  'table',
+])
+
+type SettledEntry = {
+  readonly body: string
+  readonly segments: readonly MarkdownSegment[]
+  readonly sealable: boolean
+}
+
+const settledCache: SettledEntry[] = []
 
 /**
  * marked's tokens tile their input, and only a fence can span a blank line — so everything before
@@ -104,14 +124,40 @@ function openFenceSegment(raw: string): MarkdownSegment {
   }
 }
 
+/**
+ * marked 18 block tokens that end at a blank line whatever follows it. A list, an indented or
+ * fenced block and an html block can reach past a blank line, so a prefix whose last block is one
+ * of those is not sealable: extending from it would lex a delta that starts mid-construct. A
+ * sealable prefix can be extended by lexing only the delta, since nothing after the blank line
+ * reaches back into it — that keeps a crossed boundary from re-lexing the whole settled prefix.
+ */
 function settledSegments(prefix: string): readonly MarkdownSegment[] {
-  const hit = settledCache.get(prefix)
-  if (hit !== undefined) return hit
+  let longest: SettledEntry | undefined
+  let longestSealable: SettledEntry | undefined
+  for (const entry of settledCache) {
+    if (!prefix.startsWith(entry.body)) continue
+    if (longest === undefined || entry.body.length > longest.body.length) longest = entry
+    if (entry.sealable && (longestSealable === undefined || entry.body.length > longestSealable.body.length)) {
+      longestSealable = entry
+    }
+  }
+  if (longest !== undefined && longest.body === prefix) return longest.segments
 
-  const segments = segmentMarkdown(prefix)
-  if (settledCache.size >= SETTLED_CACHE_LIMIT) settledCache.clear()
-  settledCache.set(prefix, segments)
+  const base = longestSealable
+  const tokens = marked.lexer(prefix.slice(base?.body.length ?? 0))
+  const segments = joinSeam({ settled: base?.segments ?? [], live: segmentsFromTokens(tokens) })
+  settledCache.push({ body: prefix, segments, sealable: endsSealed(tokens) })
+  if (settledCache.length > SETTLED_CACHE_LIMIT) settledCache.shift()
   return segments
+}
+
+function endsSealed(tokens: readonly Token[]): boolean {
+  for (let index = tokens.length - 1; index >= 0; index -= 1) {
+    const token = tokens[index]
+    if (token === undefined || token.type === 'space') continue
+    return SEALABLE_TYPES.has(token.type)
+  }
+  return true
 }
 
 function joinSeam(args: {
