@@ -4,8 +4,15 @@ export const moreKey = (callId: string): string => `more:${callId}`
 
 export const sentenceKey = (callId: string): string => `sentence:${callId}`
 
+export const contextKey = (id: string): string => `context:${id}`
+
 const expansionKeysOf = (run: ToolRun): readonly string[] =>
-  run.calls.flatMap((call) => [call.callId, moreKey(call.callId), sentenceKey(call.callId)])
+  run.calls.flatMap((call) => [
+    call.callId,
+    moreKey(call.callId),
+    sentenceKey(call.callId),
+    ...call.attachments.map((attachment) => contextKey(attachment.id)),
+  ])
 
 export type OpenedSubsets = WeakMap<ToolRun, ReadonlySet<string>>
 

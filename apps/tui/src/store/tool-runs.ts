@@ -1,4 +1,4 @@
-import type { CallId, Event, EventOfType } from '@dltech/atlas-core'
+import { EContextSlot, type CallId, type Event, type EventOfType } from '@dltech/atlas-core'
 
 export enum ECallState {
   Pending = 'pending',
@@ -32,6 +32,14 @@ export type ToolCall = {
    * the result. Absent once the call settles — the durable output takes over.
    */
   liveOutput?: string | undefined
+  attachments: readonly ContextAttachment[]
+}
+
+export type ContextAttachment = {
+  id: string
+  slot: string
+  name: string
+  content: string
 }
 
 /**
@@ -117,6 +125,7 @@ function callOf(args: {
   seed: CallSeed
   settle: Settle | undefined
   awaiting: string | undefined
+  attachments: readonly ContextAttachment[]
 }): ToolCall {
   const { seed, settle, awaiting } = args
   const unsettled = awaiting === undefined ? ECallState.Pending : ECallState.AwaitingApproval
@@ -131,6 +140,7 @@ function callOf(args: {
     note: settle?.note ?? awaiting ?? null,
     at: seed.at,
     settledAt: settle?.at ?? null,
+    attachments: args.attachments,
   }
 }
 
@@ -138,6 +148,7 @@ function runOf(args: {
   seeds: readonly CallSeed[]
   settles: ReadonlyMap<CallId, Settle>
   awaiting: ReadonlyMap<CallId, string>
+  attachments: ReadonlyMap<CallId, readonly ContextAttachment[]>
 }): ToolRun {
   const first = args.seeds[0]
   if (first === undefined) throw new Error('a tool run needs at least one call')
@@ -150,9 +161,45 @@ function runOf(args: {
         seed,
         settle: args.settles.get(seed.callId),
         awaiting: args.awaiting.get(seed.callId),
+        attachments: args.attachments.get(seed.callId) ?? NOTHING_ATTACHED,
       }),
     ),
   }
+}
+
+const NOTHING_ATTACHED: readonly ContextAttachment[] = Object.freeze([])
+
+const MESSAGE_BADGES: ReadonlySet<string> = new Set([EContextSlot.Skill, EContextSlot.File])
+
+function attachmentsOf(events: readonly Event[]): Map<CallId, ContextAttachment[]> {
+  const attached = new Map<CallId, ContextAttachment[]>()
+  let lastCall: CallId | null = null
+
+  for (const event of events) {
+    if (brokenBy(event)) {
+      lastCall = null
+      continue
+    }
+    if (event.type === 'tool-called' || event.type === 'tool-result' || event.type === 'tool-denied') {
+      lastCall = event.callId
+      continue
+    }
+    if (event.type !== 'context-loaded' || lastCall === null || MESSAGE_BADGES.has(event.slot)) {
+      continue
+    }
+
+    const attachment: ContextAttachment = {
+      id: event.id,
+      slot: event.slot,
+      name: event.key,
+      content: event.content,
+    }
+    const held = attached.get(lastCall)
+    if (held === undefined) attached.set(lastCall, [attachment])
+    else held.push(attachment)
+  }
+
+  return attached
 }
 
 /**
@@ -171,6 +218,7 @@ const brokenBy = (event: Event): boolean => {
 export function toolRuns(events: readonly Event[]): ToolRun[] {
   const settles = settlesOf(events)
   const awaiting = awaitingApprovalIn(events)
+  const attachments = attachmentsOf(events)
   const runs: CallSeed[][] = []
   let open = false
 
@@ -186,12 +234,14 @@ export function toolRuns(events: readonly Event[]): ToolRun[] {
     open = true
   }
 
-  return runs.map((seeds) => runOf({ seeds, settles, awaiting }))
+  return runs.map((seeds) => runOf({ seeds, settles, awaiting, attachments }))
 }
 
 const NO_SETTLES: ReadonlyMap<CallId, Settle> = new Map()
 
 const NONE_AWAITING: ReadonlyMap<CallId, string> = new Map()
+
+const NO_ATTACHMENTS: ReadonlyMap<CallId, readonly ContextAttachment[]> = new Map()
 
 export function liveToolRuns(calls: readonly LiveToolCall[]): LiveToolRun[] {
   const runs: { precededByBlocks: number; seeds: CallSeed[] }[] = []
@@ -205,7 +255,7 @@ export function liveToolRuns(calls: readonly LiveToolCall[]): LiveToolRun[] {
   }
 
   return runs.map((run) => ({
-    run: runOf({ seeds: run.seeds, settles: NO_SETTLES, awaiting: NONE_AWAITING }),
+    run: runOf({ seeds: run.seeds, settles: NO_SETTLES, awaiting: NONE_AWAITING, attachments: NO_ATTACHMENTS }),
     precededByBlocks: run.precededByBlocks,
   }))
 }

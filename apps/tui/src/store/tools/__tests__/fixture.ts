@@ -24,6 +24,7 @@ export function aCall(args: {
     note: args.note ?? null,
     at: null,
     settledAt: args.state === ECallState.Pending ? null : '2026-08-29T00:00:00.000Z',
+    attachments: [],
   }
 }
 

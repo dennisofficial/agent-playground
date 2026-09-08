@@ -4,7 +4,6 @@ import { formatElapsed } from '../ui/theme'
 
 
 import { agentEndedLine, agentEndingFailed } from './agent-ended-line'
-import { injectedContextBlocks } from './injected-context'
 import { modelEntries } from './model-entries'
 import { serviceEndedLine, serviceEndingFailed } from './service-ended-line'
 import { shellAwaitingInputLine, shellEndedLine, shellEndingFailed } from './shell-ended-line'
@@ -141,7 +140,6 @@ export function durableEntries(args: {
   const opened = new Map<string, ToolRun>(toolRuns(events).map((run) => [run.openedBy, run]))
   const steers = saidWhileToolsWereOutstanding(events)
   const loaded = contextLoadedWith(events)
-  const injected = injectedContextBlocks(events)
   const turns = turnsBySeq({ events, turns: args.turns ?? [] })
   const footers = new Map(latestTldrPerAnchor(events).map((footer) => [footer.throughSeq, footer]))
 
@@ -160,11 +158,6 @@ export function durableEntries(args: {
           images: event.images ?? NOTHING_PICTURED,
         },
       ]
-    }
-
-    if (event.type === 'context-loaded') {
-      const block = injected.heads.get(event.id)
-      return block === undefined ? [] : [block]
     }
 
     if (event.type === 'assistant-said') return entriesOfAssistantEvent(event)

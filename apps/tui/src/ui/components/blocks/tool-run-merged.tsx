@@ -13,6 +13,7 @@ import { tailOfPath } from '../../paths'
 import { markPaint, type EMark } from '../../tool-marks'
 import { MINUS_SIGN } from '../diff/diff-style'
 import { MergedDiff } from '../diff/merged-diff'
+import { Attachments } from './tool-run-attachments'
 import { GAP } from './tool-run-rows'
 
 const summedNote = (reads: readonly Read[]): string => {
@@ -32,6 +33,7 @@ export const MergedBlock = React.memo(function MergedBlock(props: {
   cwd: string
   mark: EMark
   opensCluster: boolean
+  opened: ReadonlySet<string>
   onToggle: (key: string) => void
 }): React.ReactNode {
   const first = props.reads[0]
@@ -60,6 +62,13 @@ export const MergedBlock = React.memo(function MergedBlock(props: {
         <span fg={paint.text} {...region.wash}>{`${label}${pad}`}</span>
         <span fg={paint.note} {...region.wash}>{`${' '.repeat(GAP)}${note}`}</span>
       </text>
+      <Attachments
+        calls={props.reads.map((read) => read.call)}
+        inner={props.inner}
+        cwd={props.cwd}
+        opened={props.opened}
+        onToggle={props.onToggle}
+      />
       <MergedDiff
         calls={props.reads.map((read) => read.call)}
         inner={props.inner}

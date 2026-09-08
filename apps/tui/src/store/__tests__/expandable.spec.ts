@@ -40,6 +40,7 @@ const row = (args: { key: string; index: number; state: ECallState }): ToolCall 
   note: null,
   at: null,
   settledAt: null,
+  attachments: [],
 })
 
 const run = (args: { key: string; state: ECallState; calls: number }): ToolRun => ({

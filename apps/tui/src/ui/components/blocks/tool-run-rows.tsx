@@ -7,6 +7,7 @@ import { useHighWater } from '../../hooks/use-high-water'
 import { tailOfPath } from '../../paths'
 import { theme } from '../../theme'
 import type { Expander } from './more-toggle'
+import { Attachments } from './tool-run-attachments'
 import { ToolDetail } from './tool-detail'
 import { moreKey } from './tool-run-expansion'
 
@@ -76,6 +77,13 @@ export function Row(props: {
         </span>
         <span fg={theme.rule} {...region.wash}>{`${' '.repeat(GAP)}${reading.note}`}</span>
       </text>
+      <Attachments
+        calls={[call]}
+        inner={props.inner}
+        cwd={props.cwd}
+        opened={props.opened}
+        onToggle={props.onToggle}
+      />
       {props.only || props.opened.has(call.callId) ? (
         <RunDetail
           detail={reading.detail}

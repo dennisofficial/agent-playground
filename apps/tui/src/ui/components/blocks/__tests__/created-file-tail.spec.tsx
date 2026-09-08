@@ -31,6 +31,7 @@ const writeCall = (args: { lines: number; state: ECallState }): ToolCall => {
     note: null,
     at: null,
     settledAt: settledCall ? '2026-09-06T00:00:00.000Z' : null,
+    attachments: [],
   }
 }
 
