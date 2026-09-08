@@ -30,6 +30,7 @@ import { tailOfPath } from '../../paths'
 import { theme, TRANSCRIPT_INSET } from '../../theme'
 import { markPaint, SHIPPED_MARK, type EMark } from '../../tool-marks'
 import { SpinnerGlyph } from '../shimmer-line'
+import { Attachments } from './tool-run-attachments'
 import { moreKey, sentenceKey } from './tool-run-expansion'
 import { MergedBlock } from './tool-run-merged'
 import { GAP, Row, RunDetail, STREAM_TAIL, Streaming } from './tool-run-rows'
@@ -162,6 +163,15 @@ const AloneBlock = React.memo(function AloneBlock(props: {
         <span fg={paint.note} {...region.wash}>{`${' '.repeat(GAP)}${reading.note}`}</span>
       </text>
       {running && !dictating ? <Streaming call={call} inner={props.inner} /> : null}
+      {running ? null : (
+        <Attachments
+          calls={[call]}
+          inner={props.inner}
+          cwd={props.cwd}
+          opened={props.opened}
+          onToggle={props.onToggle}
+        />
+      )}
       {dictating || (!running && shows) ? (
         <RunDetail
           detail={reading.detail}
@@ -183,11 +193,18 @@ const AloneBlock = React.memo(function AloneBlock(props: {
  * this number against itself over time, so a formula that is consistently wrong reserves exactly as
  * much as a formula that is right. What it must get correct is the DIRECTION of every change.
  */
+const attachedRows = (calls: readonly { attachments: readonly unknown[] }[]): number =>
+  calls.reduce((total, call) => total + call.attachments.length, 0)
+
 const rowsOf = (segment: Segment, opened: ReadonlySet<string>): number => {
-  if (segment.kind === 'merged') return 2
-  if (segment.kind === 'alone') return settled(segment.read.call) ? 2 : 2 + STREAM_TAIL
+  if (segment.kind === 'merged') return 2 + attachedRows(segment.reads.map((read) => read.call))
+  if (segment.kind === 'alone') {
+    const extra = attachedRows([segment.read.call])
+    return settled(segment.read.call) ? 2 + extra : 2 + STREAM_TAIL
+  }
   if (segment.reads.some((read) => !settled(read.call))) return 2 + STREAM_TAIL
-  return 2 + (opened.has(sentenceKey(segment.key)) ? segment.reads.length : 0)
+  const listed = segment.reads.length + attachedRows(segment.reads.map((read) => read.call))
+  return 2 + (opened.has(sentenceKey(segment.key)) ? listed : 0)
 }
 
 export function ToolRunBlock(props: {
@@ -240,6 +257,7 @@ export function ToolRunBlock(props: {
               cwd={props.cwd}
               mark={mark}
               opensCluster={index === 0 && props.continues !== true}
+              opened={opened}
               onToggle={onToggle}
             />
           )

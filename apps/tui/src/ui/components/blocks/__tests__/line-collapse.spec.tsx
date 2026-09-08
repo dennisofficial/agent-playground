@@ -56,6 +56,7 @@ const call = (args: {
     note: args.note ?? null,
     at: null,
     settledAt: '2026-08-29T00:00:00.000Z',
+    attachments: [],
   }
 }
 

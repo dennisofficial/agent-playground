@@ -4,7 +4,7 @@ import React, { act, useCallback, useState } from 'react'
 
 import { toCallId } from '@dltech/atlas-core'
 
-import { ECallState, type ToolCall, type ToolRun } from '../../store'
+import { ECallState, type ContextAttachment, type ToolCall, type ToolRun } from '../../store'
 import { glyph } from '../theme'
 import { ToolRunBlock } from '../components/blocks/tool-run-block'
 import { teardown } from '../markdown/__tests__/harness'
@@ -28,6 +28,7 @@ const call = (args: {
   state?: ECallState
   note?: string
   liveOutput?: string
+  attachments?: readonly ContextAttachment[]
 }): ToolCall => {
   ordinal += 1
   return {
@@ -40,6 +41,7 @@ const call = (args: {
     note: args.note ?? null,
     at: null,
     settledAt: args.state === ECallState.Pending ? null : '2026-08-29T00:00:00.000Z',
+    attachments: args.attachments ?? [],
     ...(args.liveOutput === undefined ? {} : { liveOutput: args.liveOutput }),
   }
 }
