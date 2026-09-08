@@ -6,6 +6,8 @@ import {
   type HookOrder,
 } from '@dltech/atlas-core'
 
+import { recordLoadedFiles } from '../files/record-loaded'
+import type { FileReadStatePort } from '../files/read-state'
 import {
   ensureMemoryDirectories,
   readMemoryIndexes,
@@ -20,15 +22,21 @@ export class LoadMemoryHook extends BeforeTurnHook {
 
   private readonly directories: MemoryDirectories
   private readonly report: MemoryProblemReporter | undefined
+  private readonly readState: FileReadStatePort | undefined
   private prepared = false
 
-  constructor(args: { directories: MemoryDirectories; report?: MemoryProblemReporter }) {
+  constructor(args: {
+    directories: MemoryDirectories
+    report?: MemoryProblemReporter
+    readState?: FileReadStatePort | undefined
+  }) {
     super()
     this.directories = args.directories
     this.report = args.report
+    this.readState = args.readState
   }
 
-  readonly run: BeforeTurn = async () => {
+  readonly run: BeforeTurn = async ({ threadId }) => {
     if (!this.prepared) {
       this.prepared = true
       await ensureMemoryDirectories(this.directories)
@@ -38,6 +46,14 @@ export class LoadMemoryHook extends BeforeTurnHook {
     for (const problem of problems) this.report?.(problem)
 
     if (indexes.length === 0) return {}
+
+    if (this.readState !== undefined) {
+      await recordLoadedFiles({
+        readState: this.readState,
+        threadId,
+        loaded: indexes.map((index) => ({ path: index.path, wholeFile: index.wholeFile })),
+      })
+    }
 
     const drafts: readonly EventDraft[] = indexes.map((index) => ({
       type: 'context-loaded',

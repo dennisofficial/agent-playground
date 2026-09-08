@@ -1,4 +1,5 @@
 export * from './read-state'
+export * from './record-loaded'
 export * from './register-file-state'
 export * from './file-browser'
 export * from './digest'

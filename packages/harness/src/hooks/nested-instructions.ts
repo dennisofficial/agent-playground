@@ -14,6 +14,8 @@ import {
 } from '@dltech/atlas-core'
 
 import { readNestedInstructionFiles } from '../context/read-instructions'
+import { recordLoadedFiles, type InjectedFile } from '../files/record-loaded'
+import type { FileReadStatePort } from '../files/read-state'
 import { ABSENT, inputFieldOf } from '../tools/declared-paths'
 
 export type NestedInstructionPlan = {
@@ -47,16 +49,19 @@ export class NestedInstructionsHook extends AfterToolHook {
   private readonly source: NestedInstructionSource
   private readonly declarations: Map<string, ToolDeclaration>
   private readonly files: FileSystemPort | undefined
+  private readonly readState: FileReadStatePort | undefined
   private readonly seen = new Set<string>()
 
   constructor(args: {
     source: NestedInstructionSource
     tools: readonly ToolDeclaration[]
     files?: FileSystemPort | undefined
+    readState?: FileReadStatePort | undefined
   }) {
     super()
     this.source = args.source
     this.files = args.files
+    this.readState = args.readState
     this.declarations = new Map(args.tools.map((tool) => [tool.name, tool]))
   }
 
@@ -70,6 +75,7 @@ export class NestedInstructionsHook extends AfterToolHook {
     if (!plan.enabled) return {}
 
     const drafts: EventDraft[] = []
+    const loaded: InjectedFile[] = []
     for (const touchedDirectory of touchedDirectoriesOf({
       declaration,
       input: call.input,
@@ -86,7 +92,17 @@ export class NestedInstructionsHook extends AfterToolHook {
         files: this.files,
       })
 
+      loaded.push(...instructions.map((instruction) => ({ path: instruction.path, wholeFile: true })))
       drafts.push(...instructions.map((instruction) => draftOf({ call, instruction })))
+    }
+
+    if (this.readState !== undefined) {
+      await recordLoadedFiles({
+        readState: this.readState,
+        threadId: call.threadId,
+        files: this.files,
+        loaded,
+      })
     }
 
     return drafts.length === 0 ? {} : { drafts }

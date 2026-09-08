@@ -122,6 +122,7 @@ import {
   SecretsStoreToken,
   WebSearchBackendToken,
   FileBrowser,
+  FileReadStatePort,
   type UrlOpener,
   type AccountUsageService,
   type AgentTypeCatalog,
@@ -414,9 +415,11 @@ export async function composeAtlas(args: {
   })
 
   container.register(portToken(BeforeTurnHook), {
-    useValue: new LoadInstructionsHook({
-      source: ({ projectDirectory }) => instructionPlanOf({ settings, projectDirectory }),
-    }),
+    useFactory: (resolver) =>
+      new LoadInstructionsHook({
+        source: ({ projectDirectory }) => instructionPlanOf({ settings, projectDirectory }),
+        readState: resolver.resolve(portToken(FileReadStatePort)),
+      }),
   })
 
   container.register(portToken(AfterToolHook), {
@@ -424,6 +427,7 @@ export async function composeAtlas(args: {
       new NestedInstructionsHook({
         source: ({ projectDirectory }) => nestedInstructionPlanOf({ settings, projectDirectory }),
         tools: resolver.resolveAll(portToken(ToolDefinition)),
+        readState: resolver.resolve(portToken(FileReadStatePort)),
       }),
   })
 
@@ -437,7 +441,11 @@ export async function composeAtlas(args: {
   })
 
   container.register(portToken(BeforeTurnHook), {
-    useValue: new LoadMemoryHook({ directories: memoryDirectories }),
+    useFactory: (resolver) =>
+      new LoadMemoryHook({
+        directories: memoryDirectories,
+        readState: resolver.resolve(portToken(FileReadStatePort)),
+      }),
   })
 
   container.register(portToken(BeforeToolHook), {

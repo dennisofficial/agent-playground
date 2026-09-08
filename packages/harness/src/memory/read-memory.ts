@@ -17,6 +17,7 @@ export type LoadedMemoryIndex = {
   path: string
   slot: EContextSlot
   content: string
+  wholeFile: boolean
 }
 
 export type MemoryReadProblem = {
@@ -57,7 +58,7 @@ export async function ensureMemoryDirectories(directories: MemoryDirectories): P
 
 const readIndex = async (
   path: string,
-): Promise<{ content?: string; problem?: MemoryReadProblem }> => {
+): Promise<{ content?: string; wholeFile?: boolean; problem?: MemoryReadProblem }> => {
   try {
     const stats = await stat(path)
     if (!stats.isFile()) return {}
@@ -66,7 +67,7 @@ const readIndex = async (
     if (raw.trim() === '') return {}
 
     const bounded = boundedIndex({ content: raw })
-    return { content: bounded.text }
+    return { content: bounded.text, wholeFile: !bounded.lineCapped && !bounded.byteCapped }
   } catch (error) {
     const code = error instanceof Error && 'code' in error ? String(error.code) : String(error)
     if (code === 'ENOENT') return {}
@@ -81,11 +82,11 @@ export async function readMemoryIndexes(directories: MemoryDirectories): Promise
 
   for (const directory of [directories.user, directories.project]) {
     const path = memoryIndexIn(directory)
-    const { content, problem } = await readIndex(path)
+    const { content, wholeFile, problem } = await readIndex(path)
     if (problem !== undefined) problems.push(problem)
     if (content === undefined) continue
 
-    indexes.push({ path, slot: EContextSlot.Memory, content })
+    indexes.push({ path, slot: EContextSlot.Memory, content, wholeFile: wholeFile ?? true })
   }
 
   return { indexes, problems }

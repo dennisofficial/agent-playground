@@ -2,9 +2,23 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { EContextSlot, EInstructionFamily, type ThreadId } from '@dltech/atlas-core'
+import {
+  EBeforeToolDecision,
+  EContentAccess,
+  EContextSlot,
+  EInstructionFamily,
+  EPathForm,
+  EPathPresence,
+  EToolEffect,
+  toCallId,
+  type ThreadId,
+  type ToolDeclaration,
+} from '@dltech/atlas-core'
 import { beforeEach, describe, expect, it } from 'bun:test'
+import { z } from 'zod'
 
+import { InMemoryFileReadState } from '../../files/read-state'
+import { ReadBeforeWriteHook } from '../read-before-write'
 import { LoadInstructionsHook, type InstructionSource } from '../load-instructions'
 
 let root: string
@@ -109,5 +123,67 @@ describe('LoadInstructionsHook', () => {
     const again = await hook.run({ threadId: thread('t1'), projectDirectory: worktree })
 
     expect(again).toEqual({})
+  })
+
+  it('records each injected file as a whole-file view for the thread', async () => {
+    writeFileSync(join(root, 'AGENTS.md'), 'be terse')
+
+    const readState = new InMemoryFileReadState()
+    const hook = new LoadInstructionsHook({ source: rootedAt(true), readState })
+    await hook.run({ threadId: thread('t1'), projectDirectory: root })
+
+    const view = readState.viewOf({ threadId: thread('t1'), path: join(root, 'AGENTS.md') })
+    expect(view?.wholeFile).toBe(true)
+  })
+
+  it('records nothing for a thread when no instruction file exists', async () => {
+    const readState = new InMemoryFileReadState()
+    const hook = new LoadInstructionsHook({ source: rootedAt(true), readState })
+    await hook.run({ threadId: thread('t1'), projectDirectory: root })
+
+    expect(readState.viewOf({ threadId: thread('t1'), path: join(root, 'AGENTS.md') })).toBeUndefined()
+  })
+
+  it('licenses a write to an injected file, then refuses again once it moves', async () => {
+    const path = join(root, 'AGENTS.md')
+    writeFileSync(path, 'first')
+
+    const readState = new InMemoryFileReadState()
+    const hook = new LoadInstructionsHook({ source: rootedAt(true), readState })
+    await hook.run({ threadId: thread('t1'), projectDirectory: root })
+
+    const writeTool: ToolDeclaration = {
+      name: 'write',
+      description: 'replaces a file',
+      effect: EToolEffect.Write,
+      inputSchema: z.strictObject({ path: z.string(), content: z.string() }),
+      pathFields: [
+        {
+          field: 'path',
+          presence: EPathPresence.Required,
+          form: EPathForm.Absolute,
+          content: EContentAccess.Overwrites,
+        },
+      ],
+    }
+    const guard = new ReadBeforeWriteHook(readState, [writeTool])
+    const decide = () =>
+      guard.run({
+        call: {
+          callId: toCallId('call-1'),
+          name: 'write',
+          input: { path, content: 'replacement' },
+          effect: EToolEffect.Write,
+          threadId: thread('t1'),
+        },
+        projectDirectory: root,
+        events: [],
+        signal: new AbortController().signal,
+      })
+
+    expect((await decide()).decision).toBe(EBeforeToolDecision.Allow)
+
+    writeFileSync(path, 'changed on disk since the injection')
+    expect((await decide()).decision).toBe(EBeforeToolDecision.Deny)
   })
 })
