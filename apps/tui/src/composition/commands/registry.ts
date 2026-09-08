@@ -191,7 +191,7 @@ export function localCommands(handlers: LocalCommandHandlers): readonly LocalCom
     }),
     local({
       name: 'rewind',
-      summary: 'go back to an earlier message, or summarise around it',
+      summary: 'go back to an earlier message, summarise around it, or fork the conversation from it',
       group: ECommandGroup.Context,
       timing: ECommandTiming.Settled,
       echo: ECommandEcho.Silent,

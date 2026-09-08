@@ -533,7 +533,8 @@ export function fakeApp(args: {
 }): FakeApp {
   const channel = createDeltaChannel()
   const log = fakeEventLog()
-  const threads = fakeThreadStore({ log })
+  const workspace = args.workspace ?? { workspace: args.cwd ?? FAKE_CONFIG.cwd, repo: null }
+  const threads = fakeThreadStore({ log, workspace: workspace.workspace, repo: workspace.repo })
   const ids = new RandomIds()
   const ledger = fakeLedger()
   const pending = createPendingQueues<QueuedSettled>()
@@ -647,7 +648,7 @@ export function fakeApp(args: {
       ...(args.cwd === undefined ? {} : { cwd: args.cwd }),
       ...(args.open === undefined ? {} : { open: args.open }),
     },
-    workspace: args.workspace ?? { workspace: args.cwd ?? FAKE_CONFIG.cwd, repo: null },
+    workspace,
     credentials: alwaysAuthorised(),
     channel,
     log,

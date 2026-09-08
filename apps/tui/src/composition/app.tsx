@@ -14,12 +14,13 @@ import React, {
 import {
   contextPressure,
   ECompactionAnchor,
+  EForkMode,
   launchWorktreeOf,
   type EExecutionLocation,
   type EUsageWindow,
   type ModelCard,
 } from '@dltech/atlas-core'
-import type { DiscoveredSkill } from '@dltech/atlas-harness'
+import { forkConversation, type DiscoveredSkill } from '@dltech/atlas-harness'
 
 import { newestExpandableKey } from '../store'
 import { withContainer, withSections } from '../store/sidebar-model'
@@ -580,6 +581,24 @@ function Workspace(props: {
 
   const handleRewindChoice = useCallback(
     ({ point, verb }: RewindChoice) => {
+      if (verb === ERewindVerb.Fork) {
+        void forkConversation({
+          log: props.app.log,
+          threads: props.app.threads,
+          threadId: conversation.threadId,
+          seq: point.seq,
+          mode: EForkMode.Copy,
+        }).then((forked) => {
+          if (!forked.ok) {
+            notify({ key: 'fork-refused', text: forked.reason, tone: ENoticeTone.Warn })
+            return
+          }
+
+          handleOpenThread(forked.thread.id)
+        })
+        return
+      }
+
       if (verb === ERewindVerb.ToHere) {
         conversation.handleRewindTo(point.seq - 1)
         if (point.kind === ERewindPointKind.Said) draft.setValue(point.text)
@@ -593,7 +612,7 @@ function Workspace(props: {
 
       conversation.handleCompactAround({ anchor: ECompactionAnchor.Suffix, seq: point.seq })
     },
-    [conversation, draft],
+    [conversation, draft, handleOpenThread, props.app.log, props.app.threads],
   )
 
   const rewind = useRewind({ events: conversation.readEvents, onPick: handleRewindChoice })

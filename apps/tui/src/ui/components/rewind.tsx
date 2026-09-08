@@ -35,7 +35,7 @@ export const rewindCells = (args: { width: number }): number => drawerCells(args
 export const HEADING = 'Rewind'
 
 export const SUBTITLE =
-  'Rewind the conversation to an earlier point. Files are left as they are.'
+  'Rewind the conversation to an earlier point, or fork a new one from it. Files are left as they are.'
 
 const BLANK_MESSAGE = '(blank message)'
 
@@ -225,7 +225,10 @@ function Committing(props: {
       </box>
       <Rows
         lines={wrapCells({
-          text: `${verbConsequence({ state: props.state, verb: props.verb })} · ${NO_UNDO}`,
+          text:
+            props.verb === ERewindVerb.Fork
+              ? verbConsequence({ state: props.state, verb: props.verb })
+              : `${verbConsequence({ state: props.state, verb: props.verb })} · ${NO_UNDO}`,
           cells: inner(props.cells),
         })}
         cells={props.cells}
