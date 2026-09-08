@@ -18,6 +18,7 @@ import {
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { z } from 'zod'
 
+import { InMemoryFileReadState } from '../../files/read-state'
 import { NestedInstructionsHook, type NestedInstructionPlan } from '../nested-instructions'
 
 const NEVER_ABORTED = new AbortController().signal
@@ -220,5 +221,36 @@ describe('NestedInstructionsHook', () => {
     const other = await run(hook, { input, thread: 'thread-2' })
 
     expect(other.drafts?.[0]).toMatchObject({ content: 'package rules' })
+  })
+
+  it('records each injected nested file as a whole-file view for the calling thread', async () => {
+    const path = write({ at: 'packages/core/AGENTS.md', content: 'package rules' })
+
+    const readState = new InMemoryFileReadState()
+    const hook = new NestedInstructionsHook({
+      source: () => planOf({ reload: true }),
+      tools: FILE_TOOLS,
+      readState,
+    })
+    await run(hook, {
+      cwd: join(root, 'apps/tui'),
+      input: { path: join(root, 'packages/core/src/foo.ts') },
+    })
+
+    expect(readState.viewOf({ threadId: toThreadId('thread-1'), path })?.wholeFile).toBe(true)
+  })
+
+  it('records nothing when the touch stays on the project descent', async () => {
+    const path = write({ at: 'AGENTS.md', content: 'root rules' })
+
+    const readState = new InMemoryFileReadState()
+    const hook = new NestedInstructionsHook({
+      source: () => planOf({ reload: true }),
+      tools: FILE_TOOLS,
+      readState,
+    })
+    await run(hook, { input: { path: join(root, 'AGENTS.md') } })
+
+    expect(readState.viewOf({ threadId: toThreadId('thread-1'), path })).toBeUndefined()
   })
 })

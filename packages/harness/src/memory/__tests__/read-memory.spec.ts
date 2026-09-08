@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { BeforeTurnHook, EContextSlot, MAX_INDEX_LINES, toThreadId } from '@dltech/atlas-core'
 
 import { createIsolatedContainer, portToken } from '../../container/injection'
+import { InMemoryFileReadState } from '../../files/read-state'
 import { resolveHookChain } from '../../hooks/resolve-hooks'
 
 import { LoadMemoryHook } from '../../hooks/load-memory'
@@ -75,6 +76,17 @@ describe('readMemoryIndexes', () => {
     const { indexes } = await readMemoryIndexes(directories)
     expect(indexes).toHaveLength(1)
     expect(indexes[0]?.content).toContain('Only part of this index was loaded')
+    expect(indexes[0]?.wholeFile).toBe(false)
+  })
+
+  it('marks an index that fit the bounds as whole', async () => {
+    const home = await scratch()
+    const directories = directoriesIn(home)
+    await ensureMemoryDirectories(directories)
+    await writeFile(join(directories.project, 'MEMORY.md'), '- [One](one.md) — a hook')
+
+    const { indexes } = await readMemoryIndexes(directories)
+    expect(indexes[0]?.wholeFile).toBe(true)
   })
 
   it('reports a directory it cannot read instead of staying quiet', async () => {
@@ -104,6 +116,28 @@ describe('LoadMemoryHook', () => {
     const draft = loaded.drafts?.[0]
     expect(draft?.type).toBe('context-loaded')
     expect(draft && 'slot' in draft ? draft.slot : undefined).toBe(EContextSlot.Memory)
+  })
+
+  it('records each injected index as seen by the thread, partial when bounded', async () => {
+    const home = await scratch()
+    const directories = directoriesIn(home)
+    await ensureMemoryDirectories(directories)
+    await writeFile(join(directories.user, 'MEMORY.md'), '- [Who](who.md) — a person')
+    const long = Array.from({ length: MAX_INDEX_LINES + 50 }, (_, at) => `- entry ${at}`).join('\n')
+    await writeFile(join(directories.project, 'MEMORY.md'), long)
+
+    const readState = new InMemoryFileReadState()
+    const hook = new LoadMemoryHook({ directories, readState })
+    await hook.run({ threadId: toThreadId('t1'), projectDirectory: '/anywhere' })
+
+    expect(
+      readState.viewOf({ threadId: toThreadId('t1'), path: join(directories.user, 'MEMORY.md') })
+        ?.wholeFile,
+    ).toBe(true)
+    expect(
+      readState.viewOf({ threadId: toThreadId('t1'), path: join(directories.project, 'MEMORY.md') })
+        ?.wholeFile,
+    ).toBe(false)
   })
 
   it('ignores the worktree path it is handed', async () => {

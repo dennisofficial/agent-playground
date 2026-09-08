@@ -484,6 +484,10 @@ longer match disk, or — for a whole-file replace only — one where the model 
 does not exist is allowed: creating a file destroys nothing, and refusing it would make `write` to a new
 path and `edit` with an empty `oldString` impossible. `RecordFileStateHook` (`EStage.Observe`) fills
 the notebook after a successful call and is the **first registration of `AfterToolHook`** in the repo.
+Injection counts as seeing: the hooks that load instruction files and memory indexes into context
+record the same views through `recordLoadedFiles`, so a write to an injected `CLAUDE.md` needs no
+redundant `read` — while a bounded memory index records `wholeFile: false`, keeping a whole-file
+replace of a partially shown file refused.
 
 **Which tools this applies to is declared, never inferred.** `DeclaredPathField.content` is an
 `EContentAccess` of `None | Reads | Amends | Overwrites`. `EToolEffect` cannot answer it: it

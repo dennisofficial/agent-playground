@@ -14,6 +14,10 @@ export class ReadBeforeWriteFragment extends PromptFragment {
       'Every file you have read is watched. If it changes underneath you, the next write or edit to it is',
       'refused until you have read it again. A read vouches only for the exact path it read: the same',
       'file under another checkout or worktree is a different file, and is unread until you read it there.',
+      '',
+      'Instruction files (CLAUDE.md, AGENTS.md, ATLAS.md) and memory indexes whose contents were',
+      'injected into this conversation already count as read — write or edit them directly rather than',
+      'reading them again first. The staleness refusal still applies if one changed since it was shown.',
     ].join('\n')
   }
 }

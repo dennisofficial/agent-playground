@@ -8,6 +8,8 @@ import {
 } from '@dltech/atlas-core'
 
 import { readInstructionFiles, type InstructionRequest } from '../context/read-instructions'
+import { recordLoadedFiles } from '../files/record-loaded'
+import type { FileReadStatePort } from '../files/read-state'
 
 export type InstructionPlan = { request: InstructionRequest; reload: boolean }
 export type InstructionSource = (args: { projectDirectory: string }) => InstructionPlan
@@ -18,12 +20,18 @@ export class LoadInstructionsHook extends BeforeTurnHook {
 
   private readonly source: InstructionSource
   private readonly files: FileSystemPort | undefined
+  private readonly readState: FileReadStatePort | undefined
   private readonly seen = new Set<string>()
 
-  constructor(args: { source: InstructionSource; files?: FileSystemPort | undefined }) {
+  constructor(args: {
+    source: InstructionSource
+    files?: FileSystemPort | undefined
+    readState?: FileReadStatePort | undefined
+  }) {
     super()
     this.source = args.source
     this.files = args.files
+    this.readState = args.readState
   }
 
   readonly run: BeforeTurn = async ({ threadId, projectDirectory }) => {
@@ -37,6 +45,15 @@ export class LoadInstructionsHook extends BeforeTurnHook {
       files: plan.request.files ?? this.files,
     })
     if (instructions.length === 0) return {}
+
+    if (this.readState !== undefined) {
+      await recordLoadedFiles({
+        readState: this.readState,
+        threadId,
+        files: plan.request.files ?? this.files,
+        loaded: instructions.map((instruction) => ({ path: instruction.path, wholeFile: true })),
+      })
+    }
 
     const drafts: readonly EventDraft[] = instructions.map((instruction) => ({
       type: 'context-loaded',
