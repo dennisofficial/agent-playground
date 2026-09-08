@@ -15,7 +15,7 @@ import {
 } from '@dltech/atlas-harness'
 
 import { benchModel, chunksStreamed, STEP_TEXT } from './bench-model'
-import { mountBenchRender, publishingRunner, type BenchRender } from './bench-render'
+import { mountBenchRender, publishingRunner, type BenchFrameStats, type BenchRender } from './bench-render'
 
 const AGENTS_PER_THREAD = 5
 const SHELLS_PER_AGENT = 4
@@ -137,6 +137,7 @@ const printReport = (args: {
   samples: BenchSamples
   chunks: number
   frames: number | null
+  frameStats: BenchFrameStats | null
 }): void => {
   const rows: [string, string][] = [
     ['threads', String(args.flags.threads)],
@@ -153,6 +154,12 @@ const printReport = (args: {
   if (args.frames !== null) {
     rows.push(['frames rendered', String(args.frames)])
     rows.push(['frames / second', (args.frames / args.wallSeconds).toFixed(1)])
+  }
+  if (args.frameStats !== null) {
+    rows.push(['avg frame ms (js)', args.frameStats.averageFrameTime.toFixed(2)])
+    rows.push(['avg frame ms (native)', args.frameStats.nativeAverageFrameTime.toFixed(2)])
+    rows.push(['avg cells updated', args.frameStats.averageCellsUpdated.toFixed(0)])
+    rows.push(['frame callback ms', args.frameStats.frameCallbackTime.toFixed(2)])
   }
   rows.push(
     ['turn ms total', args.tally.turnMs.toFixed(0)],
@@ -204,6 +211,7 @@ const main = async (): Promise<void> => {
   let tally: AgentTally = { completed: 0, failed: 0, turnMs: 0 }
   let wallSeconds = 0
   let frames: number | null = null
+  let frameStats: BenchFrameStats | null = null
   try {
     const agentIds = await spawnAgents({ harness, shells, threads: flags.threads })
     agents = agentIds.length
@@ -213,6 +221,7 @@ const main = async (): Promise<void> => {
     tally = sumTallies(tallies)
     wallSeconds = (performance.now() - startedAt) / 1_000
     frames = render === null ? null : render.framesRendered()
+    frameStats = render === null ? null : render.stats()
     if (render !== null && render.frameText().includes('something broke')) {
       console.error('render tier crashed (crash screen is showing); the run measured the error screen')
     }
@@ -223,7 +232,7 @@ const main = async (): Promise<void> => {
     await harness.close()
     rmSync(root, { recursive: true, force: true })
   }
-  printReport({ flags, agents, wallSeconds, tally, samples: sampler.samples, chunks: chunksStreamed(), frames })
+  printReport({ flags, agents, wallSeconds, tally, samples: sampler.samples, chunks: chunksStreamed(), frames, frameStats })
   console.log('\ncleanup: shells killed, database closed, temp directory removed')
 }
 
