@@ -24,6 +24,10 @@ const AGENT_REPORT_HINT = '↵ report'
 
 const REPORTED_NOTHING = 'reported nothing'
 
+const CONTEXT_HINT = '↵ context'
+
+const CONTEXT_EMPTY = 'was empty'
+
 function DerivedEntryView(props: {
   entry: TranscriptEntry
   width: number
@@ -193,6 +197,20 @@ function DerivedEntryView(props: {
           width={props.width}
           {...(entry.status === undefined ? {} : { status: entry.status })}
           {...(entry.streaming === undefined ? {} : { streaming: entry.streaming })}
+        />
+      )
+
+    case EEntryKind.ContextLoaded:
+      return (
+        <NoticeBlock
+          text={entry.text}
+          body={entry.body}
+          failed={false}
+          width={props.width}
+          openHint={CONTEXT_HINT}
+          silentNote={CONTEXT_EMPTY}
+          expanded={props.expanded ?? false}
+          {...(onToggle ? { onToggle: () => onToggle(entry.key) } : {})}
         />
       )
 
