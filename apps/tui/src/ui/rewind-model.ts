@@ -18,6 +18,7 @@ export enum ERewindVerb {
   ToHere = 'to-here',
   SummariseUpTo = 'summarise-up-to',
   SummariseFrom = 'summarise-from',
+  Fork = 'fork',
 }
 
 export enum ERewindPointKind {
@@ -88,6 +89,9 @@ const saidBefore = (args: { points: readonly RewindPoint[]; index: number }): nu
 const saidFrom = (args: { points: readonly RewindPoint[]; index: number }): number =>
   saidIn({ points: args.points, from: args.index, to: args.points.length })
 
+const saidThrough = (args: { points: readonly RewindPoint[]; index: number }): number =>
+  saidIn({ points: args.points, from: 0, to: args.index + 1 })
+
 export function verbsFor(args: { state: RewindState }): readonly ERewindVerb[] {
   const { points, index } = args.state
   const point = selectedPoint(args.state)
@@ -98,6 +102,7 @@ export function verbsFor(args: { state: RewindState }): readonly ERewindVerb[] {
     ERewindVerb.ToHere,
     ...(saidBefore({ points, index }) > 0 ? [ERewindVerb.SummariseUpTo] : []),
     ...(saidFrom({ points, index }) > 1 ? [ERewindVerb.SummariseFrom] : []),
+    ERewindVerb.Fork,
   ]
 }
 
@@ -187,9 +192,15 @@ export const VERB_LABEL: Readonly<Record<ERewindVerb, string>> = {
   [ERewindVerb.ToHere]: 'rewind to here',
   [ERewindVerb.SummariseUpTo]: 'summarise up to here',
   [ERewindVerb.SummariseFrom]: 'summarise from here',
+  [ERewindVerb.Fork]: 'fork from here',
 }
 
 export function verbTally(args: { state: RewindState; verb: ERewindVerb }): string {
+  if (args.verb === ERewindVerb.Fork) {
+    const { points, index } = args.state
+    return `${saidThrough({ points, index })} kept`
+  }
+
   const count = messagesAffected(args)
   if (args.verb === ERewindVerb.SummariseUpTo) return `${count} before`
   if (args.verb === ERewindVerb.SummariseFrom) return `${count} from here`
@@ -214,6 +225,9 @@ function rewindConsequence(args: { state: RewindState; count: number }): string 
 }
 
 export function verbConsequence(args: { state: RewindState; verb: ERewindVerb }): string {
+  if (args.verb === ERewindVerb.Fork)
+    return 'a new conversation continues from here with everything up to it copied · this one is untouched'
+
   const count = messagesAffected(args)
 
   if (args.verb === ERewindVerb.SummariseUpTo)

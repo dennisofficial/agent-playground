@@ -3,6 +3,7 @@ import {
   stampEvent,
   toThreadId,
   ECompactionAnchor,
+  EForkMode,
   toCallId,
   toEventId,
   toRunId,
@@ -43,6 +44,7 @@ export type FakeThreadStore = ThreadStorePort & {
     repo: string | null
     agent?: SupervisedAgent
   }[]
+  readonly forks: readonly { id: ThreadId; from: ThreadId; seq: number; mode: EForkMode }[]
   readonly renames: readonly { threadId: ThreadId; title: string }[]
   readonly chosenModels: readonly { threadId: ThreadId; model: ThreadModel }[]
   readonly chosenLocations: readonly { threadId: ThreadId; location: EExecutionLocation }[]
@@ -74,6 +76,7 @@ export function fakeThreadStore(
     repo: string | null
     agent?: SupervisedAgent
   }[] = []
+  const forks: { id: ThreadId; from: ThreadId; seq: number; mode: EForkMode }[] = []
   const renames: { threadId: ThreadId; title: string }[] = []
   const chosenModels: { threadId: ThreadId; model: ThreadModel }[] = []
   const chosenLocations: { threadId: ThreadId; location: EExecutionLocation }[] = []
@@ -102,6 +105,10 @@ export function fakeThreadStore(
 
     get chosenLocations() {
       return chosenLocations
+    },
+
+    get forks() {
+      return forks
     },
 
     get renames() {
@@ -153,6 +160,8 @@ export function fakeThreadStore(
         ...(title === undefined ? {} : { title }),
       }
       rows.push(row)
+      forks.push({ id: row.id, from, seq, mode })
+      if (mode === EForkMode.Copy) args.log?.copyInto({ from, to: row.id, upTo: seq })
       return row
     },
 
@@ -269,6 +278,7 @@ export type FakeEventLog = EventLogPort & {
   readonly ownReads: readonly ThreadId[]
   peek(args: { threadId: ThreadId }): readonly Event[]
   truncate(args: { threadId: ThreadId; toSeq: number }): void
+  copyInto(args: { from: ThreadId; to: ThreadId; upTo: number }): void
   replaceWithSummary(args: {
     threadId: ThreadId
     anchor: ECompactionAnchor
@@ -373,6 +383,15 @@ export function fakeEventLog(seeded: readonly Event[] = []): FakeEventLog {
     truncate({ threadId, toSeq }) {
       byThread.set(threadId, held({ threadId, upTo: toSeq }))
       headByThread.set(threadId, toSeq)
+    },
+
+    copyInto({ from, to, upTo }) {
+      const copied = held({ threadId: from, upTo }).map((event) => {
+        stamped += 1
+        return { ...event, id: toEventId(`event-${stamped}`), threadId: to }
+      })
+      byThread.set(to, copied)
+      headByThread.set(to, upTo)
     },
 
     async read({ threadId, upTo }) {
