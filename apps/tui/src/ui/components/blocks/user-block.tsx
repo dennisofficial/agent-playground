@@ -12,7 +12,10 @@ const NARROWEST_BAND = 20
 
 const TAKE_BACK = '↑ to edit'
 
-const basename = (path: string): string => path.slice(path.lastIndexOf('/') + 1)
+const basename = (path: string): string => {
+  const trimmed = path.replace(/\/+$/, '')
+  return trimmed.slice(trimmed.lastIndexOf('/') + 1)
+}
 
 type AttachmentChip = { key: string; icon: string; label: string }
 

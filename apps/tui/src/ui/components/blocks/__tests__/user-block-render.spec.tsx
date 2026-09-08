@@ -52,6 +52,15 @@ describe('UserBlock attachments', () => {
     }
   })
 
+  it('labels a directory chip with its name despite the trailing slash', async () => {
+    const frame = await frameOf(
+      <UserBlock said={['look at this']} width={100} files={['~/Developer/comp-v2/']} />,
+      100,
+    )
+
+    expect(frame).toContain('⬚ comp-v2')
+  })
+
   it('drops the old continuation glyph entirely', async () => {
     const frame = await frameOf(
       <UserBlock said={['why does this fail?']} width={100} {...ATTACHED} />,
