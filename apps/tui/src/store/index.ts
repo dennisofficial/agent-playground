@@ -75,6 +75,7 @@ export {
   type BackgroundShellEndedEntry,
   type BackgroundShellMatchedEntry,
   type BackgroundShellStillRunningEntry,
+  type ContextLoadedEntry,
   type ModelSaidEntry,
   type ModelThoughtEntry,
   type OperatorSaidEntry,
