@@ -1,4 +1,4 @@
-import type { DiffFile, DiffHunk } from '@dltech/atlas-core'
+import { capHunks, type DiffFile, type DiffHunk } from '@dltech/atlas-core'
 import React, { useMemo, useState } from 'react'
 
 import { inlineColumns, numberDigits, type InlineColumns } from '../../diff-layout'
@@ -12,6 +12,14 @@ import { InlineDiffRow } from './diff-row'
 import { filetypeOf } from './diff-style'
 
 export const DIFF_CHROME = PANEL_INSET + PANEL_PAD
+
+/**
+ * Each rendered diff line spends a native TextBuffer out of a pool of 2^14 shared by the whole
+ * tile, and a whole-file rewrite (a regenerated bundle, a reformatted snapshot) is thousands of
+ * lines — enough to exhaust the pool mid-render and blank the tile. Past the cap the tail of the
+ * diff stands in as one overflow row; the header counts and the clipboard patch stay full.
+ */
+export const DIFF_ROW_CAP = 200
 
 function InlineHunk(props: {
   hunk: DiffHunk
@@ -46,14 +54,18 @@ export function InlineDiff(props: {
 }): React.ReactNode {
   const [pointerInside, setPointerInside] = useState(false)
 
+  const file = useMemo(
+    () => ({ ...props.file, hunks: capHunks({ hunks: props.file.hunks, cap: DIFF_ROW_CAP }) }),
+    [props.file],
+  )
   const content = Math.max(1, props.width - DIFF_CHROME)
   const columns = useMemo(
     () =>
       inlineColumns({
         width: content,
-        digits: numberDigits({ lines: props.file.hunks.flatMap((hunk) => hunk.lines) }),
+        digits: numberDigits({ lines: file.hunks.flatMap((hunk) => hunk.lines) }),
       }),
-    [content, props.file],
+    [content, file],
   )
   const patch = useMemo(
     () => props.patch ?? patchText({ file: props.file }),
@@ -76,7 +88,7 @@ export function InlineDiff(props: {
         width={props.width}
         header={<FileHeader file={props.file} patch={patch} revealed={pointerInside} />}
       >
-        {props.file.hunks.map((hunk, index) => (
+        {file.hunks.map((hunk, index) => (
           <InlineHunk
             key={index}
             hunk={hunk}

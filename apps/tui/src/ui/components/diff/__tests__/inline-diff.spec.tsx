@@ -1,11 +1,14 @@
+import { EDiffLine, type DiffFile } from '@dltech/atlas-core'
 import { parseColor } from '@opentui/core'
+import { testRender } from '@opentui/react/test-utils'
 import { describe, expect, it } from 'bun:test'
-import React from 'react'
+import React, { act } from 'react'
 
 import { RAIL_TAIL } from '../../../borders'
 import { inlineColumns, numberDigits } from '../../../diff-layout'
+import { grammarsReady, settle, teardown } from '../../../markdown/__tests__/harness'
 import { theme } from '../../../theme'
-import { InlineDiff } from '../inline-diff'
+import { DIFF_ROW_CAP, InlineDiff } from '../inline-diff'
 import { ELIDED, emphasiseNewCall, EMPHASIS_END, EMPHASIS_START, FILE, HUNK, NEW_CALL, OLD_CALL, WIDE_FILE } from './fixtures'
 import { cellsOfRow, CONTENT_LEFT, contentColumns, isColour, rowOf, shown } from './harness'
 
@@ -147,4 +150,46 @@ describe('InlineDiff', () => {
     expect(header).toContain('−7')
     expect(rows.some((row) => row.includes('@@'))).toBe(false)
   }, 30_000)
+
+  it('caps a whole-file rewrite at the row budget and says how much is not shown', async () => {
+    const lines = Array.from({ length: 12_227 }, (_unused, index) => ({
+      kind: EDiffLine.Added,
+      oldNumber: null,
+      newNumber: index + 1,
+      text: `export const chunk${index} = ${index}`,
+    }))
+    const rewrite: DiffFile = {
+      path: 'dist/bundle.js',
+      previousPath: null,
+      added: lines.length,
+      removed: 0,
+      created: false,
+      deleted: false,
+      hunks: [{ heading: '', oldStart: 0, newStart: 1, lines }],
+    }
+
+    await grammarsReady()
+    const setup = await testRender(
+      <box flexDirection="column" width={90} height={DIFF_ROW_CAP + 10}>
+        <InlineDiff file={rewrite} width={90} />
+      </box>,
+      { width: 90, height: DIFF_ROW_CAP + 10 },
+    )
+    try {
+      await act(async () => {
+        await setup.flush()
+        await settle()
+      })
+      await setup.flush()
+      const rows = setup.captureCharFrame().split('\n')
+
+      expect(rows.some((row) => row.includes('12028 more lines'))).toBe(true)
+      const header = rowOf(rows, 'dist/bundle.js')
+      expect(rows[header]).toContain('+12227')
+      const tail = rows.findIndex((row) => row.startsWith(RAIL_TAIL))
+      expect(tail - header - 1).toBe(DIFF_ROW_CAP + 1)
+    } finally {
+      await teardown(setup)
+    }
+  }, 60_000)
 })

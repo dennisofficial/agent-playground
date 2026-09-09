@@ -157,6 +157,7 @@ export * from './ports/judge.port'
 export * from './diff/hunk'
 export * from './diff/parse'
 export * from './diff/collapse'
+export * from './diff/cap'
 export * from './diff/side-by-side'
 
 export * from './models/catalog'
