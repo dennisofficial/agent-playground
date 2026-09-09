@@ -1,7 +1,6 @@
 import { type EventDraft } from '@dltech/atlas-core'
 
-import type { ShellSnapshot } from './background-shell'
-import type { ShellDelta } from './notice-queue'
+import type { ShellDelta, ShellSnapshot } from './background-shell'
 import type { MatchedLines } from './shell-watch'
 
 export function endedDraft(args: { snapshot: ShellSnapshot; delta: ShellDelta }): EventDraft {

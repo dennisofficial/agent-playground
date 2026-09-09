@@ -87,6 +87,10 @@ type EventBody =
   lives in `core/shells` for this reason: `core` owns the value unions its event bodies store.
   The delta is read when the draft is **handed over**, not when the process exits, so an ending that
   is dropped rather than delivered leaves its output where `shell_output` can still find it.
+  A kill the model asked for never becomes this event: `shell_kill` claims the ending, waits for
+  the process to die, and carries the output in its own tool result, so nothing announces beside
+  it. The claim is handed back when the process outlives the settle deadline, so an ending nobody
+  collected announces itself as usual.
 - **The two agent bodies are the whole of what a parent records about a child, and both live on the
   parent's log.** That is the rule a delegate's work is counted, never quoted, expressed as a schema:
   a child's own rows carry the child's `threadId` and never reach the parent, so the parent holds one

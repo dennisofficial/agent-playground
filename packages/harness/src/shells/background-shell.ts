@@ -68,7 +68,25 @@ export type StartShellArgs = {
 
 export type StartedShellOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
 
-export type ShellKillOutcome = { ok: true; snapshot: ShellSnapshot } | { ok: false; reason: string }
+export type ShellDelta = {
+  text: string
+  droppedCharacters: number
+  remainingCharacters: number
+}
+
+/**
+ * A kill the model asked for is answered by the tool result, not by an ending announcement: the
+ * caller is already waiting on one. `settled` resolves once the process is really gone, with the
+ * final snapshot and everything the shell printed that had not been read. `died: false` means the
+ * process outlived the settle deadline, in which case the ending announces itself after all.
+ */
+export type ClaimedShellEnding =
+  | { died: true; snapshot: ShellSnapshot; delta: ShellDelta }
+  | { died: false }
+
+export type ShellKillOutcome =
+  | { ok: true; snapshot: ShellSnapshot; settled?: Promise<ClaimedShellEnding> | undefined }
+  | { ok: false; reason: string }
 
 export type BackgroundShellSpec = {
   shellId: ShellId

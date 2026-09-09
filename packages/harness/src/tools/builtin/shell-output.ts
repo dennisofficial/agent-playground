@@ -10,9 +10,8 @@ import {
 } from '@dltech/atlas-core'
 
 import {  portToken } from '../../container/injection'
-import { EShellStatus, type ShellSnapshot } from '../../shells/background-shell'
+import { EShellStatus, type ShellDelta, type ShellSnapshot } from '../../shells/background-shell'
 import { ShellRegistryPort } from '../../shells/shell-registry'
-import type { ShellDelta } from '../../shells/notice-queue'
 
 const inputSchema = z.strictObject({
   shellId: z.string().min(1),
