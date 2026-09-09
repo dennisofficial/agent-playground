@@ -198,5 +198,79 @@ for (const adapter of shellAdapters) {
         expect(registry.drainNotifications({ threadId: THREAD })).toEqual([])
       })
     })
+
+    describe('a kill the model asked for', () => {
+      it('hands the ending to the kill call and announces nothing beside it', async () => {
+        const { registry } = openRegistry({ adapter })
+        const started = registry.start(job({ command: 'echo before; sleep 60' }))
+        if (!started.ok) throw new Error(started.reason)
+        await Bun.sleep(150)
+
+        const killed = registry.kill({
+          shellId: started.snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        if (!killed.ok || killed.settled === undefined) throw new Error('the kill was not claimed')
+        const ending = await killed.settled
+        await Bun.sleep(100)
+
+        expect(ending.died).toBe(true)
+        if (ending.died) {
+          expect(ending.snapshot.status).toBe(ECoreShellStatus.Killed)
+          expect(ending.snapshot.killedBy).toBe(EKilledBy.Model)
+          expect(ending.delta.text).toContain('before')
+        }
+        expect(registry.pendingNotices({ threadId: THREAD })).toEqual([])
+        expect(registry.drainNotifications({ threadId: THREAD })).toEqual([])
+      })
+
+      it('answers a second kill of the same shell with the same ending', async () => {
+        const { registry } = openRegistry({ adapter })
+        const started = registry.start(job({ command: 'sleep 60' }))
+        if (!started.ok) throw new Error(started.reason)
+
+        const first = registry.kill({
+          shellId: started.snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        const second = registry.kill({
+          shellId: started.snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        if (!first.ok || !second.ok) throw new Error('a kill failed')
+        if (first.settled === undefined || second.settled === undefined) {
+          throw new Error('the kills were not claimed')
+        }
+
+        const [one, two] = await Promise.all([first.settled, second.settled])
+
+        expect(one.died).toBe(true)
+        expect(two.died).toBe(true)
+        expect(registry.drainNotifications({ threadId: THREAD })).toEqual([])
+      })
+
+      it('leaves a shell the developer killed to announce itself to a later model kill', async () => {
+        const { registry } = openRegistry({ adapter })
+        const started = registry.start(job({ command: 'sleep 60' }))
+        if (!started.ok) throw new Error(started.reason)
+
+        registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.User, threadId: THREAD })
+        const again = registry.kill({
+          shellId: started.snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        if (!again.ok) throw new Error('the second kill failed')
+        expect(again.settled).toBeUndefined()
+
+        await announced({ registry })
+        const drained = registry.drainNotifications({ threadId: THREAD })
+        expect(drained).toHaveLength(1)
+        expect(endedDraft(drained[0]).killedBy).toBe(EKilledBy.User)
+      })
+    })
   })
 }

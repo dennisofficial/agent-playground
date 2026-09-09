@@ -222,6 +222,13 @@ delivered — `forgetNotices` when a new conversation opens — would take outpu
 So a queued ending holds its snapshot and a closure that takes the delta, and `drainNotifications`
 is what advances the model's cursor. Until something drains, `shell_output` still finds the output.
 
+**A kill the model asked for is the one ending that is not pushed.** `shell_kill` claims the ending
+at kill time, waits for the process to die (bounded by the SIGKILL grace plus slack), and hands the
+output back as the tool result — no event, no wake, no transcript line, since the caller is already
+holding the answer. After-shell hooks still run for the shell, and their drafts keep their ride when
+they have one. If the process outlives the settle deadline the claim is released and the ending
+announces itself as usual.
+
 **Nothing times a background shell out.** A quiet shell is not a stuck one — a test suite can run for
 minutes without printing — so there is no threshold, no sweep and no timer. What survives is the signal
 that was actually diagnostic: output ending *without* a newline on a prompt-shaped last line, which is

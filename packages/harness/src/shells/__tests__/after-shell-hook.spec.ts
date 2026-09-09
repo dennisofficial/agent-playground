@@ -139,8 +139,16 @@ for (const adapter of shellAdapters) {
 
         const started = registry.start(job({ command: 'sleep 30' }))
         if (!started.ok) throw new Error(started.reason)
-        registry.kill({ shellId: started.snapshot.shellId, by: EKilledBy.Model, threadId: THREAD })
-        await announced({ registry })
+        const killed = registry.kill({
+          shellId: started.snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        if (!killed.ok || killed.settled === undefined) throw new Error('the kill was not claimed')
+        await killed.settled
+        for (let attempt = 0; attempt < 400 && seen.length === 0; attempt += 1) {
+          await Bun.sleep(25)
+        }
 
         expect(seen).toHaveLength(1)
         expect(seen[0]?.shell.status).toBe(EShellStatus.Killed)
@@ -204,6 +212,34 @@ for (const adapter of shellAdapters) {
           slot: 'poll-ci',
           key: 'additional-context',
           content: started,
+        })
+      })
+
+      it('sends a hook\'s drafts without the ending, when the kill was the model\'s own', async () => {
+        const hook = new ObservingHook('poll-ci', { stage: EStage.Observe, nudge: 0 }, async () => ({
+          additionalContext: 'the checks are green',
+        }))
+        const { registry } = openRegistry({ adapter, hooks: chainOf([hook]) })
+
+        const started = registry.start(job({ command: 'sleep 60' }))
+        if (!started.ok) throw new Error(started.reason)
+        const killed = registry.kill({
+          shellId: started.snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        if (!killed.ok || killed.settled === undefined) throw new Error('the kill was not claimed')
+        await killed.settled
+        await announced({ registry })
+
+        const drained = registry.drainNotifications({ threadId: THREAD })
+
+        expect(drained).toHaveLength(1)
+        expect(drained[0]).toEqual({
+          type: 'context-loaded',
+          slot: 'poll-ci',
+          key: 'additional-context',
+          content: 'the checks are green',
         })
       })
 

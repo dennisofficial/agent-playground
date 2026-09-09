@@ -1,4 +1,11 @@
-import { ClockPort, EKilledBy, ProcessPort, type EventDraft, type ThreadId } from '@dltech/atlas-core'
+import {
+  ClockPort,
+  EKilledBy,
+  EShellStatus,
+  ProcessPort,
+  type EventDraft,
+  type ThreadId,
+} from '@dltech/atlas-core'
 
 import { LocalProcessPort } from '../execution/local-process'
 import type { HookChainSource } from '../hooks/registry'
@@ -6,6 +13,8 @@ import { afterShellDrafts } from './after-shell'
 import {
   startBackgroundShell,
   type BackgroundShell,
+  type ClaimedShellEnding,
+  type ShellDelta,
   type ShellKillOutcome,
   type ShellSnapshot,
   type StartedShellOutcome,
@@ -16,10 +25,10 @@ import {
   ShellNoticeQueue,
   take,
   type PendingShellNotice,
-  type ShellDelta,
   type Tracked,
 } from './notice-queue'
 import { toShellId, type ShellId } from './shell-id'
+import { SIGKILL_GRACE_MS } from './shell-process'
 import { compileWatch, MATCH_SETTLE_MS, MATCHED_LINES_CAP, type MatchedLines } from './shell-watch'
 
 export const RETAINED_CHARACTERS = 400_000
@@ -28,6 +37,23 @@ export const OVERFLOW_CHARACTERS = 50_000_000
 export const PROMPT_SETTLE_MS = 2_000
 export const CHECK_IN_EVERY_MS = 300_000
 export const CHECK_IN_TAIL_CHARACTERS = 1_000
+
+/** SIGKILL plus the read grace and slack: a kill that outlives this is handed back to the announcement path. */
+export const KILL_SETTLE_MS = SIGKILL_GRACE_MS + 2_000
+
+const withinDeadline = async (args: {
+  promise: Promise<unknown>
+  ms: number
+}): Promise<boolean> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), args.ms)
+    timer.unref?.()
+  })
+  const finished = await Promise.race([args.promise.then(() => true as const), expired])
+  clearTimeout(timer)
+  return finished
+}
 
 export type ShellReadOutcome =
   | { ok: true; snapshot: ShellSnapshot; delta: ShellDelta }
@@ -66,6 +92,7 @@ const unknownShell = (args: { shellId: string; known: readonly ShellId[] }): str
 
 export class BunShellRegistry extends ShellRegistryPort {
   private readonly tracked = new Map<ShellId, Tracked>()
+  private readonly claims = new Map<ShellId, Promise<ClaimedShellEnding>>()
   private readonly notices = new ShellNoticeQueue(({ shellId }) =>
     this.tracked.get(toShellId(shellId))?.shell.snapshot(),
   )
@@ -123,6 +150,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       shell: opened.shell,
       cursor: 0,
       announced: false,
+      endingClaimed: false,
       threadId: args.threadId,
       pattern: args.watch,
     })
@@ -205,8 +233,36 @@ export class BunShellRegistry extends ShellRegistryPort {
       return { ok: false, reason: unknownShell({ shellId, known: this.ids(threadId) }) }
     }
 
+    const wasRunning = entry.shell.snapshot().status === EShellStatus.Running
     entry.shell.kill(by)
-    return { ok: true, snapshot: entry.shell.snapshot() }
+    const snapshot = entry.shell.snapshot()
+
+    if (by !== EKilledBy.Model) return { ok: true, snapshot }
+
+    const claimed = this.claims.get(entry.shell.shellId)
+    if (claimed !== undefined) return { ok: true, snapshot, settled: claimed }
+    if (!wasRunning) return { ok: true, snapshot }
+
+    entry.endingClaimed = true
+    const settled = this.settleClaimed(entry)
+    this.claims.set(entry.shell.shellId, settled)
+    return { ok: true, snapshot, settled }
+  }
+
+  /**
+   * The tool that asked for the kill is already waiting, so the ending is handed to it rather than
+   * announced. The claim is given back when the process outlives the settle deadline: an ending
+   * nobody collected announces itself as usual, and nothing the shell printed is stranded.
+   */
+  private async settleClaimed(entry: Tracked): Promise<ClaimedShellEnding> {
+    const died = await withinDeadline({ promise: entry.shell.exited, ms: KILL_SETTLE_MS })
+    if (!died) {
+      entry.endingClaimed = false
+      this.claims.delete(entry.shell.shellId)
+      return { died: false }
+    }
+
+    return { died: true, snapshot: entry.shell.snapshot(), delta: take(entry) }
   }
 
   list({ threadId }: { threadId: ThreadId }): readonly ShellSnapshot[] {
@@ -243,6 +299,8 @@ export class BunShellRegistry extends ShellRegistryPort {
    * Reaping is by spawner rather than by process tree: a shell the model backgrounded outlives the
    * turn by design, so only the session that started it knows when nobody is left to read it.
    * Teardown kills, but it does not suppress: every ending announces itself, including this one.
+   * The one exception is an ending shell_kill already collected for the model - it was announced
+   * as the tool result, and a second telling is noise.
    */
   async closeAll(): Promise<void> {
     const running = [...this.tracked.values()]
@@ -280,6 +338,10 @@ export class BunShellRegistry extends ShellRegistryPort {
    * The after-shell hooks run before the ending is queued rather than beside it: with no turn in
    * flight their drafts have nowhere else to go, and riding with the notice is the only delivery
    * this registry can promise. A shell that has already announced never runs them twice.
+   *
+   * A claimed ending (the model's own shell_kill) queues no notice of its own: the tool result is
+   * the announcement. Hooks still run — a killed push may have landed long before the kill — and
+   * when one of them produced drafts, a hollow notice carries them so the ride is not lost with it.
    */
   private announceExit(shell: BackgroundShell): void {
     const entry = this.tracked.get(shell.shellId)
@@ -302,6 +364,13 @@ export class BunShellRegistry extends ShellRegistryPort {
       threadId: args.entry.threadId,
       shell: args.shell.snapshot(),
     })
+
+    if (args.entry.endingClaimed) {
+      if (hooked.length > 0) {
+        this.queue({ kind: ENotice.Ended, entry: args.entry, shell: args.shell, hooked, outputClaimed: true })
+      }
+      return
+    }
 
     this.queue({ kind: ENotice.Ended, entry: args.entry, shell: args.shell, hooked })
   }
@@ -360,6 +429,7 @@ export class BunShellRegistry extends ShellRegistryPort {
     entry: Tracked
     shell: BackgroundShell
     hooked?: readonly EventDraft[] | undefined
+    outputClaimed?: boolean | undefined
   }): void {
     this.notices.queue({
       kind: args.kind,
@@ -367,6 +437,7 @@ export class BunShellRegistry extends ShellRegistryPort {
       take: () => take(args.entry),
       threadId: args.entry.threadId,
       hooked: args.hooked,
+      outputClaimed: args.outputClaimed,
     })
   }
 }

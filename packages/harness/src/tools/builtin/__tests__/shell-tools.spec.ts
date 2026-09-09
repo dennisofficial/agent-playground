@@ -219,7 +219,7 @@ describe('reading a background shell through shell_output', () => {
 })
 
 describe('stopping a background shell through shell_kill', () => {
-  it('stops a running shell and leaves its output readable', async () => {
+  it('stops a running shell and hands back everything it printed', async () => {
     const suite = openSuite()
     const started = outputOf(
       await runBash(suite, { command: 'echo before; sleep 60', runInBackground: true }),
@@ -227,12 +227,27 @@ describe('stopping a background shell through shell_kill', () => {
     await Bun.sleep(200)
 
     const killed = await invoke(suite.kill, { shellId: started.shellId })
-    await settled(suite, String(started.shellId))
 
-    expect(modelTextOf(killed)).toContain('process group')
+    expect(modelTextOf(killed)).toContain('Killed shell')
+    expect(modelTextOf(killed)).toContain('before')
+    expect(outputOf(killed).status).toBe(EShellStatus.Killed)
+
     const read = await invoke(suite.output, { shellId: started.shellId })
-    expect(String(outputOf(read).text)).toContain('before')
-    expect(outputOf(read).status).toBe(EShellStatus.Killed)
+    expect(String(outputOf(read).text)).toBe('')
+  })
+
+  it('announces nothing for a kill it answered itself', async () => {
+    const suite = openSuite()
+    const started = outputOf(
+      await runBash(suite, { command: 'echo before; sleep 60', runInBackground: true }),
+    )
+
+    await invoke(suite.kill, { shellId: started.shellId })
+    await Bun.sleep(100)
+
+    expect(
+      suite.shells.drainNotifications({ threadId: toThreadId('thread-1') }),
+    ).toEqual([])
   })
 
   it('says so rather than pretending, when the shell had already finished', async () => {

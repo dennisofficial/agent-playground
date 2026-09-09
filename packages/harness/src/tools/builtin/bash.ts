@@ -133,6 +133,7 @@ export class BashTool extends SchemaTool<typeof inputSchema> {
         'setsid, a detached subprocess or a sentinel file - only shell_kill and the end of the session stop it.',
         'Its ending will be delivered to you with everything it printed, whether or not a turn is running then,',
         'and so will a prompt it stops on, since its stdin is closed and no ending would ever follow.',
+        'The one ending that never lands that way is a kill you asked for: shell_kill waits for the death, and its result carries everything the shell printed.',
         ...watchClause({ watch: args.watch }),
         ...ceilingClause({ timeoutMs: args.timeoutMs }),
         ...checkInClause({ checkInMs }),

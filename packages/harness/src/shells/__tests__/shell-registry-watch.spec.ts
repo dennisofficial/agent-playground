@@ -179,12 +179,17 @@ for (const adapter of shellAdapters) {
         expect(matched.lines.split('\n')).toHaveLength(MATCHED_LINES_CAP)
         expect(registry.list({ threadId: THREAD })[0]?.status).toBe(EShellStatus.Running)
 
-        registry.kill({ shellId: snapshot.shellId, by: EKilledBy.Model, threadId: THREAD })
-        await announced({ registry })
+        const killed = registry.kill({
+          shellId: snapshot.shellId,
+          by: EKilledBy.Model,
+          threadId: THREAD,
+        })
+        if (!killed.ok || killed.settled === undefined) throw new Error('the kill was not claimed')
+        const ending = await killed.settled
 
-        expect(endedDraft(registry.drainNotifications({ threadId: THREAD })[0]).shellId).toBe(
-          snapshot.shellId,
-        )
+        expect(ending.died).toBe(true)
+        if (ending.died) expect(ending.snapshot.shellId).toBe(snapshot.shellId)
+        expect(registry.drainNotifications({ threadId: THREAD })).toEqual([])
       }, 30_000)
     })
 
