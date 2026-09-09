@@ -11,6 +11,8 @@ export type DiffLine = {
   newNumber: number | null
   text: string
   elided?: number
+  /** An elision standing for lines dropped by the render cap, not for unchanged context. */
+  overflow?: boolean
 }
 
 export type DiffHunk = {
